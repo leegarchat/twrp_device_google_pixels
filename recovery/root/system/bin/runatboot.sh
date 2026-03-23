@@ -14,11 +14,10 @@
 #
 # Executed after runatinit.sh (which handles device identity and props).
 # Responsible for:
-#   1. LGZ decompression of build-time compressed zip payloads
-#   2. Device detection (ro.hardware → module list per device)
-#   3. A/B slot detection and vendor_dlkm module loading (touch, haptics)
-#   4. Vendor firmware copy (CS40L26 haptics) with slot fallback
-#   5. Magisk binary extraction and link creation
+#   1. Device detection (ro.hardware → module list per device)
+#   2. A/B slot detection and vendor_dlkm module loading (touch, haptics)
+#   3. Vendor firmware copy (CS40L26 haptics) with slot fallback
+#   4. Magisk binary extraction and link creation
 #
 
 slot_detect() {
@@ -173,52 +172,6 @@ magisk_on_data_media(){
     done
 }
 
-unzip_magiskboot_binary() {
-    mkdir -p /tmp/magisk_unzip
-    cd /tmp/magisk_unzip || return
-    unzip -q "$TARGET_MAGISK_ZIP"
-    cp lib/arm64-v8a/libmagiskboot.so /system/bin/magiskboot_29
-    cp lib/arm64-v8a/libmagiskboot.so /system/bin/magiskboot
-    chmod 777 /system/bin/magiskboot_29
-    chmod 777 /system/bin/magiskboot
-    cd /tmp || return
-    rm -rf /tmp/magisk_unzip
-}
-
-lgz_decompress_zips() {
-    local manifest="/lgz_zip_manifest.txt"
-    [ -f "$manifest" ] || return 0
-
-    local lgz="/system/bin/lgz"
-    [ -x "$lgz" ] || return 0
-
-    echo "I:lgz-zip: Decompressing zip contents..." >> /tmp/recovery.log
-
-    while IFS= read -r zippath; do
-        case "$zippath" in \#*|"") continue ;; esac
-        [ -f "$zippath" ] || continue
-
-        tmpdir=$(mktemp -d /tmp/lgz_zip.XXXXXX)
-
-        if unzip -q -o "$zippath" -d "$tmpdir" 2>/dev/null; then
-            find "$tmpdir" -type f | while IFS= read -r f; do
-                if "$lgz" decompress "$f" "${f}.dec" 2>/dev/null; then
-                    mv -f "${f}.dec" "$f"
-                fi
-            done
-            rm -f "${zippath}.tmp"
-            (cd "$tmpdir" && zip -0 -r -q "${zippath}.tmp" .) 2>/dev/null
-
-            if [ -f "${zippath}.tmp" ]; then
-                mv -f "${zippath}.tmp" "$zippath"
-                echo "I:lgz-zip: Restored: $zippath" >> /tmp/recovery.log
-            fi
-        fi
-
-        rm -rf "$tmpdir"
-    done < "$manifest"
-}
-
 find_magisk_zip() {
     local dir="$1"
     local file
@@ -236,7 +189,6 @@ TARGET_MAGISK_ZIP=$(find_magisk_zip /system/bin)
 setenforce 0
 LOGF="/tmp/recovery.log"
 chmod 777 /system/bin/*
-lgz_decompress_zips
 device_code=$(getprop ro.hardware)
 slot_detect
 
@@ -370,6 +322,5 @@ if [ -n "$TARGET_MAGISK_ZIP" ]; then
 else
     echo "W:magisk: No Magisk zip found in /system/bin, skipping copy and link creation" >> "$LOGF"
 fi
-unzip_magiskboot_binary
 
 exit 0
