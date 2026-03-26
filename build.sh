@@ -3,7 +3,7 @@
 # build.sh — OrangeFox Recovery build script for all Tensor Pixel devices.
 #
 # Usage:
-#   ./build.sh [--family gs201|zuma|zumapro|gs101] [--notrm] [-j N] [--name TAG]
+#   ./build.sh [--family gs201|zuma|zumapro|gs101] [--notrm] [-j N] [--name TAG] [--patch N]
 #
 # Options:
 #   --family FAMILY   Set SoC family before lunch (gs201/zuma/zumapro/gs101).
@@ -11,18 +11,9 @@
 #   --notrm           Don't clean out/target/product/pixels before build.
 #   -j N              Parallelism for make (default: $(nproc)).
 #   --name TAG        Name tag for output files. Copies final .img/.zip to
-#                     builds/OrangeFox-R11.3-{TAG}-{family}.img/zip
-#                     Without --name, copies with original filenames.
-#
-# This script:
-#   1. Resolves source tree root (3 levels up from this script)
-#   2. Optionally cleans previous build output
-#   3. Sources build/envsetup.sh
-#   4. Sets DEVICE_BUILD_FLAG if --family given (skips interactive menu)
-#   5. Runs lunch twrp_pixels-ap2a-eng
-#   6. Builds recovery: mka adbd vendorbootimage [-j N]
-#      For gs201/gs101: also builds keymint-service.trusty
-#   7. Copies final artifacts to builds/
+#                     builds/OrangeFox-<VERSION>-{TAG}-{family}.img/zip
+#   --patch N         Set FOX_MAINTAINER_PATCH_VERSION (numbers only).
+#                     E.g., "--patch 5" will result in version R11.3_5.
 
 set -eo pipefail
 
@@ -31,7 +22,6 @@ unset DEVICE_BUILD_FLAG
 
 # --- Resolve paths ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# device/google/pixels/ → go up 3 levels to source root
 SOURCE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 # --- Parse arguments ---
@@ -39,6 +29,7 @@ FAMILY=""
 CLEAN=true
 JOBS="$(nproc)"
 BUILD_NAME=""
+PATCH_VERSION=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -80,8 +71,18 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --patch)
+            shift
+            PATCH_VERSION="${1:-}"
+            if [[ -z "$PATCH_VERSION" || ! "$PATCH_VERSION" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: --patch requires a numeric argument (e.g., 5)"
+                exit 1
+            fi
+            export FOX_MAINTAINER_PATCH_VERSION="$PATCH_VERSION"
+            shift
+            ;;
         -h|--help)
-            sed -n '2,26p' "$0"
+            sed -n '2,17p' "$0"
             exit 0
             ;;
         *)
@@ -94,11 +95,12 @@ done
 echo "=============================================="
 echo "  OrangeFox Recovery Build Script"
 echo "=============================================="
-echo "  Source root: $SOURCE_ROOT"
-echo "  Family:     ${FAMILY:-<interactive>}"
-echo "  Name:       ${BUILD_NAME:-<auto>}"
-echo "  Clean:      $CLEAN"
-echo "  Jobs:       $JOBS"
+echo "  Source root:   $SOURCE_ROOT"
+echo "  Family:        ${FAMILY:-<interactive>}"
+echo "  Name:          ${BUILD_NAME:-<auto>}"
+echo "  Patch Version: ${FOX_MAINTAINER_PATCH_VERSION:-<not set>}"
+echo "  Clean:         $CLEAN"
+echo "  Jobs:          $JOBS"
 echo "=============================================="
 
 cd "$SOURCE_ROOT"
@@ -112,7 +114,6 @@ if [ ! -f "external/guava/Android.bp" ] || [ ! -f "external/gflags/Android.bp" ]
     fi
 fi
 
-# --- Clean previous build output ---
 PRODUCT_OUT="out/target/product/pixels"
 if [[ "$CLEAN" == "true" && -d "$PRODUCT_OUT" ]]; then
     echo "[build] Cleaning $PRODUCT_OUT ..."
@@ -120,44 +121,30 @@ if [[ "$CLEAN" == "true" && -d "$PRODUCT_OUT" ]]; then
     echo "[build] Clean done."
 fi
 
-# --- Set DEVICE_BUILD_FLAG before sourcing envsetup ---
-# This pre-exports the flag so vendorsetup.sh skips the interactive menu
-# (it checks if DEVICE_BUILD_FLAG is already set on timeout path).
 if [[ -n "$FAMILY" ]]; then
     export DEVICE_BUILD_FLAG="$FAMILY"
     echo "[build] Pre-set DEVICE_BUILD_FLAG=$FAMILY"
 fi
 
-# --- Source build environment ---
-# AOSP's envsetup.sh uses uninitialized variables and may have benign non-zero
-# returns, so we disable strict error handling for the sourcing/lunch phase.
 echo "[build] Sourcing build/envsetup.sh ..."
 set +e
 source build/envsetup.sh
 
-# --- Lunch ---
 echo "[build] Running lunch twrp_pixels-ap2a-eng ..."
 lunch twrp_pixels-ap2a-eng
 set -eo pipefail
 
-# --- Verify platform selection ---
 echo "[build] DEVICE_BUILD_FLAG=${DEVICE_BUILD_FLAG:-<not set>}"
 
-# --- Build targets ---
 BUILD_TARGETS="adbd vendorbootimage"
 
-# gs201 needs C++ keymint source-built
-if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" ]]; then
+if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
+    if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
+        export VENDOR_BOOT_PATCH_STOCK=true
+        echo "[build] gs101: stock vendor_boot patch mode (VENDOR_BOOT_PATCH_STOCK=true)"
+    fi
     BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.trusty"
-    echo "[build] gs201: adding keymint-service.trusty to build targets"
-fi
-
-# gs101 hooks (future): stock vendor_boot patching, additional fstab
-if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
-    echo "[build] gs101: stock vendor_boot patch mode (VENDOR_BOOT_PATCH_STOCK=true)"
-    export VENDOR_BOOT_PATCH_STOCK=true
-    BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.trusty"
-    echo "[build] gs101: adding keymint-service.trusty to build targets"
+    echo "[build] ${DEVICE_BUILD_FLAG}: adding keymint-service.trusty to build targets"
 fi
 
 echo "=============================================="
@@ -173,7 +160,7 @@ echo "  Build complete!"
 echo "  Output: $SOURCE_ROOT/$PRODUCT_OUT/"
 echo "=============================================="
 
-# --- Copy artifacts to builds/ ---
+# --- Dynamic Artifact Naming & Copying ---
 BUILDS_DIR="$SOURCE_ROOT/builds"
 mkdir -p "$BUILDS_DIR"
 
@@ -182,26 +169,32 @@ LATEST_ZIP=$(find "$SOURCE_ROOT/$PRODUCT_OUT" -maxdepth 1 -name 'OrangeFox-*.zip
 
 FAMILY_TAG="${DEVICE_BUILD_FLAG:-unknown}"
 
-if [[ -n "$BUILD_NAME" ]]; then
-    # Named build: OrangeFox-R11.3-{name}-{family}.ext
-    if [[ -n "$LATEST_IMG" ]]; then
-        cp "$LATEST_IMG" "$BUILDS_DIR/OrangeFox-R11.3-${BUILD_NAME}-${FAMILY_TAG}.img"
-        echo "[build] Copied: builds/OrangeFox-R11.3-${BUILD_NAME}-${FAMILY_TAG}.img"
-    fi
-    if [[ -n "$LATEST_ZIP" ]]; then
-        cp "$LATEST_ZIP" "$BUILDS_DIR/OrangeFox-R11.3-${BUILD_NAME}-${FAMILY_TAG}.zip"
-        echo "[build] Copied: builds/OrangeFox-R11.3-${BUILD_NAME}-${FAMILY_TAG}.zip"
-    fi
+# Extract dynamic version prefix (e.g., "OrangeFox-R11.3" or "OrangeFox-R11.4_5")
+if [[ -n "$LATEST_IMG" ]]; then
+    OFOX_PREFIX=$(basename "$LATEST_IMG" | cut -d'-' -f1,2)
+elif [[ -n "$LATEST_ZIP" ]]; then
+    OFOX_PREFIX=$(basename "$LATEST_ZIP" | cut -d'-' -f1,2)
 else
-    # No name: copy with original filenames
-    if [[ -n "$LATEST_IMG" ]]; then
-        cp "$LATEST_IMG" "$BUILDS_DIR/OrangeFox-R11.3-${FAMILY_TAG}.img"
-        echo "[build] Copied: builds/OrangeFox-R11.3-${FAMILY_TAG}.img"
-    fi
-    if [[ -n "$LATEST_ZIP" ]]; then
-        cp "$LATEST_ZIP" "$BUILDS_DIR/OrangeFox-R11.3-${FAMILY_TAG}.zip"
-        echo "[build] Copied: builds/OrangeFox-R11.3-${FAMILY_TAG}.zip"
-    fi
+    OFOX_PREFIX="OrangeFox-UnknownVersion"
+fi
+
+# Construct final filenames
+if [[ -n "$BUILD_NAME" ]]; then
+    IMG_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.img"
+    ZIP_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.zip"
+else
+    IMG_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.img"
+    ZIP_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.zip"
+fi
+
+# Copy files
+if [[ -n "$LATEST_IMG" ]]; then
+    cp "$LATEST_IMG" "$IMG_DEST"
+    echo "[build] Copied: $IMG_DEST"
+fi
+if [[ -n "$LATEST_ZIP" ]]; then
+    cp "$LATEST_ZIP" "$ZIP_DEST"
+    echo "[build] Copied: $ZIP_DEST"
 fi
 
 if [[ -z "$LATEST_IMG" && -z "$LATEST_ZIP" ]]; then
