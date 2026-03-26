@@ -152,10 +152,19 @@ magisk_link_to_OF_FILES() {
     magisk_on_data_media "$Magisk_zip" &
 }
 
+_bb_sleep() {
+    if [ -x "$_BB" ]; then "$_BB" sleep "$@"; else sleep "$@"; fi
+}
+
+_bb_mountpoint() {
+    if [ -x "$_BB" ]; then "$_BB" mountpoint "$@"; else mountpoint "$@"; fi
+}
+
 magisk_on_data_media(){
     local Magisk_zip="$1"
     while true; do
-        if [ -d /data/media/0 ] && mountpoint -q /data; then
+        
+        if [ -d /data/media/0 ] && _bb_mountpoint -q /data; then
             if [ ! -f /data/media/0/Fox/FoxFiles/Magisk.zip ] || [ ! -f /sdcard/Fox/FoxFiles/uninstall.zip ]; then
                 echo "I:magisk: Copying Magisk zip to /data/media/0 for sideload/install from stock recovery" >> "$LOGF"
                 mkdir -pv /data/media/0/Fox/FoxFiles
@@ -168,7 +177,7 @@ magisk_on_data_media(){
             fi
             
         fi
-        sleep 2
+        _bb_sleep 2
     done
 }
 
@@ -188,6 +197,24 @@ TARGET_MAGISK_ZIP=$(find_magisk_zip /system/bin)
 
 setenforce 0
 LOGF="/tmp/recovery.log"
+
+# Dump busybox to /dev tmpfs so critical applets (sleep, mountpoint) survive
+# package manager operations (e.g. NikGapps) that may replace /system/bin.
+_BB_DIR="/dev/.fox_bb"
+_BB="$_BB_DIR/busybox"
+if [ -f /system/bin/busybox ]; then
+    mkdir -p "$_BB_DIR"
+    if cp -f /system/bin/busybox "$_BB" 2>/dev/null && chmod 755 "$_BB"; then
+        echo "I:busybox: Dumped to $_BB" >> "$LOGF"
+    else
+        _BB=""
+        echo "W:busybox: Failed to dump, will use PATH" >> "$LOGF"
+    fi
+else
+    _BB=""
+    echo "W:busybox: Not found in /system/bin, will use PATH" >> "$LOGF"
+fi
+
 chmod 777 /system/bin/*
 device_code=$(getprop ro.hardware)
 slot_detect
