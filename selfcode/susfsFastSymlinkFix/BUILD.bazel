@@ -1,0 +1,12 @@
+load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
+
+kernel_module(
+    name = "susfs_rename_fix",
+    srcs = [
+        "susfs_rename_fix.c",
+        "Makefile",
+        "Kbuild",
+    ],
+    outs = ["susfs_rename_fix.ko"],
+    kernel_build = "//common:kernel_aarch64",
+)

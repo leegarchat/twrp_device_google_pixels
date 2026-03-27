@@ -1,0 +1,2 @@
+tools/bazel build //susfsFastSymlinkFix:susfs_rename_fix
+file bazel-bin/susfsFastSymlinkFix/susfs_rename_fix/susfs_rename_fix.ko

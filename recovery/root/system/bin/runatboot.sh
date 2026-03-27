@@ -193,6 +193,42 @@ find_magisk_zip() {
     
 }
 
+#
+# load_susfs_rename_fix — insmod the Baseband Guard fast-symlink panic fix.
+#
+# Baseband Guard's bb_inode_rename LSM hook calls page_get_link() to resolve
+# symlink targets. On rootfs/tmpfs "fast symlinks" (target stored inline in
+# inode->i_link) no page mapping exists, so page_get_link() dereferences a
+# NULL inode->i_mapping->a_ops and panics. This module intercepts the hook
+# via kprobe and skips it for fast symlinks only.
+#
+# Guards:
+#   - /proc/modules absent  → monolithic kernel (CONFIG_MODULES=n): skip.
+#   - ko file absent        → module not installed in this build: skip.
+#   - register_kprobe fails → BBG absent or upstream-fixed kernel: no-op.
+#
+load_susfs_rename_fix() {
+    local ko="/system/lib64/modules/susfs_rename_fix.ko"
+
+    # Monolithic kernels (CONFIG_MODULES=n) have no /proc/modules.
+    # insmod would return -ENOSYS (harmless), but skip explicitly for clarity.
+    if [ ! -e /proc/modules ]; then
+        echo "I:susfs_fix: /proc/modules absent \u2014 monolithic kernel, skipping" >> "$LOGF"
+        return 0
+    fi
+
+    if [ ! -f "$ko" ]; then
+        echo "W:susfs_fix: $ko not found, skipping BBG fast-symlink fix" >> "$LOGF"
+        return 0
+    fi
+
+    if insmod "$ko" 2>>"$LOGF"; then
+        echo "I:susfs_fix: $ko loaded \u2014 fast-symlink rename panic fix active" >> "$LOGF"
+    else
+        echo "W:susfs_fix: insmod $ko failed \u2014 unsupported kernel or already loaded" >> "$LOGF"
+    fi
+}
+
 TARGET_MAGISK_ZIP=$(find_magisk_zip /system/bin)
 
 setenforce 0
@@ -218,6 +254,7 @@ fi
 chmod 777 /system/bin/*
 device_code=$(getprop ro.hardware)
 slot_detect
+load_susfs_rename_fix
 
 case "$device_code" in
     panther)
