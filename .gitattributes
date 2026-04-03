@@ -1,0 +1,32 @@
+# Force LF line endings for all text files — prevents CRLF contamination
+# from Windows editors (VSCode via WSL mount, etc.)
+* text=auto eol=lf
+
+# Explicitly binary — no line-ending conversion
+*.img        binary
+*.bin        binary
+*.so         binary
+*.ko         binary
+*.a          binary
+*.o          binary
+*.gz         binary
+*.xz         binary
+*.bz2        binary
+*.lz4        binary
+*.zip        binary
+*.jar        binary
+*.apk        binary
+*.dex        binary
+*.png        binary
+*.jpg        binary
+*.jpeg       binary
+*.gif        binary
+*.ico        binary
+*.webp       binary
+*.ttf        binary
+*.otf        binary
+*.woff       binary
+*.woff2      binary
+*.pyc        binary
+*.cpio       binary
+*.lgz        binary
