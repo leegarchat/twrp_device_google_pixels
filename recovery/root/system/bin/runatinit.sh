@@ -177,9 +177,10 @@ _log "ro.boot.mode=$(getprop ro.boot.mode 2>/dev/null)"
 _log "/dev/block contents: $(ls /dev/block/ 2>/dev/null | tr '\n' ' ')"
 
 case "$device_code" in
-    panther|cheetah|lynx|gs201)      family="gs201" ;;
+    panther|cheetah|lynx|tangorpro|gs201)      family="gs201" ;;
     shiba|husky|akita|zuma)          family="zuma" ;;
     tokay|komodo|caiman|tegu|zumapro) family="zumapro" ;;
+    blazer|mustang|frankel|rango|deepspace|laguna) family="laguna" ;;
     *)                                family="" ;;
 esac
 _log "detected family=$family"
@@ -194,6 +195,24 @@ if [ "$family" = "gs201" ] && [ -f /system/etc/twrp_gs201.flags ]; then
     _log "gs201: cp twrp_gs201.flags -> twrp.flags"
     cp -f /system/etc/twrp_gs201.flags /system/etc/twrp.flags
 fi
+if [ "$family" = "laguna" ] && [ -f /system/etc/twrp_laguna.flags ]; then
+    _log "laguna: cp twrp_laguna.flags -> twrp.flags"
+    cp -f /system/etc/twrp_laguna.flags /system/etc/twrp.flags
+fi
+
+# --- USB controller setup ---
+# Must be set before on init (pixel_common.rc) which uses this property for configfs.
+_log "--- USB controller setup ---"
+case "$family" in
+    laguna)
+        resetprop sys.usb.controller "c400000.dwc3"
+        _log "  USB controller: c400000.dwc3 (laguna)"
+        ;;
+    *)
+        resetprop sys.usb.controller "11210000.dwc3"
+        _log "  USB controller: 11210000.dwc3 (default)"
+        ;;
+esac
 
 _log "--- calling fix_twrp_flags ---"
 fix_twrp_flags

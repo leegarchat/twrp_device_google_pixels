@@ -221,7 +221,6 @@ on boot
     write /config/usb_gadget/g1/os_desc/qw_sign "MSFT100"
     mkdir /config/usb_gadget/g1/functions/midi.gs5
     symlink /config/usb_gadget/g1/configs/b.1 /config/usb_gadget/g1/os_desc/b.1
-    setprop sys.usb.controller "11210000.dwc3"
     setprop sys.usb.configfs 1
     # Set USB timeout
     write sys/module/usbcore/parameters/initial_descriptor_timeout 500
@@ -259,7 +258,7 @@ on property:sys.usb.ffs.ready=1 && property:sys.usb.config=mtp,adb && property:s
     rm /config/usb_gadget/g1/configs/b.1/f9
     write /config/usb_gadget/g1/idVendor 0x18D1
     write /config/usb_gadget/g1/idProduct 0x4EE2
-    write /config/usb_gadget/g1/UDC "11210000.dwc3"
+    write /config/usb_gadget/g1/UDC "${sys.usb.controller}"
     setprop sys.usb.state ${sys.usb.config}
 
 on property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1
@@ -283,7 +282,6 @@ on charger
     write /config/usb_gadget/g1/os_desc/qw_sign "MSFT100"
     mkdir /config/usb_gadget/g1/functions/midi.gs5
     symlink /config/usb_gadget/g1/configs/b.1 /config/usb_gadget/g1/os_desc/b.1
-    setprop sys.usb.controller "11210000.dwc3"
     setprop sys.usb.configfs 1
 
 on late-init
@@ -299,8 +297,8 @@ on property:ro.boot.usbconfigfs=false
    setprop sys.usb.configfs 0
 
 on property:ro.boot.usbcontroller=*
-    setprop sys.usb.controller "11210000.dwc3"
-    write /sys/class/udc/11210000.dwc3/device/../mode peripheral
+    setprop sys.usb.controller ${ro.boot.usbcontroller}
+    write /sys/class/udc/${ro.boot.usbcontroller}/device/../mode peripheral
 
 on property:sys.usb.config=none && property:sys.usb.configfs=1
     write /config/usb_gadget/g1/UDC ""

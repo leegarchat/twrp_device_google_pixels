@@ -580,8 +580,9 @@ case "$CALL_TYPE" in
 
         # --- Per-platform twrp.flags injection ---
         # GS201 uses UFS controller at 14700000 (vs 13200000 for zuma/zumapro).
-        # The default twrp.flags uses 13200000.ufs paths; gs201 needs 14700000.ufs.
-        # A twrp_gs201.flags variant is included in the ramdisk for runtime swap;
+        # Laguna uses UFS controller at 3c400000.
+        # The default twrp.flags uses 13200000.ufs paths; gs201/laguna need different paths.
+        # Platform-specific twrp_*.flags variants are included in the ramdisk for runtime swap;
         # this build-time copy ensures the correct flags file is the default.
         platform="$PLATFORM"
         if [ "$platform" = "gs201" ]; then
@@ -590,6 +591,13 @@ case "$CALL_TYPE" in
             if [ -f "$gs201_flags" ]; then
                 echo "    [PLATFORM] Swapping twrp.flags for gs201 (UFS 14700000)"
                 cp -f "$gs201_flags" "$default_flags"
+            fi
+        elif [ "$platform" = "laguna" ]; then
+            laguna_flags="$TARGET_DIR/system/etc/twrp_laguna.flags"
+            default_flags="$TARGET_DIR/system/etc/twrp.flags"
+            if [ -f "$laguna_flags" ]; then
+                echo "    [PLATFORM] Swapping twrp.flags for laguna (UFS 3c400000)"
+                cp -f "$laguna_flags" "$default_flags"
             fi
         fi
 

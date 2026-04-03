@@ -5,15 +5,17 @@
 #
 
 # BoardConfig.mk — Board-level configuration for OrangeFox Recovery.
-# Targets three Tensor SoC families:
-#   gs201   (Tensor G2): panther (Pixel 7), cheetah (Pixel 7 Pro), lynx (Pixel 7a)
+# Targets four Tensor SoC families:
+#   gs201   (Tensor G2): panther (Pixel 7), cheetah (Pixel 7 Pro), lynx (Pixel 7a), tangorpro (Pixel Tablet)
 #   zuma    (Tensor G3): shiba (Pixel 8), husky (Pixel 8 Pro), akita (Pixel 8a)
 #   zumapro (Tensor G4): tokay (Pixel 9), komodo (Pixel 9 Pro XL), caiman (Pixel 9 Pro), tegu (Pixel 9a)
+#   laguna  (Tensor G5): blazer (Pixel 10 Pro), mustang (Pixel 10 Pro XL), frankel (Pixel 10)
 #
 # Build flag DEVICE_BUILD_FLAG selects the target family:
 #   (default) → zuma (UFS 13200000, earlycon 10A00000)
 #   zumapro   → zumapro (UFS 13200000, earlycon 10870000)
 #   gs201     → gs201 (UFS 14700000, earlycon 10A00000)
+#   laguna    → laguna (UFS 3c400000, earlycon 10870000)
 #
 # Crypto: FBE with wrappedkey_v0 + metadata encryption via Trusty TEE KeyMint
 # Boot: Virtual A/B with vendor_boot, GKI or monolithic kernel
@@ -123,6 +125,26 @@ VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \
         kasan=off \
         at24.write_timeout=100 \
         log_buf_len=1024K bootconfig"
+else ifeq ($(DEVICE_BUILD_FLAG),laguna)
+VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \
+        earlycon=exynos4210,0x10870000 \
+        console=ttySAC0,115200 \
+        androidboot.console=ttySAC0 printk.devkmsg=on \
+        cma_sysfs.experimental=Y \
+        cgroup.memory=nokmem \
+        rcupdate.rcu_expedited=1 \
+        rcu_nocbs=all \
+        rcutree.enable_rcu_lazy \
+        swiotlb=noforce \
+        disable_dma32=on \
+        sysctl.kernel.sched_pelt_multiplier=4 \
+        kasan=off \
+        at24.write_timeout=100 \
+        fips140.load_sequential=1 \
+        vh_sched.load_sequential=1 \
+        init_on_alloc=0 init_on_free=1 \
+        pcie_port_pm=off \
+        log_buf_len=1024K bootconfig"
 else ifeq ($(DEVICE_BUILD_FLAG),gs101)
 VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \\
         earlycon=exynos4210,0x10A00000 \\
@@ -186,6 +208,9 @@ BOARD_BOOTCONFIG := androidboot.usbcontroller=11110000.dwc3
 BOARD_BOOTCONFIG += androidboot.boot_devices=14700000.ufs
 else ifeq ($(DEVICE_BUILD_FLAG),gs201)
 BOARD_BOOTCONFIG += androidboot.boot_devices=14700000.ufs
+else ifeq ($(DEVICE_BUILD_FLAG),laguna)
+BOARD_BOOTCONFIG := androidboot.usbcontroller=c400000.dwc3
+BOARD_BOOTCONFIG += androidboot.boot_devices=3c400000.ufs
 else
 BOARD_BOOTCONFIG += androidboot.boot_devices=13200000.ufs
 endif

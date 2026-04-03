@@ -1,0 +1,10 @@
+# Android fstab file.
+# <src>                  <mnt_point>         <type>    <mnt_flags and options>                               <fs_mgr_flags>
+# Create the specific fstab file for efs/modem_userdata/persist partitions for flexibility
+/data/vendor/copied/efs             /mnt/vendor/efs             none    bind 	latemount
+
+/data/vendor/copied/efs_backup      /mnt/vendor/efs_backup      none    bind 	latemount
+
+/data/vendor/copied/modem_userdata  /mnt/vendor/modem_userdata  none    bind 	latemount
+
+/data/vendor/copied/persist  /mnt/vendor/persist none      bind 	latemount

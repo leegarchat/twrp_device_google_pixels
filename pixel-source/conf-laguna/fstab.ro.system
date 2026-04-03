@@ -1,0 +1,20 @@
+# Android fstab file.
+#
+# The filesystem that contains the filesystem checker binary (typically /system) cannot
+# specify MF_CHECK, and must come before any filesystems that do specify MF_CHECK
+#
+#<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>
+system                                                   /system                     ext4    noatime,ro               wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+# During compliance testing, the previous line would fail (because GSI is ext4), and the next line would be used to mount GSI.
+system                                                   /system                     ext4    noatime,ro,barrier=1    wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+system                                                   /system                     erofs   noatime,ro              wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+system_dlkm                                              /system_dlkm                ext4    noatime,ro              wait,slotselect,avb=vbmeta_system,avb_keys=no_such_key,logical,first_stage_mount,readahead_size_kb=128
+system_dlkm                                              /system_dlkm                erofs   noatime,ro              wait,slotselect,avb=vbmeta_system,avb_keys=no_such_key,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext                 ext4    noatime,ro              wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext                 erofs   noatime,ro              wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product                    ext4    noatime,ro              wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product                    erofs   noatime,ro              wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor                     ext4    noatime,ro              wait,slotselect,avb=vbmeta_vendor,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor                     erofs   noatime,ro              wait,slotselect,avb=vbmeta_vendor,logical,first_stage_mount,readahead_size_kb=128
+vendor_dlkm                                              /vendor_dlkm                ext4    noatime,ro              wait,slotselect,avb=vbmeta,avb_keys=no_such_key,logical,first_stage_mount
+vendor_dlkm                                              /vendor_dlkm                erofs   noatime,ro              wait,slotselect,avb=vbmeta,avb_keys=no_such_key,logical,first_stage_mount

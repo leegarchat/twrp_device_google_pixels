@@ -1,0 +1,8 @@
+# init.recovery.laguna.rc — Laguna SoC (Tensor G5) stub.
+# Loaded by init when ro.hardware=laguna. All actual init code is in init.recovery.pixel_common.rc.
+# Fallback: if kernel sets ro.hardware=laguna instead of device codename.
+
+on early-init
+    setprop DOF_SCREEN_H 2410
+
+import /init.recovery.pixel_common.rc

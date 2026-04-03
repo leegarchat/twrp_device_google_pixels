@@ -1,0 +1,8 @@
+# init.recovery.tangorpro.rc — Pixel Tablet (tangorpro) stub.
+# Loaded by init when ro.hardware=tangorpro. All actual init code is in init.recovery.pixel_common.rc.
+# Tangorpro has 2560x1600 landscape LCD — DOF_SCREEN_H set to landscape height.
+
+on early-init
+    setprop DOF_SCREEN_H 1600
+
+import /init.recovery.pixel_common.rc

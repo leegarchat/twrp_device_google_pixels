@@ -5,7 +5,7 @@
 #
 
 # device.mk — Package list, crypto config, and build props for Tensor-based Pixels.
-# Covers gs201 (Tensor G2), zuma (Tensor G3), zumapro (Tensor G4).
+# Covers gs201 (Tensor G2), zuma (Tensor G3), zumapro (Tensor G4), laguna (Tensor G5).
 # Custom recovery modules (weaver, storageproxyd, etc.) are built from selfcode/.
 
 LOCAL_PATH := device/google/pixels
@@ -93,12 +93,16 @@ endif
 # conf-zuma/Android.bp    → fstab.zuma* from fstab.zuma.in        (Tensor G3, UFS 13200000)
 # conf-zumapro/f2fs/      → fstab.zumapro* from modular sources   (Tensor G4, UFS 13200000)
 # conf-gs201/Android.bp   → fstab.gs201* from fstab.gs201.in      (Tensor G2, UFS 14700000)
+# conf-laguna/f2fs/       → fstab.laguna* from modular sources    (Tensor G5, UFS 3c400000)
 # conf-gs101/             → future: fstab.gs101* (Tensor G1, UFS 14700000 — same as gs201)
 ifeq ($(DEVICE_BUILD_FLAG),zumapro)
 PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zuma.f2fs.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zuma-fips.f2fs.vendor_ramdisk
+else ifeq ($(DEVICE_BUILD_FLAG),laguna)
+PRODUCT_PACKAGES += fstab.laguna.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.laguna-fips.vendor_ramdisk
 else ifeq ($(DEVICE_BUILD_FLAG),gs201)
 PRODUCT_PACKAGES += fstab.gs201.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk

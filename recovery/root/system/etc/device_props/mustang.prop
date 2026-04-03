@@ -1,0 +1,35 @@
+# mustang.prop — Pixel 10 Pro XL (mustang) device identity
+# Applied by runatinit.sh during on early-init.
+
+ro.quick_start.device_id=mustang
+ro.lineage.device=mustang
+ro.crdroid.device=mustang
+ro.product.system.device=mustang
+ro.product.system.model=Pixel 10 Pro XL
+ro.product.system.name=mustang
+ro.system.build.fingerprint=google/mustang/mustang:16/BP1A.250505.001/12345678:user/release-keys
+ro.build.display.id=mustang-eng 99.87.36 BP1A.250505.001 eng.leegar.20260101.000000 test-keys
+ro.build.flavor=mustang-eng
+ro.build.product=mustang
+ro.build.description=mustang-user 16 BP1A.250505.001 12345678 release-keys
+ro.display.series=Pixel 10 Pro XL
+ro.product.vendor.device=mustang
+ro.product.vendor.model=Pixel 10 Pro XL
+ro.product.vendor.name=mustang
+ro.vendor.build.fingerprint=google/mustang/mustang:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.board=mustang
+ro.product.odm.device=mustang
+ro.product.odm.model=Pixel 10 Pro XL
+ro.product.odm.name=mustang
+ro.odm.build.fingerprint=google/mustang/mustang:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.product.device=mustang
+ro.product.product.model=Pixel 10 Pro XL
+ro.product.product.name=mustang
+ro.product.build.fingerprint=google/mustang/mustang:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.system_ext.device=mustang
+ro.product.system_ext.model=Pixel 10 Pro XL
+ro.product.system_ext.name=mustang
+ro.system_ext.build.fingerprint=google/mustang/mustang:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.device=mustang
+ro.product.name=mustang
+ro.product.model=Pixel 10 Pro XL

@@ -1,0 +1,87 @@
+/*
+ * Copyright (C) 2024 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// By default this device uses hardware-wrapped keys for storage encryption,
+// which is intended to offer increased security over the traditional method
+// (software keys).  However, hardware-wrapped keys aren't compatible with
+// FIPS-140 certification of the encryption hardware, and hence we have to
+// disable the use of them in FIPS mode.  This requires having two fstab files:
+// one for the default mode, and one for FIPS mode selectable via
+// androidboot.fstab_suffix on the kernel command line.  These fstabs should be
+// identical with the exception of the encryption settings, so to keep them in
+// sync the rules below generate them from a template file.
+
+genrule {
+    name: "gen_fstab.laguna-hw-encrypt",
+    srcs: [
+        ":fstab.laguna.common",
+        "fstab.rw.laguna.f2fs",
+    ],
+    out: ["fstab.laguna"],
+    cmd: "sed -e s/@fileencryption@/fileencryption=:aes-256-hctr2:inlinecrypt_optimized+wrappedkey_v0/" +
+        " -e s/@inlinecrypt@/inlinecrypt/ " +
+        " -e s/@metadata_encryption@/metadata_encryption=:wrappedkey_v0/ $(in) > $(out)",
+}
+
+genrule {
+    name: "gen_fstab.laguna-sw-encrypt",
+    srcs: [
+        ":fstab.laguna.common",
+        "fstab.rw.laguna.f2fs",
+    ],
+    out: ["fstab.laguna"],
+    cmd: "sed -e s/@fileencryption@/fileencryption=aes-256-xts:aes-256-hctr2/" +
+        " -e s/@inlinecrypt@// " +
+        " -e s/@metadata_encryption@/metadata_encryption=/ $(in) > $(out)",
+}
+
+genrule {
+    name: "gen_fstab.laguna-no-encrypt",
+    srcs: [
+        ":fstab.laguna.common",
+        "fstab.rw.laguna.f2fs",
+    ],
+    out: ["fstab.laguna"],
+    cmd: "sed -e s/@fileencryption@//" +
+        " -e s/@inlinecrypt@// " +
+        " -e s/@metadata_encryption@// $(in) > $(out)",
+}
+
+genrule {
+    name: "gen_fstab.laguna-fips",
+    srcs: [
+        ":fstab.laguna.common",
+        "fstab.rw.laguna.f2fs",
+    ],
+    out: ["fstab.laguna-fips"],
+    cmd: "sed -e s/@fileencryption@/fileencryption=aes-256-xts/" +
+        " -e s/@inlinecrypt@/inlinecrypt/ " +
+        " -e s/@metadata_encryption@/metadata_encryption=aes-256-xts/ $(in) > $(out)",
+}
+
+prebuilt_etc {
+    name: "fstab.laguna",
+    src: ":gen_fstab.laguna-hw-encrypt",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.laguna-fips",
+    src: ":gen_fstab.laguna-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}

@@ -59,13 +59,15 @@ echo "  1) zuma    (Tensor G3: Pixel 8/8 Pro/8a)"
 echo "  2) zumapro (Tensor G4: Pixel 9/9 Pro/9 Pro XL/9a)"
 echo "  3) gs201   (Tensor G2: Pixel 7/7 Pro/7a)"
 echo "  4) gs101   (Tensor G1: Pixel 6/6 Pro/6a) [WIP]"
+echo "  5) laguna  (Tensor G5: Pixel 10/10 Pro/10 Pro XL)"
 echo "=============================================="
-printf "  Choice [1/2/3/4] (timeout 15s): "
+printf "  Choice [1/2/3/4/5] (timeout 15s): "
 if read -t 15 _platform_choice 2>/dev/null; then
     case "$_platform_choice" in
         2) export DEVICE_BUILD_FLAG="zumapro" ;;
         3) export DEVICE_BUILD_FLAG="gs201" ;;
         4) export DEVICE_BUILD_FLAG="gs101" ;;
+        5) export DEVICE_BUILD_FLAG="laguna" ;;
         *) export DEVICE_BUILD_FLAG="zuma" ;;
     esac
 else
@@ -104,6 +106,8 @@ export FOX_AB_DEVICE=1
 export FOX_VENDOR_BOOT_RECOVERY=1
 if [ "$DEVICE_BUILD_FLAG" = "gs201" ] || [ "$DEVICE_BUILD_FLAG" = "gs101" ]; then
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/14700000.ufs/by-name/vendor_boot"
+elif [ "$DEVICE_BUILD_FLAG" = "laguna" ]; then
+    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/3c400000.ufs/by-name/vendor_boot"
 else
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/13200000.ufs/by-name/vendor_boot"
 fi
@@ -117,11 +121,14 @@ if [ "$DEVICE_BUILD_FLAG" = "zumapro" ]; then
     export TARGET_DEVICE_ALT="tokay,caiman,comet,komodo,tegu"
     export FOX_TARGET_DEVICES="tokay,caiman,comet,komodo,tegu"
 elif [ "$DEVICE_BUILD_FLAG" = "gs201" ]; then
-    export TARGET_DEVICE_ALT="panther,cheetah,lynx,pantah"
-    export FOX_TARGET_DEVICES="panther,cheetah,lynx,pantah"
+    export TARGET_DEVICE_ALT="panther,cheetah,lynx,tangorpro,pantah"
+    export FOX_TARGET_DEVICES="panther,cheetah,lynx,tangorpro,pantah"
 elif [ "$DEVICE_BUILD_FLAG" = "gs101" ]; then
     export TARGET_DEVICE_ALT="oriole,raven,bluejay"
     export FOX_TARGET_DEVICES="oriole,raven,bluejay"
+elif [ "$DEVICE_BUILD_FLAG" = "laguna" ]; then
+    export TARGET_DEVICE_ALT="blazer,mustang,frankel,rango,deepspace"
+    export FOX_TARGET_DEVICES="blazer,mustang,frankel,rango,deepspace"
 else
     export TARGET_DEVICE_ALT="shiba,husky,akita,shusky"
     export FOX_TARGET_DEVICES="shiba,husky,akita,shusky"
@@ -137,6 +144,8 @@ elif [ "$DEVICE_BUILD_FLAG" = "gs201" ]; then
     export OF_STATUS_H=130
 elif [ "$DEVICE_BUILD_FLAG" = "gs101" ]; then
     export OF_STATUS_H=130
+elif [ "$DEVICE_BUILD_FLAG" = "laguna" ]; then
+    export OF_STATUS_H=150
 else
     export OF_STATUS_H=130
 fi

@@ -1,0 +1,22 @@
+# This RC file is used for:
+#    - 16kb Developer option which can boot with 4kb/16kb page size.
+#    - 16kb targets only
+
+service copy_efs_files_to_data /vendor/bin/copy_efs_files_to_data
+    user root
+    group root radio system audio media graphics camera
+    stdio_to_kmsg
+    oneshot
+    disabled
+
+on post-fs-data && property:ro.boot.hardware.cpu.pagesize=16384
+    mkdir /data/vendor/copied 0775 radio system
+    restorecon_recursive /data/vendor/copied
+    exec_start copy_efs_files_to_data
+    mount_all /vendor/etc/fstab.efs.from_data
+    restorecon_recursive /mnt/vendor/persist
+    restorecon_recursive /data/vendor/ss
+    setprop ro.vendor.persist.status mounted
+
+on late-fs && property:ro.boot.hardware.cpu.pagesize=4096
+    mount_all /vendor/etc/fstab.efs --early

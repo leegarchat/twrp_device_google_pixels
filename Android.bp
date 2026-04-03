@@ -10,6 +10,7 @@ soong_namespace {
         "device/google/pixels/pixel-source/conf-zuma",
         "device/google/pixels/pixel-source/conf-gs201",
         "device/google/pixels/pixel-source/conf-zumapro",
+        "device/google/pixels/pixel-source/conf-laguna",
         "device/google/pixels/pixel-source/bootctrl/1.2",
     ],
 }

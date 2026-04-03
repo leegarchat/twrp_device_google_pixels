@@ -269,6 +269,10 @@ case "$device_code" in
         # Pixel 7a — Goodix + Focaltech touch (dual-source)
         modules_touch="stmvl53l1 lwis cl_dsp-core cs40l26-core cs40l26-i2c goodixfp heatmap goog_touch_interface goodix_brl_touch focal_touch fps_touch_handler"
         ;;
+    tangorpro)
+        # Pixel Tablet — Novatek NVT SPI touch (10.95" LCD, no camera ToF, no under-display FP)
+        modules_touch="heatmap goog_touch_interface nvt_touch touch_offload"
+        ;;
     # === zuma — Tensor G3 (Pixel 8 family) ===
     shiba)
         # Pixel 8
@@ -298,6 +302,19 @@ case "$device_code" in
     tegu)
         # Pixel 9a — Synaptics touch (no sec_touch, no QBT)
         modules_touch="stmvl53l1 lwis cl_dsp-core cs40l26-core cs40l26-i2c goodixfp heatmap goog_touch_interface syna_touch fps_touch_handler"
+        ;;
+    # === laguna — Tensor G5 (Pixel 10 family) ===
+    blazer)
+        # Pixel 10 Pro — Focaltech + Synaptics touch (dual-source)
+        modules_touch="lwis cl_dsp-core cs40l26-core cs40l26-i2c focal_touch syna_touch"
+        ;;
+    mustang)
+        # Pixel 10 Pro XL — Focaltech + Synaptics touch (dual-source)
+        modules_touch="lwis cl_dsp-core cs40l26-core cs40l26-i2c focal_touch syna_touch"
+        ;;
+    frankel)
+        # Pixel 10 — Focaltech + Synaptics touch (dual-source)
+        modules_touch="lwis cl_dsp-core cs40l26-core cs40l26-i2c focal_touch syna_touch"
         ;;
     *)
         modules_touch=""
@@ -362,6 +379,9 @@ if [ -n "$modules_touch" ]; then
             cs40l26_pm="/sys/devices/platform/10d50000.hsi2c/i2c-0/0-0043/power/control"
             ;;
         zumapro)
+            cs40l26_pm="/sys/devices/platform/10c80000.hsi2c/i2c-0/0-0043/power/control"
+            ;;
+        laguna)
             cs40l26_pm="/sys/devices/platform/10c80000.hsi2c/i2c-0/0-0043/power/control"
             ;;
         *)

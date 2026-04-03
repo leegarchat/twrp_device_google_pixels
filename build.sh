@@ -3,7 +3,7 @@
 # build.sh — OrangeFox Recovery build script for all Tensor Pixel devices.
 #
 # Usage:
-#   ./build.sh [--family gs201|zuma|zumapro|gs101] [--notrm] [-j N] [--name TAG] [--patch N]
+#   ./build.sh [--family gs201|zuma|zumapro|gs101|laguna] [--notrm] [-j N] [--name TAG] [--patch N]
 #
 # Options:
 #   --family FAMILY   Set SoC family before lunch (gs201/zuma/zumapro/gs101).
@@ -37,13 +37,13 @@ while [[ $# -gt 0 ]]; do
             shift
             FAMILY="${1:-}"
             if [[ -z "$FAMILY" ]]; then
-                echo "ERROR: --family requires an argument (gs201|zuma|zumapro|gs101)"
+                echo "ERROR: --family requires an argument (gs201|zuma|zumapro|gs101|laguna)"
                 exit 1
             fi
             case "$FAMILY" in
-                gs201|zuma|zumapro|gs101) ;;
+                gs201|zuma|zumapro|gs101|laguna) ;;
                 *)
-                    echo "ERROR: unknown family '$FAMILY'. Valid: gs201, zuma, zumapro, gs101"
+                    echo "ERROR: unknown family '$FAMILY'. Valid: gs201, zuma, zumapro, gs101, laguna"
                     exit 1
                     ;;
             esac

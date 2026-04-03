@@ -1,0 +1,38 @@
+# tangorpro.prop — Pixel Tablet (tangorpro) device identity
+# Applied by runatinit.sh during on early-init.
+
+ro.quick_start.device_id=tangorpro
+ro.lineage.device=tangorpro
+ro.crdroid.device=tangorpro
+ro.product.system.device=tangorpro
+ro.product.system.model=Pixel Tablet
+ro.product.system.name=tangorpro
+ro.system.build.fingerprint=google/tangorpro/tangorpro:16/CP1A.260305.018/14887507:user/release-keys
+ro.build.display.id=tangorpro-eng 99.87.36 CP1A.260305.018 eng.leegar.20260403.000000 test-keys
+ro.build.flavor=tangorpro-eng
+ro.build.product=tangorpro
+ro.build.description=tangorpro-user 16 CP1A.260305.018 14887507 release-keys
+ro.display.series=Pixel Tablet
+ro.product.vendor.device=tangorpro
+ro.product.vendor.model=Pixel Tablet
+ro.product.vendor.name=tangorpro
+ro.vendor.build.fingerprint=google/tangorpro/tangorpro:16/CP1A.260305.018/14887507:user/release-keys
+ro.product.board=tangorpro
+ro.product.odm.device=tangorpro
+ro.product.odm.model=Pixel Tablet
+ro.product.odm.name=tangorpro
+ro.odm.build.fingerprint=google/tangorpro/tangorpro:16/CP1A.260305.018/14887507:user/release-keys
+ro.product.product.device=tangorpro
+ro.product.product.model=Pixel Tablet
+ro.product.product.name=tangorpro
+ro.product.build.fingerprint=google/tangorpro/tangorpro:16/CP1A.260305.018/14887507:user/release-keys
+ro.product.system_ext.device=tangorpro
+ro.product.system_ext.model=Pixel Tablet
+ro.product.system_ext.name=tangorpro
+ro.system_ext.build.fingerprint=google/tangorpro/tangorpro:16/CP1A.260305.018/14887507:user/release-keys
+ro.product.device=tangorpro
+ro.product.name=tangorpro
+ro.product.model=Pixel Tablet
+ro.build.characteristics=tablet
+ro.build.device_family=T6P
+ro.support_one_handed_mode=false

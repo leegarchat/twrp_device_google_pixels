@@ -1,0 +1,9 @@
+# Android fstab file.
+#
+#<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>
+/dev/block/platform/3c400000.ufs/by-name/boot            /boot                       emmc    defaults                 slotselect,avb=boot,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/init_boot       /init_boot                  emmc    defaults                 slotselect,avb=init_boot,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/misc            /misc                       emmc    defaults                 wait
+#/dev/block/platform/3c400000.ufs/by-name/pvmfw           /pvmfw                      emmc    defaults                 wait,slotselect,avb=pvmfw,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/vbmeta          /vbmeta                     emmc    defaults                 slotselect,first_stage_mount
+/devices/platform/*/c400000.dwc3*                                 auto                        vfat    defaults                 voldmanaged=usb:auto

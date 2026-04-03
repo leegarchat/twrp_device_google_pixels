@@ -1,0 +1,50 @@
+# laguna_common.prop — shared properties for all Laguna (Tensor G5) devices
+# Applied by runatinit.sh during on early-init.
+# Devices: blazer (Pixel 10 Pro), mustang (Pixel 10 Pro XL), frankel (Pixel 10)
+
+# SoC family identifier — used by init.rc for conditional service start
+ro.recovery.soc_family=laguna
+
+persist.wm.extensions.enabled=true
+ro.com.google.ime.kb_pad_port_b=8
+ro.support_hide_display_cutout=true
+ro.opa.eligible_device=true
+persist.sys.usb.config=mtp,adb
+ro.incremental.enable=true
+persist.vendor.enable.thermal.genl=true
+vendor.pktrouter=1
+ro.product.ab_ota_partitions=abl,bl1,bl2,bl31,boot,dtbo,gcf,gsa,gsa_bl1,init_boot,ldfw,modem,pbl,product,pvmfw,system,system_dlkm,system_ext,tzsw,vbmeta,vbmeta_vendor,vendor,vendor_boot,vendor_dlkm,vendor_kernel_boot
+ro.frp.pst=/dev/block/by-name/frp
+ro.hardware.keystore=trusty
+ro.hardware.gatekeeper=trusty
+ro.hardware.keystore_desede=true
+debug.stagefright.c2inputsurface=-1
+ro.vendor.gpu.dataspace=1
+dalvik.vm.isa.arm64.variant=cortex-a76
+ro.bionic.cpu_variant=cortex-a76
+drm.service.enabled=true
+media.mediadrmservice.enable=true
+persist.vendor.ril.ecc.use.xml=1
+persist.vendor.ril.support_nr_ds=1
+persist.vendor.ril.use_radio_hal=2.1
+ro.vendor.config.build_carrier=europen
+vendor.rild.libpath=libsitril.so
+vendor.debug.ssrdump.type=sscoredump
+ro.soc.model=Tensor G5
+dumpstate.strict_run=false
+persist.vendor.testing_battery_profile=2
+masterclear.allow_retain_esim_profiles_after_fdr=true
+ro.thermal_warmreset=true
+ro.preventative_fsck=1
+ro.crypto.volume.options=
+ro.arm64.memtag.bootctl_supported=1
+persist.arm64.memtag.app.com.android.se=off
+persist.arm64.memtag.app.com.android.nfc=off
+persist.arm64.memtag.system_server=off
+ro.support_one_handed_mode=true
+ro.quick_start.oem_id=00e0
+vendor.display.lbe.supported=0
+debug.sf.treat_170m_as_sRGB=0
+ro.surface_flinger.supports_background_blur=false
+ro.hardware.egl=angle
+ro.hardware.vulkan=powervr

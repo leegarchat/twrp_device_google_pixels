@@ -1,0 +1,92 @@
+# twrp_laguna.flags — Tensor G5 (laguna / Pixel 10 family) | UFS @ 3c400000
+# Structure identical to twrp.flags, only UFS controller address differs: 3c400000 vs 13200000.
+# USB OTG via c400000.dwc3 (not 11210000.dwc3).
+#
+# mount point         fstype  device                                                             flags
+
+# ============================================================
+# 1. Dynamic logical partitions (in super, A/B via slotselect)
+# ============================================================
+/system              ext4    /dev/block/mapper/system                                           flags=display="System";logical;backup=1;slotselect
+/system_ext          ext4    /dev/block/mapper/system_ext                                       flags=display="System Ext";logical;backup=1;slotselect
+/system_dlkm         ext4    /dev/block/mapper/system_dlkm                                      flags=display="System DLKM (GKI kernel modules)";logical;backup=1;slotselect
+/product             ext4    /dev/block/mapper/product                                          flags=display="Product";logical;backup=1;slotselect
+/vendor              ext4    /dev/block/mapper/vendor                                           flags=display="Vendor";logical;backup=1;slotselect
+/vendor_dlkm         ext4    /dev/block/mapper/vendor_dlkm                                      flags=display="Vendor DLKM (device kernel modules)";logical;backup=1;slotselect
+
+# ============================================================
+# 2. Metadata (FBE key wrapping) + Internal Storage
+# ============================================================
+/metadata            f2fs    /dev/block/platform/3c400000.ufs/by-name/metadata                  flags=display="Metadata (FBE crypto info)";backup=1;wipeingui;wrappedkey
+
+# Internal Storage (/sdcard = /data/media/0) — file-based backup (tar snapshot, not disk image).
+/storage             ext4    /data/media/0                                                      flags=display="Internal Storage (Files / sdcard)";backup=1;usermrf;fsflags="bind";removable
+
+# ============================================================
+# 3. Boot images (A/B slotted, raw images)
+# ============================================================
+/boot                emmc    /dev/block/platform/3c400000.ufs/by-name/boot                      flags=slotselect;display="Boot Image";backup=1;flashimg=1
+/init_boot           emmc    /dev/block/platform/3c400000.ufs/by-name/init_boot                 flags=slotselect;display="Init Boot (Generic Ramdisk)";backup=1;flashimg=1
+/vendor_boot         emmc    /dev/block/platform/3c400000.ufs/by-name/vendor_boot                flags=slotselect;display="Vendor Boot (OrangeFox Recovery)";backup=1;flashimg=1
+/vendor_kernel_boot  emmc    /dev/block/platform/3c400000.ufs/by-name/vendor_kernel_boot         flags=slotselect;display="Vendor Kernel Boot (GKI modules)";backup=1;flashimg=1
+/dtbo                emmc    /dev/block/platform/3c400000.ufs/by-name/dtbo                      flags=slotselect;display="DTBO (Device Tree Overlay)";backup=1;flashimg=1
+
+# ============================================================
+# 4. Verified Boot metadata (A/B slotted)
+# ============================================================
+/vbmeta              emmc    /dev/block/platform/3c400000.ufs/by-name/vbmeta                    flags=slotselect;display="VBMeta (Verified Boot)";backup=1;flashimg=1
+/vbmeta_system       emmc    /dev/block/platform/3c400000.ufs/by-name/vbmeta_system             flags=slotselect;display="VBMeta System";backup=1;flashimg=1
+/vbmeta_vendor       emmc    /dev/block/platform/3c400000.ufs/by-name/vbmeta_vendor             flags=slotselect;display="VBMeta Vendor";backup=1;flashimg=1
+
+# ============================================================
+# 5. Modem / Radio firmware (A/B slotted, ~200 MB each)
+# ============================================================
+/modem               emmc    /dev/block/platform/3c400000.ufs/by-name/modem                     flags=slotselect;display="Modem (Radio Firmware)";backup=1;flashimg=1
+
+# ============================================================
+# 6. Bootloader chain (A/B slotted)
+# ============================================================
+/abl                 emmc    /dev/block/platform/3c400000.ufs/by-name/abl                       flags=slotselect;display="ABL (Android Bootloader)";backup=1;flashimg=1
+/bl1                 emmc    /dev/block/platform/3c400000.ufs/by-name/bl1                       flags=slotselect;display="BL1 (First-stage Bootloader)";backup=1;flashimg=1
+/bl2                 emmc    /dev/block/platform/3c400000.ufs/by-name/bl2                       flags=slotselect;display="BL2 (Second-stage Bootloader)";backup=1;flashimg=1
+/bl31                emmc    /dev/block/platform/3c400000.ufs/by-name/bl31                      flags=slotselect;display="BL31 (ARM Trusted Firmware)";backup=1;flashimg=1
+/pvmfw               emmc    /dev/block/platform/3c400000.ufs/by-name/pvmfw                     flags=slotselect;display="PVMFW (Protected VM Firmware)";backup=1;flashimg=1
+/tzsw                emmc    /dev/block/platform/3c400000.ufs/by-name/tzsw                      flags=slotselect;display="TZSW (TrustZone Software)";backup=1;flashimg=1
+/ldfw                emmc    /dev/block/platform/3c400000.ufs/by-name/ldfw                      flags=slotselect;display="LDFW (Load Device Firmware / GSA)";backup=1;flashimg=1
+
+# ============================================================
+# 7. Google Security Chip / Secure Processor (A/B slotted)
+# ============================================================
+/gsa                 emmc    /dev/block/platform/3c400000.ufs/by-name/gsa                       flags=slotselect;display="GSA (Google Security Chip Firmware)";backup=1;flashimg=1
+/gsa_bl1             emmc    /dev/block/platform/3c400000.ufs/by-name/gsa_bl1                   flags=slotselect;display="GSA BL1 (Security Chip 1st-stage)";backup=1;flashimg=1
+/gcf                 emmc    /dev/block/platform/3c400000.ufs/by-name/gcf                       flags=slotselect;display="GCF (Google Compute Firmware)";backup=1;flashimg=1
+/pbl                 emmc    /dev/block/platform/3c400000.ufs/by-name/pbl                       flags=slotselect;display="PBL (Primary Bootloader)";backup=1;flashimg=1
+
+# ============================================================
+# 8. Critical persistent non-slotted partitions
+# CAUTION: efs contains IMEI + modem calibration — backup before flashing!
+# ============================================================
+/efs                 ext4    /dev/block/platform/3c400000.ufs/by-name/efs                       flags=display="EFS (IMEI + Modem Calibration)";backup=1;wipeingui
+/efs_backup          ext4    /dev/block/platform/3c400000.ufs/by-name/efs_backup                flags=display="EFS Backup";backup=1
+/persist             ext4    /dev/block/platform/3c400000.ufs/by-name/persist                   flags=display="Persist (DRM keys + WiFi calibration)";backup=1
+/fips                emmc    /dev/block/platform/3c400000.ufs/by-name/fips                      flags=display="FIPS (Cryptographic Module)";backup=1;flashimg=1
+/trusty_persist      emmc    /dev/block/platform/3c400000.ufs/by-name/trusty_persist             flags=display="Trusty Persist (TEE persistent data)";backup=1;flashimg=1
+/trusty_userdata     emmc    /dev/block/platform/3c400000.ufs/by-name/trusty_userdata            flags=display="Trusty User Data (TEE + KeyMint)";backup=1;flashimg=1
+/modem_userdata      emmc    /dev/block/platform/3c400000.ufs/by-name/modem_userdata             flags=display="Modem User Data";backup=1;flashimg=1
+
+# ============================================================
+# 9. Misc non-critical / state
+# ============================================================
+/misc                emmc    /dev/block/platform/3c400000.ufs/by-name/misc                      flags=display="Misc (OTA state, bootloader messages)";backup=1;flashimg=1
+
+# ============================================================
+# 10. External Storage (USB OTG)
+# ============================================================
+/usb_otg             auto    /dev/block/sdd1                                                    flags=display="USB OTG (External Drive)";storage;wipeingui;removable;fsflags="utf8"
+
+# ============================================================
+# 11. Bootloader non-A/B persistent partitions
+# ============================================================
+/devinfo             emmc    /dev/block/platform/3c400000.ufs/by-name/devinfo                   flags=display="DevInfo (unlock state)";backup=1;flashimg=1
+/blenv               emmc    /dev/block/platform/3c400000.ufs/by-name/blenv                     flags=display="BL Env (bootloader params)";backup=1;flashimg=1
+/dram_train          emmc    /dev/block/platform/3c400000.ufs/by-name/dram_train                flags=display="DRAM Training Data";backup=1;flashimg=1

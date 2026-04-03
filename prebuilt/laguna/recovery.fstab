@@ -1,0 +1,22 @@
+# recovery.fstab — Partition layout for Laguna SoC (Tensor G5) Pixel devices.
+# UFS controller at 3c400000, DWC3 USB at c400000 via c450000.usb3.
+# Covers blazer (Pixel 10 Pro), mustang (Pixel 10 Pro XL), frankel (Pixel 10).
+#
+# FBE encryption: aes-256-hctr2 with wrappedkey_v0 (hardware-wrapped keys via KeyMint)
+# Metadata encryption: wrappedkey_v0 via Trusty TEE
+#
+# Android fstab file.
+#<src>                                                   <mnt_point>          <type>  <mnt_flags and options>                    <fs_mgr_flags>
+system                                                   /system              ext4    noatime,ro                                wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+system_dlkm                                              /system_dlkm         ext4    noatime,ro                                wait,slotselect,avb=vbmeta_system,avb_keys=no_such_key,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext          ext4    noatime,ro                                wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product             ext4    noatime,ro                                wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor              ext4    noatime,ro                                wait,slotselect,avb=vbmeta_vendor,logical,first_stage_mount,readahead_size_kb=128
+vendor_dlkm                                              /vendor_dlkm         ext4    noatime,ro                                wait,slotselect,avb=vbmeta,avb_keys=no_such_key,logical,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/boot            /boot                emmc    defaults                                  slotselect,avb=boot,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/init_boot       /init_boot           emmc    defaults                                  slotselect,avb=init_boot,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/misc            /misc                emmc    defaults                                  wait
+/dev/block/platform/3c400000.ufs/by-name/metadata        /metadata            f2fs    noatime,nosuid,nodev,sync                 wait,check,formattable,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/userdata        /data                f2fs    noatime,nosuid,nodev,discard,reserve_root=32768,resgid=1065,fsync_mode=posix,compress_extension=apk,compress_extension=apex,compress_extension=so,compress_extension=vdex,compress_extension=odex,inlinecrypt,atgc,checkpoint_merge,compress_cache    latemount,wait,check,quota,formattable,sysfs_path=/dev/sys/block/bootdevice,checkpoint=fs,reservedsize=128M,fscompress,readahead_size_kb=128,fileencryption=:aes-256-hctr2:inlinecrypt_optimized+wrappedkey_v0,metadata_encryption=:wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,zoned_device
+/dev/block/platform/3c400000.ufs/by-name/vbmeta          /vbmeta              emmc    defaults                                  slotselect,first_stage_mount
+/devices/platform/simple_usb_bus/c450000.usb3/c400000.dwc3*  auto             auto    defaults                 voldmanaged=usb:auto

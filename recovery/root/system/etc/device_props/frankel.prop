@@ -1,0 +1,35 @@
+# frankel.prop — Pixel 10 (frankel) device identity
+# Applied by runatinit.sh during on early-init.
+
+ro.quick_start.device_id=frankel
+ro.lineage.device=frankel
+ro.crdroid.device=frankel
+ro.product.system.device=frankel
+ro.product.system.model=Pixel 10
+ro.product.system.name=frankel
+ro.system.build.fingerprint=google/frankel/frankel:16/BP1A.250505.001/12345678:user/release-keys
+ro.build.display.id=frankel-eng 99.87.36 BP1A.250505.001 eng.leegar.20260101.000000 test-keys
+ro.build.flavor=frankel-eng
+ro.build.product=frankel
+ro.build.description=frankel-user 16 BP1A.250505.001 12345678 release-keys
+ro.display.series=Pixel 10
+ro.product.vendor.device=frankel
+ro.product.vendor.model=Pixel 10
+ro.product.vendor.name=frankel
+ro.vendor.build.fingerprint=google/frankel/frankel:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.board=frankel
+ro.product.odm.device=frankel
+ro.product.odm.model=Pixel 10
+ro.product.odm.name=frankel
+ro.odm.build.fingerprint=google/frankel/frankel:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.product.device=frankel
+ro.product.product.model=Pixel 10
+ro.product.product.name=frankel
+ro.product.build.fingerprint=google/frankel/frankel:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.system_ext.device=frankel
+ro.product.system_ext.model=Pixel 10
+ro.product.system_ext.name=frankel
+ro.system_ext.build.fingerprint=google/frankel/frankel:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.device=frankel
+ro.product.name=frankel
+ro.product.model=Pixel 10

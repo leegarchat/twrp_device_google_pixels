@@ -1,0 +1,2 @@
+on late-fs
+    mount_all /vendor/etc/fstab.efs --early

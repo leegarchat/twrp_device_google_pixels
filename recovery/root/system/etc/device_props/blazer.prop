@@ -1,0 +1,35 @@
+# blazer.prop — Pixel 10 Pro (blazer) device identity
+# Applied by runatinit.sh during on early-init.
+
+ro.quick_start.device_id=blazer
+ro.lineage.device=blazer
+ro.crdroid.device=blazer
+ro.product.system.device=blazer
+ro.product.system.model=Pixel 10 Pro
+ro.product.system.name=blazer
+ro.system.build.fingerprint=google/blazer/blazer:16/BP1A.250505.001/12345678:user/release-keys
+ro.build.display.id=blazer-eng 99.87.36 BP1A.250505.001 eng.leegar.20260101.000000 test-keys
+ro.build.flavor=blazer-eng
+ro.build.product=blazer
+ro.build.description=blazer-user 16 BP1A.250505.001 12345678 release-keys
+ro.display.series=Pixel 10 Pro
+ro.product.vendor.device=blazer
+ro.product.vendor.model=Pixel 10 Pro
+ro.product.vendor.name=blazer
+ro.vendor.build.fingerprint=google/blazer/blazer:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.board=blazer
+ro.product.odm.device=blazer
+ro.product.odm.model=Pixel 10 Pro
+ro.product.odm.name=blazer
+ro.odm.build.fingerprint=google/blazer/blazer:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.product.device=blazer
+ro.product.product.model=Pixel 10 Pro
+ro.product.product.name=blazer
+ro.product.build.fingerprint=google/blazer/blazer:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.system_ext.device=blazer
+ro.product.system_ext.model=Pixel 10 Pro
+ro.product.system_ext.name=blazer
+ro.system_ext.build.fingerprint=google/blazer/blazer:16/BP1A.250505.001/12345678:user/release-keys
+ro.product.device=blazer
+ro.product.name=blazer
+ro.product.model=Pixel 10 Pro
