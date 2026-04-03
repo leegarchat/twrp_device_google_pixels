@@ -426,6 +426,10 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
 					Disable_MTP();
 			}
 
+			// Cache password for auto-decrypt on /data remount (memory only, not persisted)
+			DataManager::SetValue("tw_fbe_cached_password", Password);
+			LOGINFO("FBE password cached for auto-decrypt on remount\n");
+
 			return 0;
 		} else {
 			gui_msg(Msg(msg::kError, "decrypt_user_fail_fbe=Failed to decrypt user {1}")(user_id));
@@ -438,4 +442,3 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
 """
             )
         ]
-

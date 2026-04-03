@@ -238,6 +238,26 @@ lgz_compress_zip_contents() {
             fi
         done < <(find "$tmpdir" -type f)
 
+        # --- DFE.zip: patch NEO.config FSTAB_EXTENSION to match build platform ---
+        local zip_basename
+        zip_basename="$(basename "$zipfile")"
+        if [ "$zip_basename" = "DFENEO.zip" ]; then
+            local neo_config
+            neo_config=$(find "$tmpdir" -name "NEO.config" -type f | head -1)
+            if [ -n "$neo_config" ]; then
+                local platform="$PLATFORM"
+                if grep -q '^FSTAB_EXTENSION=' "$neo_config"; then
+                    sed -i "s/^FSTAB_EXTENSION=.*/FSTAB_EXTENSION=$platform/" "$neo_config"
+                    echo "    [LGZ-ZIP]   DFE: patched NEO.config FSTAB_EXTENSION=$platform"
+                    compressed_any=1
+                else
+                    echo "    [LGZ-ZIP]   DFE: WARNING: FSTAB_EXTENSION not found in NEO.config"
+                fi
+            else
+                echo "    [LGZ-ZIP]   DFE: WARNING: NEO.config not found inside DFE.zip"
+            fi
+        fi
+
         if [ "$compressed_any" -eq 1 ]; then
             # Repack as store-mode zip (LZMA2 data doesn't benefit from deflate)
             local new_zip="${zipfile}.lgz_new"
