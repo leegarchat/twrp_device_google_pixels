@@ -340,20 +340,8 @@ if [ -n "$modules_touch" ]; then
 
         if mount -r "$blk" "$tmp_mnt" 2>>"$LOGF"; then
             local _copied=0
-            if [ -f "$tmp_mnt/firmware/cs40l26.wmfw" ]; then
-                cp "$tmp_mnt"/firmware/* /vendor/firmware/ 2>>"$LOGF"
-                echo "I:vendor_fw: cs40l26 firmware copied from $blk" >> "$LOGF"
-                _copied=1
-            fi
-            if [ "$device_code" = "tangorpro" ] && [ -f "$tmp_mnt/firmware/novatek_ts_fw.bin" ]; then
-                mkdir -p /lib/firmware
-                cp "$tmp_mnt"/firmware/novatek_ts_fw*.bin /lib/firmware/ 2>>"$LOGF"
-                echo "I:nvt_fw: NVT touch firmware copied from $blk" >> "$LOGF"
-                _copied=1
-            fi
+            cp "$tmp_mnt"/firmware/* /vendor/firmware/ 2>>"$LOGF"
             umount "$tmp_mnt" 2>/dev/null
-            [ "$_copied" = "1" ] && return 0
-            echo "W:vendor_fw: No required firmware in $blk" >> "$LOGF"
         else
             echo "W:vendor_fw: Cannot mount $blk" >> "$LOGF"
         fi
@@ -365,8 +353,7 @@ if [ -n "$modules_touch" ]; then
     elif try_mount_vendor_fw "/dev/block/mapper/vendor${unsuffix}" "$unsuffix" "$unslot"; then
         : # success from opposite slot
     elif [ -b /dev/block/by-name/vendor ] && mount -r /dev/block/by-name/vendor "$tmp_mnt" 2>>"$LOGF"; then
-        cp "$tmp_mnt"/firmware/cs40l26* /vendor/firmware/ 2>>"$LOGF"
-        cp "$tmp_mnt"/firmware/cl_dsp* /vendor/firmware/ 2>>"$LOGF"
+        cp "$tmp_mnt"/firmware/* /vendor/firmware/ 2>>"$LOGF"
         umount "$tmp_mnt" 2>/dev/null
         echo "I:vendor_fw: Firmware copied from /dev/block/by-name/vendor" >> "$LOGF"
     else
