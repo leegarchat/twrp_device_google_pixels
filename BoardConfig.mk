@@ -326,7 +326,7 @@ BOARD_SUPPRESS_SECURE_ERASE := true
 BOARD_MOVE_GSI_AVB_KEYS_TO_VENDOR_BOOT := true
 ENABLE_SCHEDBOOST := true
 TW_BATTERY_SYSFS_WAIT_SECONDS := 6
-TW_VERSION := LeeGarChat
+TW_VERSION := qnorsten
 LC_ALL := C
 TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.0/lun.%d/file
 

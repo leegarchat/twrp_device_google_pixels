@@ -96,7 +96,7 @@
 				<listitem name="Flash DFE-neo">
 					<icon res="bs_adv_se"/>
 					<!-- <condition var1="utils_show" var2="1"/> -->
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Flash DFE-Neo</action>
 					<action function="set">tw_file=DFENEO.zip</action>
 					<action function="set">tw_filename=/system/bin/DFENEO.zip</action>
@@ -114,7 +114,7 @@
 					<condition var1="fileexists" op="!=" var2="/FFiles/check_dfe_and_reflash"/>
 					<condition var1="fileexists" op="!=" var2="/sdcard/Fox/check_dfe_and_reflash"/>
 					<!-- <condition var1="utils_show" var2="1"/> -->
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Enable dfe-neo healing check</action>
 					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_on.zip</action>
 					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_on.zip</action>
@@ -132,7 +132,7 @@
 					<condition var1="fileexists" op="!=" var2="/FFiles/check_dfe_and_reflash"/>
 					<condition var1="fileexists" var2="/sdcard/Fox/check_dfe_and_reflash"/>
 					<!-- <condition var1="utils_show" var2="1"/> -->
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Disable dfe-neo healing check</action>
 					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_off.zip</action>
 					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_off.zip</action>
@@ -149,7 +149,7 @@
 					<condition var1="fileexists" var2="/FFiles/check_dfe_and_reflash"/>
 					<condition var1="fileexists" var2="/sdcard/Fox/check_dfe_and_reflash"/>
 					<!-- <condition var1="utils_show" var2="1"/> -->
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Disable dfe-neo healing check</action>
 					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_off.zip</action>
 					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_off.zip</action>
@@ -166,7 +166,7 @@
 					<condition var1="fileexists" var2="/FFiles/check_dfe_and_reflash"/>
 					<condition var1="fileexists" op="!=" var2="/sdcard/Fox/check_dfe_and_reflash"/>
 					<!-- <condition var1="utils_show" var2="1"/> -->
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Disable dfe-neo healing check</action>
 					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_off.zip</action>
 					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_off.zip</action>
@@ -210,7 +210,7 @@
 				<listitem name="Expand partitions for large GAPPS">
 					<icon res="bs_adv_se"/>
 					<condition var1="utils_show" var2="1"/>
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Expand partitions for large GAPPS</action>
 					<action function="set">tw_file=EXPANDPARTITIONS.zip</action>
 					<action function="set">tw_filename=/system/bin/EXPANDPARTITIONS.zip</action>
@@ -225,7 +225,7 @@
 				<listitem name="Fix backup with KSU (resize modules.img)">
 					<icon res="bs_adv_se"/>
 					<condition var1="utils_show" var2="1"/>
-					<action function="set">fox_m_author=LeeGarChat</action>
+					<action function="set">fox_m_author=qnorsten</action>
 					<action function="set">fox_m_name=Fix backup with KSU (resize modules.img)</action>
 					<action function="set">tw_file=FIXBACKUPKSU.zip</action>
 					<action function="set">tw_filename=/system/bin/FIXBACKUPKSU.zip</action>
