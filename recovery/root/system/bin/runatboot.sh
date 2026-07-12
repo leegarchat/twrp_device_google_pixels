@@ -299,6 +299,12 @@ case "$device_code" in
         # Pixel 9a — Synaptics touch (no sec_touch, no QBT)
         modules_touch="stmvl53l1 lwis cl_dsp-core cs40l26-core cs40l26-i2c goodixfp heatmap goog_touch_interface syna_touch fps_touch_handler"
         ;;
+    stallion)
+        # Pixel 10a — CONFIRMED via real-device vendor_dlkm inspection:
+        # uses FocalTech (focal_touch), not Synaptics (syna_touch) like tegu.
+        # All other haptics/proximity/fingerprint modules match tegu.
+        modules_touch="stmvl53l1 lwis cl_dsp-core cs40l26-core cs40l26-i2c goodixfp heatmap goog_touch_interface focal_touch fps_touch_handler"
+        ;;
     *)
         modules_touch=""
         ;;

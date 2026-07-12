@@ -179,7 +179,7 @@ _log "/dev/block contents: $(ls /dev/block/ 2>/dev/null | tr '\n' ' ')"
 case "$device_code" in
     panther|cheetah|lynx|gs201)      family="gs201" ;;
     shiba|husky|akita|zuma)          family="zuma" ;;
-    tokay|komodo|caiman|tegu|zumapro) family="zumapro" ;;
+    tokay|komodo|caiman|tegu|stallion|zumapro) family="zumapro" ;;
     *)                                family="" ;;
 esac
 _log "detected family=$family"
