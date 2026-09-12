@@ -170,6 +170,26 @@ lgz_patch_dfe_zip() {
     rm -rf "$tmpdir"
 }
 
+# Worker threads for the packer. nproc is BANNED in make recipe shells
+# (Android PATH_Tools: non-hermetic), so fall back down the chain.
+# NOTE: level 0 packs serially by design; threads matter for level 1+.
+lgz_detect_jobs() {
+    local jobs
+    jobs=$(nproc 2>/dev/null) && [ "$jobs" -gt 0 ] 2>/dev/null && {
+        echo "$jobs"
+        return 0
+    }
+    jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null) && [ "$jobs" -gt 0 ] 2>/dev/null && {
+        echo "$jobs"
+        return 0
+    }
+    jobs=$(grep -c ^processor /proc/cpuinfo 2>/dev/null) && [ "$jobs" -gt 0 ] 2>/dev/null && {
+        echo "$jobs"
+        return 0
+    }
+    echo 4
+}
+
 lgz_compress_ramdisk() {
     local ramdisk_root="$1"
     local lgz_bin
@@ -287,15 +307,20 @@ lgz_compress_ramdisk() {
         pack_ok=0
     else
 
-    local total_original
-    total_original=$(tr '\n' '\0' < "$packed_list" | du -cb --files0-from=- 2>/dev/null | tail -1 | cut -f1)
-    total_original="${total_original:-0}"
+    local total_original=0
+    while IFS= read -r packed; do
+        local sz
+        sz=$(stat -c%s "$packed" 2>/dev/null || echo 0)
+        total_original=$((total_original + sz))
+    done < "$packed_list"
 
     # Pack: manifest paths are relative, so run from the ramdisk root.
     # --preserve-all stores perms/owner from the FS for correct restore.
-    echo "    [LGZ] Packing $entry_count entries (level $level)..."
+    local lgz_jobs
+    lgz_jobs=$(lgz_detect_jobs)
+    echo "    [LGZ] Packing $entry_count entries (level $level, $lgz_jobs threads)..."
     ( cd "$ramdisk_root" && "$lgz_bin" pack "$pack_manifest" "$cluster" \
-        -l "$level" -j "$(nproc)" --preserve-all )
+        -l "$level" -j "$lgz_jobs" --preserve-all )
     local pack_rc=$?
 
     local cluster_size
