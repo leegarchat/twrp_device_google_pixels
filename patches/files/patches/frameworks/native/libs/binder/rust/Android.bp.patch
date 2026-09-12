@@ -1,0 +1,18 @@
+--- a/frameworks/native/libs/binder/rust/Android.bp
++++ b/frameworks/native/libs/binder/rust/Android.bp
+@@ -19,6 +19,7 @@
+     host_supported: true,
+     vendor_available: true,
+     product_available: true,
++    recovery_available: true,
+     target: {
+         darwin: {
+             enabled: false,
+@@ -71,6 +72,7 @@
+     host_supported: true,
+     vendor_available: true,
+     product_available: true,
++    recovery_available: true,
+     target: {
+         darwin: {
+             enabled: false,

@@ -1,0 +1,9 @@
+--- a/external/rust/crates/libc/Android.bp
++++ b/external/rust/crates/libc/Android.bp
+@@ -72,5 +72,6 @@
+     ],
+     product_available: true,
+     vendor_available: true,
++    recovery_available: true,
+     min_sdk_version: "29",
+ }

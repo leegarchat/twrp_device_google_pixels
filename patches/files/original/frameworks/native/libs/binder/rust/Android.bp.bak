@@ -1,0 +1,152 @@
+package {
+    // See: http://go/android-license-faq
+    // A large-scale-change added 'default_applicable_licenses' to import
+    // all of the 'license_kinds' from "frameworks_native_license"
+    // to get the below license kinds:
+    //   SPDX-license-identifier-Apache-2.0
+    default_applicable_licenses: ["frameworks_native_license"],
+}
+
+rust_library {
+    name: "libbinder_rs",
+    crate_name: "binder",
+    srcs: ["src/lib.rs"],
+    rustlibs: [
+        "libbinder_ndk_sys",
+        "libdowncast_rs",
+        "liblibc",
+    ],
+    host_supported: true,
+    vendor_available: true,
+    product_available: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.rkpd",
+        "com.android.uwb",
+        "com.android.virt",
+    ],
+    min_sdk_version: "Tiramisu",
+}
+
+rust_library {
+    name: "libbinder_tokio_rs",
+    crate_name: "binder_tokio",
+    srcs: ["binder_tokio/lib.rs"],
+    rustlibs: [
+        "libbinder_rs",
+        "libtokio",
+    ],
+    host_supported: true,
+    vendor_available: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.uwb",
+        "com.android.virt",
+    ],
+    min_sdk_version: "Tiramisu",
+}
+
+rust_library {
+    name: "libbinder_ndk_sys",
+    crate_name: "binder_ndk_sys",
+    srcs: [
+        "sys/lib.rs",
+        ":libbinder_ndk_bindgen",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+    ],
+    host_supported: true,
+    vendor_available: true,
+    product_available: true,
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.rkpd",
+        "com.android.uwb",
+        "com.android.virt",
+    ],
+    min_sdk_version: "Tiramisu",
+    lints: "none",
+    clippy_lints: "none",
+    visibility: [":__subpackages__"],
+}
+
+rust_bindgen {
+    name: "libbinder_ndk_bindgen",
+    crate_name: "binder_ndk_bindgen",
+    wrapper_src: "sys/BinderBindings.hpp",
+    source_stem: "bindings",
+    bindgen_flag_files: [
+        // Unfortunately the only way to specify the rust_non_exhaustive enum
+        // style for a type is to make it the default
+        // and then specify constified enums for the enums we don't want
+        // rustified
+        "libbinder_ndk_bindgen_flags.txt",
+    ],
+    shared_libs: [
+        "libbinder_ndk",
+    ],
+    host_supported: true,
+    vendor_available: true,
+    product_available: true,
+
+    // Currently necessary for host builds
+    // TODO(b/31559095): bionic on host should define this
+    target: {
+        darwin: {
+            enabled: false,
+        },
+    },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.rkpd",
+        "com.android.uwb",
+        "com.android.virt",
+    ],
+    min_sdk_version: "Tiramisu",
+}
+
+rust_test {
+    name: "libbinder_rs-internal_test",
+    crate_name: "binder",
+    srcs: ["src/lib.rs"],
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    shared_libs: [
+        "libbinder_ndk",
+    ],
+    rustlibs: [
+        "libbinder_ndk_sys",
+        "libdowncast_rs",
+        "liblibc",
+    ],
+}
+
+rust_test {
+    name: "libbinder_ndk_bindgen_test",
+    srcs: [":libbinder_ndk_bindgen"],
+    crate_name: "binder_ndk_bindgen",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    clippy_lints: "none",
+    lints: "none",
+}
