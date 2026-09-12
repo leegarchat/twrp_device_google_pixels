@@ -34,6 +34,14 @@ else
     PLATFORM="${DEVICE_BUILD_FLAG:-zuma}"
 fi
 : "${PLATFORM:=zuma}"
+# LGZ level arrives via .build_platform.conf (recipe shells strip custom
+# env vars); fall back to env, then default 0. Validated 0-3.
+: "${LGZ_LEVEL:=0}"
+case "$LGZ_LEVEL" in
+    0|1|2|3) ;;
+    *) echo "    [CONFIG] WARNING: bad LGZ_LEVEL='$LGZ_LEVEL', using 0"; LGZ_LEVEL=0 ;;
+esac
+echo "    [CONFIG] LGZ_LEVEL=$LGZ_LEVEL"
 
 # =========================================================================
 # LGZ compression configuration
