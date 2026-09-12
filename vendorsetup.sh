@@ -114,8 +114,8 @@ export OF_DISABLE_MIUI_SPECIFIC_FEATURES=1
 
 # --- Multi-device support ---
 if [ "$DEVICE_BUILD_FLAG" = "zumapro" ]; then
-    export TARGET_DEVICE_ALT="tokay,caiman,comet,komodo,tegu"
-    export FOX_TARGET_DEVICES="tokay,caiman,comet,komodo,tegu"
+    export TARGET_DEVICE_ALT="tokay,caiman,comet,komodo,tegu,stallion"
+    export FOX_TARGET_DEVICES="tokay,caiman,comet,komodo,tegu,stallion"
 elif [ "$DEVICE_BUILD_FLAG" = "gs201" ]; then
     export TARGET_DEVICE_ALT="panther,cheetah,lynx,pantah"
     export FOX_TARGET_DEVICES="panther,cheetah,lynx,pantah"
