@@ -1,11 +1,14 @@
-cc_binary {
+// Soong build for TWRP/OrangeFox recovery.
+//
+// Rust port of the ramdisk snapshot dumper (previously ramdisk_snapshot.c).
+// Same module name, so PRODUCT_PACKAGES and the init.rc/init.cpp call sites
+// (/system/bin/ramdisk_snapshot) are unchanged.
+rust_binary {
     name: "ramdisk_snapshot",
-    srcs: ["ramdisk_snapshot.c"],
+    srcs: ["src/main.rs"],
+    crate_name: "ramdisk_snapshot",
     recovery: true,
-    static_executable: true,
-    cflags: [
-        "-Wall",
-        "-Werror",
-        "-O2",
+    rustlibs: [
+        "liblibc",
     ],
 }

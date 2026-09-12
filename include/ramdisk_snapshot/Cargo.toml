@@ -1,0 +1,20 @@
+[package]
+name = "ramdisk_snapshot"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Copy ramdisk state (pre-LGZ-unpack) to a snapshot dir for reflash_twrp.sh"
+
+[[bin]]
+name = "ramdisk_snapshot"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
