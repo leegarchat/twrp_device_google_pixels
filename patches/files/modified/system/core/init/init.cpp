@@ -977,17 +977,18 @@ int SecondStageMain(int argc, char** argv) {
     }
     // --- END RAMDISK SNAPSHOT ---
 
-    // --- LGZ: Decompress ramdisk files at the earliest possible moment ---
+    // --- LGZ: Unpack the solid UCOMP02 cluster at the earliest moment ---
     // Must run BEFORE PropertyInit, SELinux, RC parsing, or any file access.
-    // Calls pre-compiled /system/bin/lgz binary instead of embedded code.
+    // /system/bin/lgz is the Rust lean (decompress-only) static binary.
+    // It restores the packed tree (files/zips + perms/owner) over "/".
     {
         struct stat lgz_st;
-        if (stat("/lgz_compressed_files.txt", &lgz_st) == 0) {
-            LOG(INFO) << "[LGZ] Starting early decompression of ramdisk files...";
+        if (stat("/lgz_cluster.lgz", &lgz_st) == 0) {
+            LOG(INFO) << "[LGZ] Unpacking solid cluster...";
             pid_t pid = fork();
             if (pid == 0) {
-                execl("/system/bin/lgz", "lgz", "decompress_all",
-                      "/lgz_compressed_files.txt", nullptr);
+                execl("/system/bin/lgz", "lgz", "decompress",
+                      "/lgz_cluster.lgz", "/", nullptr);
                 _exit(127);
             } else if (pid > 0) {
                 int wstatus;
