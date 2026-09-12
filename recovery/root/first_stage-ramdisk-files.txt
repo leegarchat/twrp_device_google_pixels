@@ -28,6 +28,8 @@ first_stage_ramdisk/system/bin/resize2fs
 first_stage_ramdisk/system/bin/defrag.f2fs
 first_stage_ramdisk/system/bin/linker_asan64
 first_stage_ramdisk/system/etc
+first_stage_ramdisk/system/etc/fstab.gs201-fips
+first_stage_ramdisk/system/etc/fstab.gs201
 first_stage_ramdisk/system/etc/fstab.zuma-fips
 first_stage_ramdisk/system/etc/fstab.zuma
 first_stage_ramdisk/system/etc/fstab.zumapro-fips

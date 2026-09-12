@@ -5,10 +5,11 @@ Usage:
   python3 patches/sync_from_bakfiles.py [--snapshot 20260905_085323|latest] [--regen-patches] [--prune]
   python3 patches/sync_from_bakfiles.py --list
 
-Layout produced:
-  patches/files/modified/<rel>   modified tree files (real names, .bak stripped)
-  patches/files/original/<rel>   clean HEAD copies
-  patches/files/new/<rel>        untracked/new files
+Layout produced (stored names; *.bp/*.mk keep a +.bak suffix so the
+Soong/make scanners never treat them as build files):
+  patches/files/modified/<stored>   modified tree files
+  patches/files/original/<stored>   clean HEAD copies
+  patches/files/new/<stored>        untracked/new files
   patches/files/patches/<rel>.patch  unified diffs for manual apply
 """
 
@@ -52,6 +53,16 @@ def from_storage_name(stored: str) -> str:
     return stored
 
 
+def to_storage_name(rel: str) -> str:
+    """Stored file name inside patches/files.
+
+    *.bp / *.mk are kept with a +.bak suffix so the Soong/make scanners
+    (PRODUCT_SOONG_NAMESPACES covers the whole device tree and has no
+    subdirectory exclude) never see them as build files.
+    """
+    return rel + ".bak" if rel.endswith((".bp", ".mk")) else rel
+
+
 def latest_snapshot(snap_root: Path) -> Path | None:
     snaps = sorted([d for d in snap_root.iterdir() if d.is_dir()], key=lambda d: d.name)
     return snaps[-1] if snaps else None
@@ -73,17 +84,16 @@ def resolve_snapshot(ref: str, snap_root: Path) -> Path:
 
 
 def copy_tree_flat(src_root: Path, dst_root: Path) -> list[str]:
-    """Copy src -> dst stripping .bak storage suffix. Returns list of rel paths."""
+    """Copy src -> dst keeping stored (.bak) names. Returns stored rel paths."""
     out: list[str] = []
     if not src_root.exists():
         return out
     for f in sorted(p for p in src_root.rglob("*") if p.is_file()):
         rel_stored = f.relative_to(src_root).as_posix()
-        rel = from_storage_name(rel_stored)
-        target = dst_root / rel
+        target = dst_root / rel_stored
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(f, target)
-        out.append(rel)
+        out.append(rel_stored)
     return out
 
 
@@ -95,14 +105,16 @@ def sync_snapshot(snap: Path, regen_patches: bool, prune: bool) -> dict:
     original = copy_tree_flat(snap / "original", ORIGINAL_DIR)
 
     # new files: new layout (new_files/) + legacy (new_files_temp/)
+    # stored with the same .bak rule as modified/original.
     new_files: list[str] = []
     for cand in (snap / "new_files", snap / "new_files_temp"):
         for f in sorted(p for p in cand.rglob("*") if p.is_file()) if cand.exists() else []:
             rel = f.relative_to(cand).as_posix()
-            target = NEW_DIR / rel
+            stored = to_storage_name(rel)
+            target = NEW_DIR / stored
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, target)
-            new_files.append(rel)
+            new_files.append(stored)
 
     # unified patches: copy as-is (names already normalized in snapshot)
     patch_files: list[str] = []
@@ -115,14 +127,17 @@ def sync_snapshot(snap: Path, regen_patches: bool, prune: bool) -> dict:
             shutil.copy2(f, target)
             patch_files.append(rel)
 
-    # regenerate missing patches from original/modified pairs
+    # regenerate missing patches from original/modified pairs.
+    # .patch files keep real-rel naming (<real>.patch); the pair itself
+    # lives under stored names.
     if regen_patches:
-        for rel in modified:
+        for stored in modified:
+            rel = from_storage_name(stored)
             patch_path = UNIFIED_DIR / f"{rel}.patch"
             if patch_path.exists():
                 continue
-            orig = ORIGINAL_DIR / rel
-            mod = MODIFIED_DIR / rel
+            orig = ORIGINAL_DIR / stored
+            mod = MODIFIED_DIR / stored
             if orig.exists() and mod.exists():
                 _make_patch(orig, mod, patch_path, rel)
                 patch_files.append(patch_path.relative_to(UNIFIED_DIR).as_posix())
@@ -131,7 +146,7 @@ def sync_snapshot(snap: Path, regen_patches: bool, prune: bool) -> dict:
         _prune_extra(MODIFIED_DIR, set(modified), skip_suffixes=())
         _prune_extra(ORIGINAL_DIR, set(original), skip_suffixes=())
         _prune_extra(NEW_DIR, set(new_files), skip_suffixes=())
-        want_patches = {f"{r}.patch" for r in modified}
+        want_patches = {f"{from_storage_name(s)}.patch" for s in modified}
         _prune_extra(UNIFIED_DIR, want_patches, skip_suffixes=())
 
     # provenance

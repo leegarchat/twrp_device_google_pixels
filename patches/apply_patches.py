@@ -42,6 +42,18 @@ def _patch_id_for(rel: str, prefix: str = "snap") -> str:
     return prefix + "-" + rel.replace("/", "-").replace(".", "-").replace("_", "-")
 
 
+def from_storage_name(stored: str) -> str:
+    """Map a stored file name to the real tree-relative path.
+
+    *.bp / *.mk are stored with a +.bak suffix so the Soong/make
+    scanners (PRODUCT_SOONG_NAMESPACES covers the whole device tree,
+    and it has no subdirectory exclude) never see them as build files.
+    """
+    if stored.endswith(".bak") and stored[:-4].endswith((".bp", ".mk")):
+        return stored[:-4]
+    return stored
+
+
 def load_patches() -> list:
     from patchlib import NewFilePatch, SnapshotPatch
 
@@ -49,8 +61,9 @@ def load_patches() -> list:
 
     if MODIFIED_DIR.exists():
         for mod_file in sorted(p for p in MODIFIED_DIR.rglob("*") if p.is_file()):
-            rel = mod_file.relative_to(MODIFIED_DIR).as_posix()
-            orig_file = ORIGINAL_DIR / rel
+            stored = mod_file.relative_to(MODIFIED_DIR).as_posix()
+            rel = from_storage_name(stored)
+            orig_file = ORIGINAL_DIR / stored
             patch_file = UNIFIED_DIR / f"{rel}.patch"
             patches.append(
                 SnapshotPatch(
@@ -65,9 +78,10 @@ def load_patches() -> list:
 
     if NEW_DIR.exists():
         for new_file in sorted(p for p in NEW_DIR.rglob("*") if p.is_file()):
-            rel = new_file.relative_to(NEW_DIR).as_posix()
+            stored = new_file.relative_to(NEW_DIR).as_posix()
+            rel = from_storage_name(stored)
             # Skip files that are also covered as modified (should not happen).
-            if (MODIFIED_DIR / rel).exists():
+            if (MODIFIED_DIR / stored).exists():
                 continue
             patches.append(
                 NewFilePatch(
