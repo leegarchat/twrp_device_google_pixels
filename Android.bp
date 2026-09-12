@@ -7,10 +7,10 @@
 
 soong_namespace {
     imports: [
-        "device/google/pixels/pixel-source/conf-zuma",
-        "device/google/pixels/pixel-source/conf-gs201",
-        "device/google/pixels/pixel-source/conf-zumapro",
-        "device/google/pixels/pixel-source/bootctrl/1.2",
+        "device/google/pixels/families/zuma/fstab",
+        "device/google/pixels/families/gs201/fstab",
+        "device/google/pixels/families/zumapro/fstab",
+        "device/google/pixels/vendor-ref/bootctrl/1.2",
     ],
 }
 
