@@ -1,0 +1,23 @@
+--- a/bootable/recovery/partitions.hpp
++++ b/bootable/recovery/partitions.hpp
+@@ -363,7 +363,9 @@
+     	int Run_OTA_Survival_Restore(const string& Restore_Name);                 // Restore OTA survival
+     	void Fox_Set_Dynamic_Partition_Props();					  // Set the OrangeFox dynamic partitions props
+  	bool Prepare_All_Super_Volumes();					  // Prepare all known super volumes from super partition
+-
++    void Mark_User_Decrypted(int userID);                                     // Marks given user ID in Users_List as decrypted
++	void Check_Users_Decryption_Status();                                      // Checks to see if all users are decrypted
++	void Reset_Users_Decryption_Status();  
+ 	std::string Get_Bare_Partition_Name(std::string Mount_Point);
+    
+      	bool Prepare_Super_Volume(TWPartition* twrpPart);				  // Prepare logical super partition volume for mounting
+@@ -471,8 +473,7 @@
+ 	Backup_Method_enum Backup_Method;                                         // Method used for backup
+ 	std::string original_ramdisk_format;                                      // Ramdisk format of boot partition
+ 	std::string repacked_ramdisk_format;                                      // Ramdisk format of boot image to repack from
+-	void Mark_User_Decrypted(int userID);                                     // Marks given user ID in Users_List as decrypted
+-	void Check_Users_Decryption_Status();                                      // Checks to see if all users are decrypted
++	                                    // Resets all users to undecrypted state after /data remount
+ 
+ private:
+ 	std::vector<TWPartition*> Partitions;                                     // Vector list of all partitions

@@ -1,0 +1,10 @@
+--- a/system/keymaster/Android.bp
++++ b/system/keymaster/Android.bp
+@@ -76,6 +76,7 @@
+ 
+ cc_library_shared {
+     name: "libkeymaster_messages",
++    recovery_available: true,
+     srcs: [
+         "android_keymaster/android_keymaster_messages.cpp",
+         "android_keymaster/android_keymaster_utils.cpp",

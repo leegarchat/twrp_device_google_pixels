@@ -1,0 +1,2 @@
+source=subpatch-migration (26 subpatch targets + 3 XML mods)
+originals=git HEAD per owning repo, modified=current worktree

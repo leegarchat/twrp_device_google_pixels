@@ -1,0 +1,18 @@
+--- a/bootable/recovery/gui/theme/portrait_hdpi/pages/mount.xml
++++ b/bootable/recovery/gui/theme/portrait_hdpi/pages/mount.xml
+@@ -28,6 +28,7 @@
+ 				<condition var1="tw_has_mtp" var2="1"/>
+ 				<placement x="0" y="%ab_h%" w="%screen_w%" h="%ab_btn_h%"/>
+ 				<action function="stopmtp"/>
++				<!-- <action function="cmd">setprop sys.usb.otg 1</action> -->
+ 			</button>
+ 
+ 			<!-- Disabled -->
+@@ -55,6 +56,7 @@
+ 				<condition var1="tw_mtp_enabled" op="!=" var2="1"/>
+ 				<condition var1="tw_has_mtp" var2="1"/>
+ 				<placement x="0" y="%ab_h%" w="%screen_w%" h="%ab_btn_h%"/>
++				<!-- <action function="cmd">setprop sys.usb.otg 0</action> -->
+ 				<action function="startmtp"/>
+ 			</button>
+ 			

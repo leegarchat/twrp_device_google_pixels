@@ -1,0 +1,27 @@
+// Soong build for TWRP/OrangeFox recovery.
+//
+// The binary is multicall:
+//   recovery-tensor-daemon storageproxy -d <trusty_dev> [-r <rpmb_dev>] -p <data_path>
+//   recovery-tensor-daemon weaver [gsc_dev]
+//   recovery-tensor-daemon run -d <trusty_dev> [-r <rpmb_dev>] -p <data_path> [gsc_dev]
+//
+// Notes:
+//   * Crate `android_hardware_weaver` is provided by Soong from the
+//     `android.hardware.weaver-V2-rust` rustlib (generated AIDL bindings).
+//   * The `binder` cargo feature switches weaver/service.rs from headless
+//     (plain-cargo friendly) mode to the real libbinder_rs service glue.
+//   * Host development via cargo uses only `libc`; no AIDL checkout needed.
+
+rust_binary {
+    name: "recovery-tensor-daemon",
+    srcs: ["src/main.rs"],
+    crate_name: "recovery_tensor_daemon",
+    recovery: true,
+    rustlibs: [
+        "android.hardware.weaver-V2-rust",
+        "libbinder_rs",
+        "liblibc",
+    ],
+    features: ["binder"],
+    prefer_rlib: true,
+}

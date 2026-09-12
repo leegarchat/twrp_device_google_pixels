@@ -1,0 +1,10 @@
+--- a/system/vold/FsCrypt.h
++++ b/system/vold/FsCrypt.h
+@@ -39,6 +39,7 @@
+ bool fscrypt_destroy_user_storage(const std::string& volume_uuid, userid_t user_id, int flags);
+ 
+ bool fscrypt_destroy_volume_keys(const std::string& volume_uuid);
++bool fscrypt_reset_key_caches();
+ bool is_metadata_wrapped_key_supported();
+ bool lookup_key_ref(const std::map<userid_t, UserPolicies>& policy_map, userid_t user_id,
+                            std::string* raw_ref);

@@ -1,0 +1,108 @@
+--- a/system/vold/Weaver1.cpp
++++ b/system/vold/Weaver1.cpp
+@@ -28,9 +28,13 @@
+ //#include <keystore/authorization_set.h>
+ //#include <keystore/keystore_hidl_support.h>
+ 
++#include <android/binder_manager.h>
++
+ #include <android/hardware/weaver/1.0/IWeaver.h>
++#include <aidl/android/hardware/weaver/IWeaver.h>
+ 
+ #include <iostream>
++#include <unistd.h>
+ #define ERROR 1
+ #define LOG(x) std::cout
+ 
+@@ -48,7 +52,23 @@
+ namespace vold {
+ 
+ Weaver::Weaver() {
+-	mDevice = ::android::hardware::weaver::V1_0::IWeaver::getService();
++    const std::string instance = std::string(::aidl::android::hardware::weaver::IWeaver::descriptor) + "/default";
++    // Use checkService with bounded retry instead of waitForService to avoid
++    // infinite hang when Weaver HAL is not registered, while still allowing
++    // time for the service to start during early boot.
++    AIBinder* binder = nullptr;
++    for (int i = 0; i < 15; i++) {
++        binder = AServiceManager_checkService(instance.c_str());
++        if (binder) break;
++        LOG(ERROR) << "Weaver service not yet available, retrying (" << (i + 1) << "/15)..." << std::endl;
++        sleep(2);
++    }
++    if (binder) {
++        mAidlDevice = ::aidl::android::hardware::weaver::IWeaver::fromBinder(ndk::SpAIBinder(binder));
++    }
++	if (mAidlDevice == nullptr) {
++		mDevice = ::android::hardware::weaver::V1_0::IWeaver::getService();
++	}
+ 	GottenConfig = false;
+ }
+ 
+@@ -56,6 +76,15 @@
+ 	if (GottenConfig)
+ 		return true;
+ 
++	if (mAidlDevice != nullptr) {
++		auto r = mAidlDevice->getConfig(&aidlConfig);
++		if (r.isOk()) {
++			GottenConfig = true;
++			return true;
++		}
++		return false;
++	}
++
+ 	WeaverStatus status;
+ 	WeaverConfig cfg;
+ 
+@@ -76,6 +105,10 @@
+ bool Weaver::GetSlots(uint32_t* slots) {
+ 	if (!GetConfig())
+ 		return false;
++	if (mAidlDevice != nullptr) {
++		*slots = aidlConfig.slots;
++		return true;
++	}
+ 	*slots = config.slots;
+ 	return true;
+ }
+@@ -83,6 +116,10 @@
+ bool Weaver::GetKeySize(uint32_t* keySize) {
+ 	if (!GetConfig())
+ 		return false;
++	if (mAidlDevice != nullptr) {
++		*keySize = aidlConfig.keySize;
++		return true;
++	}
+ 	*keySize = config.keySize;
+ 	return true;
+ }
+@@ -90,6 +127,10 @@
+ bool Weaver::GetValueSize(uint32_t* valueSize) {
+ 	if (!GetConfig())
+ 		return false;
++	if (mAidlDevice != nullptr) {
++		*valueSize = aidlConfig.valueSize;
++		return true;
++	}
+ 	*valueSize = config.valueSize;
+ 	return true;
+ }
+@@ -111,6 +152,17 @@
+ 		key[index] = *ptr;
+ 		ptr++;
+ 	}
++	
++	if (mAidlDevice != nullptr) {
++		::aidl::android::hardware::weaver::WeaverReadResponse rep;
++		auto r = mAidlDevice->read(slot, key, &rep);
++		if (r.isOk() && rep.status == ::aidl::android::hardware::weaver::WeaverReadStatus::OK) {
++			*payload = rep.value;
++			return true;
++		}
++		return false;
++	}
++
+ 	const auto readRet = mDevice->read(slot, key, [&](WeaverReadStatus s, WeaverReadResponse r) {
+ 		callbackCalled = true;
+ 		status = s;

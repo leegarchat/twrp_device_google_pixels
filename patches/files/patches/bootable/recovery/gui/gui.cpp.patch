@@ -1,0 +1,12 @@
+--- a/bootable/recovery/gui/gui.cpp
++++ b/bootable/recovery/gui/gui.cpp
+@@ -444,7 +444,8 @@
+ 				blankTimer.toggleBlank();
+ 			}
+ 		} else {
+-			if (ev.code == KEY_POWER && key_status != KS_KEY_REPEAT) {
++			if (ev.code == KEY_POWER && key_status != KS_KEY_REPEAT
++			    && !kb->IsKeyDown(KEY_VOLUMEUP) && !kb->IsKeyDown(KEY_VOLUMEDOWN)) {
+ 				LOGEVENT("POWER Key Released\n");
+ 				long long now = nowMs();
+ 				if (now < g_suppress_power_toggle_until_ms) {

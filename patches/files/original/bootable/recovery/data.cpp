@@ -1,0 +1,1840 @@
+/*
+	Copyright 2012 to 2021 TeamWin
+	This file is part of TWRP/TeamWin Recovery Project.
+
+	Copyright (C) 2018-2026 OrangeFox Recovery Project
+	This file is part of the OrangeFox Recovery Project.
+
+	TWRP is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	TWRP is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with TWRP.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include <pthread.h>
+#include <time.h>
+#include <string>
+#include <sstream>
+#include <fstream>
+#include <cctype>
+#include <cutils/properties.h>
+#include <unistd.h>
+#include <private/android_filesystem_config.h>
+#include "variables.h"
+#include "data.hpp"
+#include "partitions.hpp"
+#include "twrp-functions.hpp"
+#ifndef TW_NO_SCREEN_TIMEOUT
+#include "gui/blanktimer.hpp"
+#endif
+#include "find_file.hpp"
+#include "set_metadata.h"
+#include "gui/gui.hpp"
+#include "infomanager.hpp"
+
+#define DEVID_MAX 64
+#define HWID_MAX 32
+
+extern "C"
+{
+#include "twcommon.h"
+#include "gui/pages.h"
+  void gui_notifyVarChange(const char *name, const char *value);
+}
+#include "minuitwrp/minui.h"
+
+#define FILE_VERSION 0x00010010	// Do not set to 0
+
+using namespace std;
+
+string DataManager::mBackingFile;
+int DataManager::mInitialized = 0;
+InfoManager DataManager::mPersist;	// Data that is not constant and will be saved to the settings file
+InfoManager DataManager::mData;  	// Data that is not constant and will not be saved to settings file
+InfoManager DataManager::mConst;	// Data that is constant and will not be saved to settings file
+
+string DataManager::bPassEnabled = "0";
+string DataManager::bPassPass = "4ee92c7c7909dc2a1ddaefe93ed97efa27a9b8cab8f1b90c199f917756d00f940155bade0da13e717f0c4a1069de9582e0dd5b1affef427fc7303aa9b593740c";
+string DataManager::bPassType = "0"; 
+
+extern bool datamedia;
+
+#ifndef PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
+pthread_mutex_t DataManager::m_valuesLock =
+  PTHREAD_RECURSIVE_MUTEX_INITIALIZER;
+#else
+pthread_mutex_t DataManager::m_valuesLock =
+  PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+#endif
+
+// Device ID functions
+void DataManager::sanitize_device_id(char *device_id)
+{
+  const char *whitelist = "-._";
+  char str[DEVID_MAX];
+  char *c = str;
+
+  snprintf(str, DEVID_MAX, "%s", device_id);
+  memset(device_id, 0, strlen(device_id));
+  while (*c)
+    {
+      if (isalnum(*c) || strchr(whitelist, *c))
+	strncat(device_id, c, 1);
+      c++;
+    }
+  return;
+}
+
+#define CMDLINE_SERIALNO		"androidboot.serialno="
+#define CMDLINE_SERIALNO_LEN	(strlen(CMDLINE_SERIALNO))
+#define CPUINFO_SERIALNO		"Serial"
+#define CPUINFO_SERIALNO_LEN	(strlen(CPUINFO_SERIALNO))
+#define CPUINFO_HARDWARE		"Hardware"
+#define CPUINFO_HARDWARE_LEN	(strlen(CPUINFO_HARDWARE))
+
+void DataManager::get_device_id(void) {
+	FILE *fp;
+	char line[2048];
+	char hardware_id[HWID_MAX] = { 0 };
+	char device_id[DEVID_MAX] = { 0 };
+	char* token;
+
+#ifdef TW_USE_MODEL_HARDWARE_ID_FOR_DEVICE_ID
+	// Use (product_model)_(hardware_id) as device id
+	char model_id[PROPERTY_VALUE_MAX];
+	property_get("ro.product.model", model_id, "error");
+	if (strcmp(model_id, "error") != 0) {
+		LOGINFO("=> product model: '%s'\n", model_id);
+		// Replace spaces with underscores
+		for (size_t i = 0; i < strlen(model_id); i++) {
+			if (model_id[i] == ' ')
+				model_id[i] = '_';
+		}
+		snprintf(device_id, DEVID_MAX, "%s", model_id);
+
+		if (strlen(device_id) < DEVID_MAX) {
+			fp = fopen("proc_cpuinfo.txt", "rt");
+			if (fp != NULL) {
+				while (fgets(line, sizeof(line), fp) != NULL) {
+					if (memcmp(line, CPUINFO_HARDWARE,
+							CPUINFO_HARDWARE_LEN) == 0) {
+						// skip past "Hardware", spaces, and colon
+						token = line + CPUINFO_HARDWARE_LEN;
+						while (*token && (!isgraph(*token) || *token == ':'))
+							token++;
+
+						if (*token && *token != '\n'
+								&& strcmp("UNKNOWN\n", token)) {
+							snprintf(hardware_id, HWID_MAX, "%s", token);
+							if (hardware_id[strlen(hardware_id)-1] == '\n')
+								hardware_id[strlen(hardware_id)-1] = 0;
+							LOGINFO("=> hardware id from cpuinfo: '%s'\n",
+									hardware_id);
+						}
+						break;
+					}
+				}
+				fclose(fp);
+			}
+		}
+
+		if (hardware_id[0] != 0)
+			snprintf(device_id, DEVID_MAX, "%s_%s", model_id, hardware_id);
+
+		sanitize_device_id(device_id);
+		mConst.SetValue("device_id", device_id);
+		LOGINFO("=> using device id: '%s'\n", device_id);
+		return;
+	}
+#endif
+
+#ifndef TW_FORCE_CPUINFO_FOR_DEVICE_ID
+#ifdef TW_USE_SERIALNO_PROPERTY_FOR_DEVICE_ID
+	// Check serial number system property
+	if (property_get("ro.serialno", line, "")) {
+		snprintf(device_id, DEVID_MAX, "%s", line);
+		sanitize_device_id(device_id);
+		mConst.SetValue("device_id", device_id);
+		return;
+	}
+#endif
+
+	// Check the cmdline to see if the serial number was supplied
+	fp = fopen("/proc/cmdline", "rt");
+	if (fp != NULL) {
+		fgets(line, sizeof(line), fp);
+		fclose(fp); // cmdline is only one line long
+
+		token = strtok(line, " ");
+		while (token) {
+			if (memcmp(token, CMDLINE_SERIALNO, CMDLINE_SERIALNO_LEN) == 0) {
+				token += CMDLINE_SERIALNO_LEN;
+				snprintf(device_id, DEVID_MAX, "%s", token);
+				sanitize_device_id(device_id); // also removes newlines
+				mConst.SetValue("device_id", device_id);
+				return;
+			}
+			token = strtok(NULL, " ");
+		}
+	}
+#endif
+	// Check cpuinfo for serial number; if found, use as device_id
+	// If serial number is not found, fallback to hardware_id for the device_id
+	fp = fopen("/proc/cpuinfo", "rt");
+	if (fp != NULL) {
+		while (fgets(line, sizeof(line), fp) != NULL) {
+			if (memcmp(line, CPUINFO_SERIALNO, CPUINFO_SERIALNO_LEN) == 0) {
+				// skip past "Serial", spaces, and colon
+				token = line + CPUINFO_SERIALNO_LEN;
+				while (*token && (!isgraph(*token) || *token == ':'))
+					token++;
+
+				if (*token && *token != '\n') {
+					snprintf(device_id, DEVID_MAX, "%s", token);
+					sanitize_device_id(device_id); // also removes newlines
+					LOGINFO("=> serial from cpuinfo: '%s'\n", device_id);
+					mConst.SetValue("device_id", device_id);
+					fclose(fp);
+					return;
+				}
+			} else if (memcmp(line, CPUINFO_HARDWARE,
+					CPUINFO_HARDWARE_LEN) == 0) {
+				// skip past "Hardware", spaces, and colon
+				token = line + CPUINFO_HARDWARE_LEN;
+				while (*token && (!isgraph(*token) || *token == ':'))
+					token++;
+
+				if (*token && *token != '\n') {
+					snprintf(hardware_id, HWID_MAX, "%s", token);
+					if (hardware_id[strlen(hardware_id)-1] == '\n')
+						hardware_id[strlen(hardware_id)-1] = 0;
+					LOGINFO("=> hardware id from cpuinfo: '%s'\n", hardware_id);
+				}
+			}
+		}
+		fclose(fp);
+	}
+
+	if (hardware_id[0] != 0) {
+		LOGINFO("\nusing hardware id for device id: '%s'\n", hardware_id);
+		snprintf(device_id, DEVID_MAX, "%s", hardware_id);
+		sanitize_device_id(device_id);
+		mConst.SetValue("device_id", device_id);
+		return;
+	}
+
+	strcpy(device_id, "serialno");
+	LOGINFO("=> device id not found, using '%s'\n", device_id);
+	mConst.SetValue("device_id", device_id);
+	return;
+}
+
+int DataManager::ResetDefaults()
+{
+  pthread_mutex_lock(&m_valuesLock);
+  mPersist.Clear();
+  mData.Clear();
+  mConst.Clear();
+  pthread_mutex_unlock(&m_valuesLock);
+
+  SetDefaultValues();
+  return 0;
+}
+
+int DataManager::LoadValues(const string & filename)
+{
+  string dev_id;
+
+  if (!mInitialized)
+    SetDefaultValues();
+
+  GetValue("device_id", dev_id);
+  // Save off the backing file for set operations
+  mBackingFile = filename;
+  mPersist.SetFile(filename);
+  mPersist.SetFileVersion(FILE_VERSION);
+
+  // Read in the file, if possible
+  pthread_mutex_lock(&m_valuesLock);
+  mPersist.LoadValues();
+
+#ifndef TW_NO_SCREEN_TIMEOUT
+  blankTimer.setTime(mPersist.GetIntValue("tw_screen_timeout_secs"));
+#endif
+
+  pthread_mutex_unlock(&m_valuesLock);
+  string current = GetCurrentStoragePath();
+  TWPartition *Part = PartitionManager.Find_Partition_By_Path(current);
+  if (!Part)
+    Part = PartitionManager.Get_Default_Storage_Partition();
+  if (Part && current != Part->Storage_Path && Part->Mount(false))
+    {
+      LOGINFO("LoadValues setting storage path to '%s'\n",
+	      Part->Storage_Path.c_str());
+      SetValue("tw_storage_path", Part->Storage_Path);
+    }
+  else
+    {
+      SetBackupFolder();
+    }
+  return 0;
+}
+
+// Executed when /persist is mounted
+int DataManager::FindPasswordBackup(void) {
+  #ifndef OF_DEVICE_WITHOUT_PERSIST
+  if (TWFunc::Path_Exists(FOX_PASS_IN_PERSIST)) {
+    bPassEnabled = TWFunc::File_Property_Get(FOX_PASS_IN_PERSIST, "fox_use_pass");
+    bPassPass = TWFunc::File_Property_Get(FOX_PASS_IN_PERSIST, "fox_pass_true");
+    bPassType = TWFunc::File_Property_Get(FOX_PASS_IN_PERSIST, "fox_pass_type");
+		LOGINFO("PassBak: Found backup\n");
+  }
+  #endif
+  return 0;
+}
+
+// Executed after .foxs is (not) loaded
+int DataManager::RestorePasswordBackup(void) {
+  #ifndef OF_DEVICE_WITHOUT_PERSIST
+  if (DataManager::GetStrValue("fox_use_pass") == "0") {
+    DataManager::SetValue("fox_use_pass", bPassEnabled);
+    DataManager::SetValue("fox_pass_true", bPassPass);
+    DataManager::SetValue("fox_pass_type", bPassType);
+		LOGINFO("PassBak: Loaded backup\n");
+  }
+  #endif
+  return 0;
+}
+
+int DataManager::LoadPersistValues(void)
+{
+#if defined(OF_DEVICE_WITHOUT_PERSIST) || defined(FOX_SETTINGS_ROOT_DIRECTORY)
+	//LOGINFO("OF_DEVICE_WITHOUT_PERSIST is set - avoiding /persist...\n");
+	return -1;
+#endif
+  static bool loaded = false;
+  string dev_id;
+
+  // Only run this function once, and make sure normal settings file has not yet been read
+  if (loaded || !mBackingFile.empty()
+      || !TWFunc::Path_Exists(PERSIST_SETTINGS_FILE))
+    return -1;
+
+  LOGINFO("Attempt to load settings from /persist settings file...\n");
+
+  if (!mInitialized)
+    SetDefaultValues();
+
+  GetValue("device_id", dev_id);
+  mPersist.SetFile(PERSIST_SETTINGS_FILE);
+  mPersist.SetFileVersion(FILE_VERSION);
+
+  // Read in the file, if possible
+  pthread_mutex_lock(&m_valuesLock);
+  mPersist.LoadValues();
+
+#ifndef TW_NO_SCREEN_TIMEOUT
+  blankTimer.setTime(mPersist.GetIntValue("tw_screen_timeout_secs"));
+#endif
+
+  update_tz_environment_variables();
+  TWFunc::Set_Brightness(GetStrValue("tw_brightness"));
+
+  pthread_mutex_unlock(&m_valuesLock);
+
+  /* Don't set storage nor backup paths this early */
+
+  loaded = true;
+
+  return 0;
+}
+
+int DataManager::Flush()
+{
+  return SaveValues();
+}
+
+int DataManager::SaveValues()
+{
+#ifndef TW_OEM_BUILD
+
+  #ifndef OF_DEVICE_WITHOUT_PERSIST
+  if (PartitionManager.Mount_By_Path("/persist", false))
+    {
+      #ifndef FOX_SETTINGS_ROOT_DIRECTORY
+      mPersist.SetFile(PERSIST_SETTINGS_FILE);
+      mPersist.SetFileVersion(FILE_VERSION);
+      pthread_mutex_lock(&m_valuesLock);
+      mPersist.SaveValues();
+      pthread_mutex_unlock(&m_valuesLock);
+      LOGINFO("Saved settings file values to %s\n", PERSIST_SETTINGS_FILE);
+      #endif
+
+      ofstream file;
+
+      file.open(FOX_PASS_IN_PERSIST, std::ofstream::out | std::ofstream::trunc);
+      if (file.is_open()) {
+        file << "fox_use_pass="    + DataManager::GetStrValue("fox_use_pass") +
+                "\nfox_pass_true=" + DataManager::GetStrValue("fox_pass_true") +
+                "\nfox_pass_type=" + DataManager::GetStrValue("fox_pass_type");
+        LOGINFO("PassBak: Created backup\n");
+        file.close();
+      } else LOGINFO("PassBak: Failed to backup\n");
+    }
+  #endif
+
+  if (mBackingFile.empty())
+    return -1;
+
+  string mount_path = GetSettingsStoragePath();
+  PartitionManager.Mount_By_Path(mount_path.c_str(), 1);
+
+  mPersist.SetFile(mBackingFile);
+  mPersist.SetFileVersion(FILE_VERSION);
+  pthread_mutex_lock(&m_valuesLock);
+  mPersist.SaveValues();
+  pthread_mutex_unlock(&m_valuesLock);
+
+  tw_set_default_metadata(mBackingFile.c_str());
+  LOGINFO("Saved settings file values to '%s'\n", mBackingFile.c_str());
+#endif // ifdef TW_OEM_BUILD
+  return 0;
+}
+
+int DataManager::GetValue(const string & varName, string & value)
+{
+  string localStr = varName;
+  int ret = 0;
+
+  // Strip off leading and trailing '%' if provided
+  if (localStr.length() > 2 && localStr[0] == '%'
+      && localStr[localStr.length() - 1] == '%')
+    {
+      std::regex pattern(R"(%([^%]+)%)");
+      std::smatch match;
+      string retVal;
+      while (std::regex_search(localStr, match, pattern))
+        {
+          ret = GetValue(match[1].str(), retVal) ? 1 : ret ? 1 : 0;
+          localStr.replace(match.position(0), match.length(0), retVal);
+        }
+      value = localStr;
+      return ret;
+    }
+
+  if (!mInitialized)
+  SetDefaultValues();
+
+  // Handle magic values
+  if (GetMagicValue(localStr, value) == 0)
+    return 0;
+
+  // Handle property
+  if (localStr.length() > 9 && localStr.substr(0, 9) == "property.")
+    {
+      char property_value[PROPERTY_VALUE_MAX];
+      property_get(localStr.substr(9).c_str(), property_value, "");
+      value = property_value;
+      return 0;
+    }
+
+  pthread_mutex_lock(&m_valuesLock);
+  ret = mConst.GetValue(localStr, value);
+  if (ret == 0)
+    goto exit;
+
+  ret = mPersist.GetValue(localStr, value);
+  if (ret == 0)
+    goto exit;
+
+  ret = mData.GetValue(localStr, value);
+exit:
+  pthread_mutex_unlock(&m_valuesLock);
+  return ret;
+}
+
+int DataManager::GetValue(const string & varName, int &value)
+{
+  string data;
+
+  if (GetValue(varName, data) != 0)
+    return -1;
+
+  value = atoi(data.c_str());
+  return 0;
+}
+
+int DataManager::GetValue(const string & varName, float &value)
+{
+  string data;
+
+  if (GetValue(varName, data) != 0)
+    return -1;
+
+  value = atof(data.c_str());
+  return 0;
+}
+
+int DataManager::GetValue(const string & varName, unsigned long long &value)
+{
+  string data;
+
+  if (GetValue(varName, data) != 0)
+    return -1;
+
+  value = strtoull(data.c_str(), NULL, 10);
+  return 0;
+}
+
+// This function will return an empty string if the value doesn't exist
+string DataManager::GetStrValue(const string & varName)
+{
+  string retVal;
+
+  GetValue(varName, retVal);
+  return retVal;
+}
+
+// This function will return 0 if the value doesn't exist
+int DataManager::GetIntValue(const string & varName)
+{
+  string retVal;
+
+  GetValue(varName, retVal);
+  return atoi(retVal.c_str());
+}
+
+int DataManager::SetValue(const string & varName, const string & value,
+			  const int persist /* = 0 */ )
+{
+  if (!mInitialized)
+    SetDefaultValues();
+
+  // Handle property
+  if (varName.length() > 9 && varName.substr(0, 9) == "property.")
+    {
+      int ret = property_set(varName.substr(9).c_str(), value.c_str());
+      if (ret)
+	LOGERR("Error setting property '%s' to '%s'\n",
+	       varName.substr(9).c_str(), value.c_str());
+      return ret;
+    }
+
+  // Don't allow empty values or numerical starting values
+  if (varName.empty() || (varName[0] >= '0' && varName[0] <= '9'))
+    return -1;
+
+  string test;
+  pthread_mutex_lock(&m_valuesLock);
+  int constChk = mConst.GetValue(varName, test);
+  if (constChk == 0)
+    {
+      pthread_mutex_unlock(&m_valuesLock);
+      return -1;
+    }
+
+  if (persist)
+    {
+      mPersist.SetValue(varName, value);
+    }
+  else
+    {
+      int persistChk = mPersist.GetValue(varName, test);
+      if (persistChk == 0)
+	{
+	  mPersist.SetValue(varName, value);
+	}
+      else
+	{
+	  mData.SetValue(varName, value);
+	}
+    }
+
+  pthread_mutex_unlock(&m_valuesLock);
+
+#ifndef TW_NO_SCREEN_TIMEOUT
+  if (varName == "tw_screen_timeout_secs")
+    {
+      blankTimer.setTime(atoi(value.c_str()));
+    }
+  else
+#endif
+  if (varName == "tw_storage_path")
+    {
+      SetBackupFolder();
+    }
+  gui_notifyVarChange(varName.c_str(), value.c_str());
+  return 0;
+}
+
+int DataManager::SetValue(const string & varName, const int value,
+			  const int persist /* = 0 */ )
+{
+  ostringstream valStr;
+  valStr << value;
+  return SetValue(varName, valStr.str(), persist);
+}
+
+int DataManager::SetValue(const string & varName, const float value,
+			  const int persist /* = 0 */ )
+{
+  ostringstream valStr;
+  valStr << value;
+  return SetValue(varName, valStr.str(), persist);;
+}
+
+int DataManager::SetValue(const string & varName,
+			  const unsigned long long &value,
+			  const int persist /* = 0 */ )
+{
+  ostringstream valStr;
+  valStr << value;
+  return SetValue(varName, valStr.str(), persist);
+}
+
+// For legacy code that doesn't set a scope
+int DataManager::SetProgress(const float Fraction) {
+	if (SetValue("ui_portion_size", 0) != 0)
+		return -1;
+	if (SetValue("ui_portion_start", 0) != 0)
+		return -1;
+	ShowProgress(1, 0);
+	int res = _SetProgress(Fraction);
+	if (SetValue("ui_portion_size", 0) != 0)
+		return -1;
+	if (SetValue("ui_portion_start", 0) != 0)
+		return -1;
+	return res;
+}
+
+int DataManager::_SetProgress(float Fraction) {
+	float Portion_Start, Portion_Size;
+	GetValue("ui_portion_size", Portion_Size);
+	GetValue("ui_portion_start", Portion_Start);
+	//LOGINFO("SetProgress(%.2lf): Portion_Size: %.2lf Portion_Start: %.2lf\n", Fraction, Portion_Size, Portion_Start);
+	if (Fraction < 0.0)
+		Fraction = 0;
+	if (Fraction > 1.0)
+		Fraction = 1;
+	if (SetValue("ui_progress", (float) ((Portion_Start + (Portion_Size * Fraction)) * 100.0)) != 0)
+		return -1;
+	return (SetValue("ui_progress_portion", 0) != 0);
+}
+
+int DataManager::ShowProgress(float Portion, const float Seconds)
+{
+	float Portion_Start, Portion_Size;
+	GetValue("ui_portion_size", Portion_Size);
+	GetValue("ui_portion_start", Portion_Start);
+	Portion_Start += Portion_Size;
+	if(Portion + Portion_Start > 1.0)
+		Portion = 1.0 - Portion_Start;
+	//LOGINFO("ShowProgress(%.2lf, %.2lf): Portion_Start: %.2lf\n", Portion, Seconds, Portion_Start);
+	if (SetValue("ui_portion_start", Portion_Start) != 0)
+		return -1;
+	if (SetValue("ui_portion_size", Portion) != 0)
+		return -1;
+	if (SetValue("ui_progress", (float)(Portion_Start * 100.0)) != 0)
+		return -1;
+	if(Seconds) {
+		if (SetValue("ui_progress_portion", (float)((Portion * 100.0) + Portion_Start)) != 0)
+			return -1;
+		if (SetValue("ui_progress_frames", Seconds * 48) != 0)
+			return -1;
+	}
+	return 0;
+}
+
+void DataManager::update_tz_environment_variables(void)
+{
+	string TZ = GetStrValue(TW_TIME_ZONE_VAR);
+	setenv("TZ", TZ.c_str(), 1);
+	tzset();
+	property_set("persist.sys.timezone", TZ.c_str());
+}
+
+void DataManager::SetBackupFolder()
+{
+  if (android::base::GetProperty("ro.twrp.fastbootd", "") == "1") // do not proceed in fastbootd mode
+    return;
+
+  string str = GetCurrentStoragePath();
+  TWPartition *partition = PartitionManager.Find_Partition_By_Path(str);
+  str += "/Fox/BACKUPS/";
+  string dev_id;
+  GetValue("device_id", dev_id);
+
+  str += dev_id;
+  LOGINFO("Backup folder set to '%s'\n", str.c_str());
+  SetValue(TW_BACKUPS_FOLDER_VAR, str, 0);
+  if (partition != NULL)
+    {
+      SetValue("tw_storage_display_name", partition->Storage_Name);
+      char free_space[255];
+      sprintf(free_space, "%llu", partition->Free / 1024 / 1024);
+      SetValue("tw_storage_free_size", free_space);
+      string zip_path, zip_root, storage_path;
+      GetValue(TW_ZIP_LOCATION_VAR, zip_path);
+      
+      if (partition->Has_Data_Media
+	  && !partition->Symlink_Mount_Point.empty())
+	storage_path = partition->Symlink_Mount_Point;
+      else
+	storage_path = partition->Storage_Path;
+      
+      if (zip_path.size() < storage_path.size())
+	{
+	  SetValue(TW_ZIP_LOCATION_VAR, storage_path);
+	}
+      else
+	{
+	  zip_root = TWFunc::Get_Root_Path(zip_path);
+	  if (zip_root != storage_path)
+	    {
+	      LOGINFO
+		("DataManager::SetBackupFolder zip path was %s changing to %s, %s\n",
+		 zip_path.c_str(), storage_path.c_str(), zip_root.c_str());
+	      SetValue(TW_ZIP_LOCATION_VAR, storage_path);
+	    }
+	}
+    }
+  else
+    {
+      if (PartitionManager.Fstab_Processed() != 0)
+	{
+	  LOGINFO("Storage partition '%s' not found\n", str.c_str());
+	  gui_err("unable_locate_storage=Unable to locate storage device.");
+	}
+    }
+}
+
+void DataManager::SetDefaultValues()
+{
+  string str, path;
+
+  mConst.SetConst();
+
+  get_device_id();
+
+  pthread_mutex_lock(&m_valuesLock);
+
+  mInitialized = 1;
+
+  mConst.SetValue("true", "1");
+  mConst.SetValue("false", "0");
+
+  mConst.SetValue(TW_VERSION_VAR, FOX_BUILD);
+  mConst.SetValue(OF_MAINTAINER_STR, OF_MAINTAINER);
+  mConst.SetValue(BUILD_TYPE_STR, FOX_BUILD_TYPE);
+  mConst.SetValue("fox_branch", FOX_BRANCH);
+
+#ifdef OF_ENABLE_FRP_ADDON
+  if (TWFunc::Path_Exists("/dev/block/bootdevice/by-name/frp") || TWFunc::Path_Exists("/dev/block/by-name/frp") || TWFunc::Fox_Property_Get("ro.frp.pst") != "") {
+	mConst.SetValue("enable_frp_addon", "1");
+  }
+#endif
+
+#ifdef FOX_MOVE_MAGISK_INSTALLER_TO_RAMDISK
+  mConst.SetValue("fox_magisk_path", FFiles_dir + "/OF_Magisk");
+#else
+  mConst.SetValue("fox_magisk_path", Fox_Home_Files);
+#endif
+  mConst.SetValue("fox_magisk_zip_installer", FOX_MAGISK_ZIP_INSTALLER);
+  mConst.SetValue("fox_magisk_uninstaller", FOX_MAGISK_UNINSTALLER);
+
+  // override any hard-coded value in ui.xml
+  mConst.SetValue("fox_theme_version", FOX_THEME_VERSION);
+  //
+
+  // variables used in the XML gui
+  mConst.SetValue("fox_home_path", Fox_Home);
+  mConst.SetValue("fox_settings_path", Fox_Settings_Path);
+  mConst.SetValue("fox_home_files", Fox_Home_Files);
+  mConst.SetValue("fox_theme_path", FOX_THEME_PATH);
+  mConst.SetValue("fox_media_rw", FOX_MEDIA_RW);
+  mConst.SetValue("fox_media_rw_data_file", FOX_MEDIA_RW_DATA_FILE);
+  mConst.SetValue("fox_navbar_path", FOX_NAVBAR_PATH);
+  mConst.SetValue("fox_ota_path", FOX_OTA_PATH);
+  mConst.SetValue("aroma_fm_zip", Fox_Home_Files + "/AromaFM/AromaFM.zip");
+  #ifndef FOX_DELETE_INITD_ADDON
+  mConst.SetValue("of_initd_zip", Fox_Home_Files + "/OF_initd.zip");
+  #endif
+  //
+
+  mData.SetValue("fox_startup_executed", "0");
+
+  if (TWFunc::Has_Virtual_AB_Partitions())
+  	mConst.SetValue("fox_vab_device", "1");
+  else
+  	mConst.SetValue("fox_vab_device", "0");
+
+  #ifdef OF_SUPPORT_OZIP_DECRYPTION
+    mConst.SetValue("of_support_ozip_decryption", "1");
+  #endif
+
+  // magiskboot 24+ whether to force-patch vbmebta
+  #if defined(FOX_PATCH_VBMETA_FLAG)
+  setenv("PATCHVBMETAFLAG", "true", 1);
+  #else
+  setenv("PATCHVBMETAFLAG", "false", 1);
+  #endif
+
+  mPersist.SetValue("of_average_img", "42");
+  mPersist.SetValue("of_average_file", "30");
+  mPersist.SetValue("of_average_ext_img", "15");
+  mPersist.SetValue("of_average_ext_file", "10");
+
+  // whether to keep existing files when restoring backup of internal storage
+  mPersist.SetValue("of_keep_storage_data", "1");
+
+  //[f/d] UI Vars
+  #ifdef FOX_USE_NANO_EDITOR
+  	mConst.SetValue("fox_use_nano_editor", "1");
+  #else
+    	mConst.SetValue("fox_use_nano_editor", "0");
+  #endif
+
+  int of_status_placement = (atoi(OF_STATUS_H) / 2) - 28;
+  int of_center_y = atoi(OF_SCREEN_H) / 2;
+  
+  mConst.SetValue(OF_STATUS_PLACEMENT_S, of_status_placement);
+  mConst.SetValue(OF_CENTER_Y_S, of_center_y);
+  
+  mConst.SetValue(OF_SCREEN_H_S, OF_SCREEN_H);
+  mData.SetValue(OF_SCREEN_NAV_H_S, OF_SCREEN_H); // mData for nide navbar function
+  
+  mConst.SetValue(OF_STATUS_H_S, OF_STATUS_H);
+  mConst.SetValue(OF_HIDE_NOTCH_S, OF_HIDE_NOTCH);
+  mConst.SetValue(OF_STATUS_INDENT_LEFT_S, OF_STATUS_INDENT_LEFT);
+  mConst.SetValue(OF_STATUS_INDENT_RIGHT_S, OF_STATUS_INDENT_RIGHT);
+  mConst.SetValue(OF_CLOCK_POS_S, OF_CLOCK_POS);
+  mConst.SetValue(OF_ALLOW_DISABLE_NAVBAR_S, OF_ALLOW_DISABLE_NAVBAR);
+  mConst.SetValue(OF_FLASHLIGHT_ENABLE_STR, OF_FLASHLIGHT_ENABLE);
+
+  mConst.SetValue(OF_SPLASH_MAX_SIZE_STR, OF_SPLASH_MAX_SIZE);
+
+  // number of options in some listboxes before a scrollbar is needed
+  int lnum = 360;
+  int lnum2 = 540;
+  int lnum_group = 512;
+  #ifdef OF_OPTIONS_LIST_NUM
+	int cv = atoi(OF_OPTIONS_LIST_NUM);
+	// restrict the permissible range to something sensible
+	const int min_h = 4;
+	const int max_h =
+	#ifdef FOX_AB_DEVICE
+	9;
+	#else
+	12;
+	#endif
+
+	if (cv < min_h)
+		cv = min_h;
+	else if (cv > max_h)
+		cv = max_h;
+
+	lnum = (cv * 90);
+	if (lnum > lnum2)
+		lnum2 = lnum;
+
+  lnum_group = (cv * 144 + (144 * 2));
+  #endif
+  mConst.SetValue("options_list_num", lnum);
+  mConst.SetValue("options_list_num_2", lnum2);
+  mConst.SetValue("options_list_num_group", lnum_group);
+
+  #ifdef OF_ENABLE_LAB
+    mConst.SetValue("fox_lab", "1");
+		LOGERR("Warning: lab enabled\n");
+		LOGERR("Build isn't for release\n");
+  #else
+    mConst.SetValue("fox_lab", "0");
+  #endif
+
+  #ifdef OF_FLASHLIGHT_ENABLE 
+    if ((string)OF_FLASHLIGHT_ENABLE == "1") {
+      mConst.SetValue("of_fl_path_1", OF_FL_PATH1);
+      mConst.SetValue("of_fl_path_2", OF_FL_PATH2);
+      mData.SetValue("of_flash_on", "0");
+    }
+  #endif
+
+  mConst.SetValue("fox_build_type1", FOX_BUILD_TYPE);
+
+  // dispense with the "Create Digest" button (it is only for the 9.0 branch)
+  mConst.SetValue("fox_show_digest_btn", "0");
+
+  #if defined(OF_DISABLE_MIUI_SPECIFIC_FEATURES)
+    mData.SetValue("of_no_miui_features", "1");
+  #else
+    mData.SetValue("of_no_miui_features", "0");
+  #endif
+
+  #if defined(OF_NO_REFLASH_CURRENT_ORANGEFOX)
+    mConst.SetValue("fox_disable_reflash_current", "1");
+  #else
+    mConst.SetValue("fox_disable_reflash_current", "0");
+  #endif
+
+  #if defined(FOX_AB_DEVICE) || defined(AB_OTA_UPDATER)
+    mData.SetValue("of_ab_device", "1");
+  #else
+    mData.SetValue("of_ab_device", "0");
+  #endif
+
+  #if defined(BOARD_USES_RECOVERY_AS_BOOT) && defined(BOARD_BUILD_SYSTEM_ROOT_IMAGE)
+    mConst.SetValue("tw_uses_initramfs", "1");
+  #else
+    mConst.SetValue("tw_uses_initramfs", "0");
+  #endif
+
+#if defined(BOARD_USES_RECOVERY_AS_BOOT) || defined(BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT) || defined(OF_AB_DEVICE_WITH_RECOVERY_PARTITION)
+	mConst.SetValue("tw_include_install_recovery_ramdisk", "1");
+#else
+	mConst.SetValue("tw_include_install_recovery_ramdisk", "0");
+#endif
+#ifdef BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT
+	mConst.SetValue("tw_is_vendor_boot", "1");
+	property_set("tw_is_vendor_boot", "1");
+#else
+	mConst.SetValue("tw_is_vendor_boot", "0");
+#endif
+
+#ifdef FOX_ENABLE_APP_MANAGER
+    mConst.SetValue("enable_app_manager", "1");
+#endif
+
+#ifdef OF_DISABLE_EXTRA_ABOUT_PAGE
+    mConst.SetValue("disable_extra_about", "1");
+#endif
+
+#ifdef OF_DISABLE_OTA_MENU
+    mConst.SetValue("of_no_ota_menu", "1");
+    #ifdef OF_DISABLE_ORS_AUTO_REBOOT
+    mConst.SetValue(FOX_DISABLE_OTA_AUTO_REBOOT, "1");
+    #else
+    mConst.SetValue(FOX_DISABLE_OTA_AUTO_REBOOT, "0");
+    #endif
+#else
+    mConst.SetValue("of_no_ota_menu", "0");
+    mPersist.SetValue(FOX_DISABLE_OTA_AUTO_REBOOT, "0");
+#endif
+
+#ifdef OF_NO_SPLASH_CHANGE
+    mConst.SetValue("no_splash_change", "1");
+#else
+    mConst.SetValue("no_splash_change", "0");
+#endif
+
+#ifdef FOX_DELETE_MAGISK_ADDON
+    mConst.SetValue("no_magisk", "1");
+#endif
+
+// we only define this if it is turned off (set to zero)
+#ifdef OF_NO_GREEN_LED
+    mConst.SetValue("no_green_led", "1");
+#endif
+
+  mData.SetValue("of_reload_back", "main");
+
+  //[f/d]
+ 
+#ifndef TW_NO_HAPTICS
+	mPersist.SetValue("tw_button_vibrate", "40");
+	mPersist.SetValue("tw_keyboard_vibrate", "40");
+	mPersist.SetValue("tw_action_vibrate", "160");
+	mConst.SetValue("tw_disable_haptics", "0");
+#else
+	LOGINFO("TW_NO_HAPTICS := true\n");
+	mConst.SetValue("tw_disable_haptics", "1");
+	mPersist.SetValue("tw_button_vibrate", "0");
+	mPersist.SetValue("tw_keyboard_vibrate", "0");
+	mPersist.SetValue("tw_action_vibrate", "0");
+#endif
+
+  TWPartition *store = PartitionManager.Get_Default_Storage_Partition();
+  if (store)
+    mPersist.SetValue("tw_storage_path", store->Storage_Path);
+  else
+    mPersist.SetValue("tw_storage_path", "/");
+
+#ifdef TW_FORCE_CPUINFO_FOR_DEVICE_ID
+  printf("TW_FORCE_CPUINFO_FOR_DEVICE_ID := true\n");
+#endif
+
+#ifdef BOARD_HAS_NO_REAL_SDCARD
+  printf("BOARD_HAS_NO_REAL_SDCARD := true\n");
+  mConst.SetValue(TW_ALLOW_PARTITION_SDCARD, "0");
+#else
+  mConst.SetValue(TW_ALLOW_PARTITION_SDCARD, "1");
+#endif
+
+  str = GetCurrentStoragePath();
+  mPersist.SetValue(TW_ZIP_LOCATION_VAR, str);
+  str += "/Fox/BACKUPS/";
+
+  string dev_id;
+  mConst.GetValue("device_id", dev_id);
+
+  str += dev_id;
+  mData.SetValue(TW_BACKUPS_FOLDER_VAR, str);
+
+  mConst.SetValue(TW_REBOOT_SYSTEM, "1");
+#ifdef TW_NO_REBOOT_RECOVERY
+  printf("TW_NO_REBOOT_RECOVERY := true\n");
+  mConst.SetValue(TW_REBOOT_RECOVERY, "0");
+#else
+  mConst.SetValue(TW_REBOOT_RECOVERY, "1");
+#endif
+  mConst.SetValue(TW_REBOOT_POWEROFF, "1");
+#ifdef TW_NO_REBOOT_BOOTLOADER
+  printf("TW_NO_REBOOT_BOOTLOADER := true\n");
+  mConst.SetValue(TW_REBOOT_BOOTLOADER, "0");
+#else
+  mConst.SetValue(TW_REBOOT_BOOTLOADER, "1");
+#endif
+#ifdef RECOVERY_SDCARD_ON_DATA
+  printf("RECOVERY_SDCARD_ON_DATA := true\n");
+  mConst.SetValue(TW_HAS_DATA_MEDIA, "1");
+  datamedia = true;
+#else
+  mData.SetValue(TW_HAS_DATA_MEDIA, "0");
+#endif
+#ifdef TW_NO_BATT_PERCENT
+  printf("TW_NO_BATT_PERCENT := true\n");
+  mConst.SetValue(TW_NO_BATTERY_PERCENT, "1");
+#else
+  mConst.SetValue(TW_NO_BATTERY_PERCENT, "0");
+#endif
+#ifdef TW_NO_CPU_TEMP
+  printf("TW_NO_CPU_TEMP := true\n");
+  mConst.SetValue("tw_no_cpu_temp", "1");
+#else
+  string cpu_temp_file;
+#ifdef TW_CUSTOM_CPU_TEMP_PATH
+  cpu_temp_file = EXPAND(TW_CUSTOM_CPU_TEMP_PATH);
+#else
+  cpu_temp_file = "/sys/class/thermal/thermal_zone0/temp";
+#endif
+  if (TWFunc::Path_Exists(cpu_temp_file))
+    {
+      mConst.SetValue("tw_no_cpu_temp", "0");
+    }
+  else
+    {
+      LOGINFO("CPU temperature file '%s' not found, disabling CPU temp.\n",
+	      cpu_temp_file.c_str());
+      mConst.SetValue("tw_no_cpu_temp", "1");
+    }
+#endif
+#ifdef TW_CUSTOM_POWER_BUTTON
+  printf("TW_POWER_BUTTON := %s\n", EXPAND(TW_CUSTOM_POWER_BUTTON));
+  mConst.SetValue(TW_POWER_BUTTON, EXPAND(TW_CUSTOM_POWER_BUTTON));
+#else
+  mConst.SetValue(TW_POWER_BUTTON, "0");
+#endif
+#ifdef TW_ALWAYS_RMRF
+  printf("TW_ALWAYS_RMRF := true\n");
+  mConst.SetValue(TW_RM_RF_VAR, "1");
+#endif
+#ifdef TW_NEVER_UNMOUNT_SYSTEM
+  printf("TW_NEVER_UNMOUNT_SYSTEM := true\n");
+  mConst.SetValue(TW_DONT_UNMOUNT_SYSTEM, "1");
+#else
+  mConst.SetValue(TW_DONT_UNMOUNT_SYSTEM, "0");
+#endif
+#ifdef TW_NO_USB_STORAGE
+  printf("TW_NO_USB_STORAGE := true\n");
+  mConst.SetValue(TW_HAS_USB_STORAGE, "0");
+#else
+  char lun_file[255];
+  string Lun_File_str = CUSTOM_LUN_FILE;
+  size_t found = Lun_File_str.find("%");
+  if (found != string::npos)
+    {
+      sprintf(lun_file, CUSTOM_LUN_FILE, 0);
+      Lun_File_str = lun_file;
+    }
+  if (!TWFunc::Path_Exists(Lun_File_str))
+    {
+      LOGINFO("Lun file '%s' does not exist, USB storage mode disabled\n",
+	      Lun_File_str.c_str());
+      mConst.SetValue(TW_HAS_USB_STORAGE, "0");
+    }
+  else
+    {
+      LOGINFO("Lun file '%s'\n", Lun_File_str.c_str());
+      mData.SetValue(TW_HAS_USB_STORAGE, "1");
+    }
+#endif
+#ifdef TW_INCLUDE_INJECTTWRP
+  printf("TW_INCLUDE_INJECTTWRP := true\n");
+  mConst.SetValue(TW_HAS_INJECTTWRP, "1");
+  mPersist(TW_INJECT_AFTER_ZIP, "1");
+#else
+  mConst.SetValue(TW_HAS_INJECTTWRP, "0");
+#endif
+#ifdef TW_HAS_DOWNLOAD_MODE
+  printf("TW_HAS_DOWNLOAD_MODE := true\n");
+  mConst.SetValue(TW_DOWNLOAD_MODE, "1");
+#endif
+#ifdef TW_HAS_EDL_MODE
+	printf("TW_HAS_EDL_MODE := true\n");
+	mConst.SetValue(TW_EDL_MODE, "1");
+#endif
+
+#ifdef TW_INCLUDE_FASTBOOTD
+	printf("TW_INCLUDE_FASTBOOTD := true\n");
+	mData.SetValue(TW_FASTBOOT_MODE, "1");
+#endif
+#ifdef PRODUCT_USE_DYNAMIC_PARTITIONS
+	printf("PRODUCT_USE_DYNAMIC_PARTITIONS := true\n");
+	if (TWFunc::Fox_Property_Get("fox_dynamic_device") == "0") {
+		mData.SetValue(TW_IS_SUPER, "0");
+		mData.SetValue(TW_FASTBOOT_MODE, "0");
+		mData.SetValue("fox_dynamic_device", "0");
+		TWFunc::Fox_Property_Set("ro.fastbootd.available", "0");
+		TWFunc::Fox_Property_Set("orangefox.super.partition", "false");
+	}
+	else {
+		mData.SetValue(TW_IS_SUPER, "1");
+		mData.SetValue("fox_dynamic_device", "1");
+		TWFunc::Fox_Property_Set("orangefox.super.partition", "true");
+		#ifdef OF_NO_REBOOT_FASTBOOT
+		printf("OF_NO_REBOOT_FASTBOOT := 1\n");
+		mData.SetValue(TW_FASTBOOT_MODE, "0");
+		TWFunc::Fox_Property_Set("ro.fastbootd.available", "0");
+		#else
+		mData.SetValue(TW_FASTBOOT_MODE, "1");
+		TWFunc::Fox_Property_Set("ro.fastbootd.available", "1");
+		#endif
+	}
+#else
+	mData.SetValue(TW_IS_SUPER, "0");
+	mData.SetValue("fox_dynamic_device", "0");
+	TWFunc::Fox_Property_Set("orangefox.super.partition", "false");
+#endif
+
+#ifdef FOX_VENDOR_BOOT_RECOVERY
+  	TWFunc::Fox_Property_Set("orangefox.vendor_boot.recovery", "true");
+  	mConst.SetValue("vendor_boot_recovery", "1");
+#endif
+
+#if defined(FOX_ENABLE_KERNELSU_SUPPORT) || defined(FOX_ENABLE_KERNELSU_NEXT_SUPPORT) || defined(FOX_ENABLE_SUKISU_SUPPORT)
+	TWFunc::Fox_Property_Set("orangefox.support_kernelsu", "true");
+	mConst.SetValue("fox_support_ksu", "1");
+#else
+	mConst.SetValue("fox_support_ksu", "0");
+#endif
+
+#ifdef TW_INCLUDE_CRYPTO
+  mConst.SetValue(TW_HAS_CRYPTO, "1");
+  printf("TW_INCLUDE_CRYPTO := true\n");
+#endif
+#ifdef TW_SDEXT_NO_EXT4
+  printf("TW_SDEXT_NO_EXT4 := true\n");
+  mConst.SetValue(TW_SDEXT_DISABLE_EXT4, "1");
+#else
+  mConst.SetValue(TW_SDEXT_DISABLE_EXT4, "0");
+#endif
+
+#ifdef TW_HAS_NO_BOOT_PARTITION
+  mPersist.SetValue("tw_backup_list", "/data;");
+#else
+  mPersist.SetValue("tw_backup_list", "/data;/boot;");
+#endif
+  mConst.SetValue(TW_MIN_SYSTEM_VAR, TW_MIN_SYSTEM_SIZE);
+  mData.SetValue(TW_BACKUP_NAME, "(Auto Generate)");
+
+  // Start of the OrangeFox variables
+  mData.SetValue(FOX_INSTALL_PREBUILT_ZIP, "0");
+  mData.SetValue(FOX_CALL_DEACTIVATION, "0");
+  mData.SetValue(FOX_GOVERNOR_STABLE, TWFunc::Get_Balanced_Governor());
+  mData.SetValue(FOX_RUN_SURVIVAL_BACKUP, "0");
+  mData.SetValue(FOX_METADATA_PRE_BUILD, "0");
+  mData.SetValue(FOX_INCREMENTAL_OTA_FAIL, "0");
+  mData.SetValue(FOX_LOADED_FINGERPRINT, "0");
+  mData.SetValue(FOX_MIUI_ZIP_TMP, "0");
+  mData.SetValue(FOX_FLASHLIGHT_VAR, "0");
+
+  mPersist.SetValue(FOX_DISABLE_BOOT_CHK, "0");
+  mPersist.SetValue(FOX_DISABLE_SECURE_BOOT, "0");
+  mPersist.SetValue(FOX_DISABLE_MOCK_LOCATION, "0");
+  mPersist.SetValue(FOX_ENABLE_MOCK_LOCATION, "0");
+  mPersist.SetValue(FOX_DISABLE_ADB_RO, "0");
+  mPersist.SetValue(FOX_ENABLE_ADB_RO, "0");
+  mPersist.SetValue(FOX_ENABLE_SECURE_RO, "0");
+  mPersist.SetValue(FOX_DISABLE_SECURE_RO, "0");
+  mPersist.SetValue(FOX_DONT_REPLACE_STOCK, "0");
+  mPersist.SetValue(FOX_ADVANCED_WARN_CHK, "0");
+  mPersist.SetValue(FOX_SAVE_LOAD_AROMAFM, "0");
+  mPersist.SetValue(FOX_DISABLE_DEBUGGING, "0");
+  mPersist.SetValue(FOX_ENABLE_DEBUGGING, "1");
+  mData.SetValue(FOX_ENCRYPTED_DEVICE, "0"); //assume that the device is not encrypted
+  mPersist.SetValue("of_themes_version", "0"); // uninitialised theme version
+
+  // { MIUI
+  string incremental_ota = "1";    // enable by default, unless turned off below
+  #if defined(OF_DISABLE_MIUI_SPECIFIC_FEATURES) || defined(OF_DISABLE_MIUI_OTA_BY_DEFAULT)
+  incremental_ota = "0";
+  #endif  
+
+  mPersist.SetValue("fox_verify_incremental_ota_signature", incremental_ota);  // set to 1 to support incremental ota
+  mPersist.SetValue(FOX_INCREMENTAL_PACKAGE, incremental_ota); 		// set to 1 to support incremental ota
+  mPersist.SetValue(FOX_DO_SYSTEM_ON_OTA, incremental_ota);
+
+  // DJ9 - turn these off by default until further notice, else there might be 
+  // issues in new Xiaomi devices or new ROMs; DJ9 //
+  string dm_verity_switch = "0"; 
+  string fEncrypt_switch = "0";
+  mPersist.SetValue(FOX_DISABLE_FORCED_ENCRYPTION, fEncrypt_switch);
+  mPersist.SetValue(FOX_DISABLE_DM_VERITY, dm_verity_switch);
+  #ifdef FOX_VANILLA_BUILD
+  mPersist.SetValue(FOX_ADVANCED_STOCK_REPLACE, "0");
+  #else
+  mPersist.SetValue(FOX_ADVANCED_STOCK_REPLACE, "1");
+  #endif
+  //  MIUI }
+
+  mPersist.SetValue(FOX_FORCE_DEACTIVATE_PROCESS, "0");
+  mPersist.SetValue(FOX_ZIP_INSTALLER_CODE, "0");
+  mPersist.SetValue(FOX_ZIP_INSTALLER_TREBLE, "0");
+
+  mPersist.SetValue(FOX_REBOOT_AFTER_RESTORE, "0");
+  mPersist.SetValue(FOX_NO_OS_SEARCH_ENGINE, "1");
+  mPersist.SetValue(FOX_STATUSBAR_ON_LOCK, "1");
+  mPersist.SetValue(FOX_LED_COLOR, "0");
+  mPersist.SetValue(FOX_FSYNC_CHECK, "0");
+  mPersist.SetValue(FOX_T2W_CHECK, "0");
+  mPersist.SetValue(FOX_MAIN_SURVIVAL_TRIGGER, "META-INF/com/miui/miui_update");
+
+  mPersist.SetValue(FOX_FORCE_FAST_CHARGE_CHECK, "0");
+  mPersist.SetValue(FOX_POWERSAVE_CHECK, "0");
+  mPersist.SetValue(FOX_PERFORMANCE_CHECK, "0");
+  mPersist.SetValue(FOX_BALANCE_CHECK, "1");
+
+#ifdef OF_USE_LOCKSCREEN_BUTTON
+  mPersist.SetValue("lock_btn", "1");
+#else
+  mPersist.SetValue("lock_btn", "0");
+#endif
+
+  mConst.SetValue(FOX_SURVIVAL_FOLDER_VAR, FOX_SURVIVAL_FOLDER);
+  mConst.SetValue(FOX_SURVIVAL_BACKUP_NAME, FOX_SURVIVAL_BACKUP);
+  mConst.SetValue(FOX_ACTUAL_BUILD_VAR, FOX_BUILD);
+  mConst.SetValue(FOX_TMP_SCRIPT_DIR, Fox_tmp_dir);
+  mData.SetValue("found_fox_overwriting_rom", 0);
+
+  // whether we are processing any asserts
+  mData.SetValue("fox_processing_asserts", "0");
+
+  // the canonical current device
+  str = TWFunc::Fox_Property_Get("ro.product.device");
+  mConst.SetValue("fox_product_device", str);
+
+  // let the device name in the "About" menu show the canonical value, rather than the one determined at build time
+  mData.SetValue(FOX_COMPATIBILITY_DEVICE, str.c_str());
+
+  // End of the OrangeFox variables
+
+  mPersist.SetValue(TW_INSTALL_REBOOT_VAR, "0");
+  mPersist.SetValue(TW_SIGNED_ZIP_VERIFY_VAR, "0");
+  mPersist.SetValue(TW_DISABLE_FREE_SPACE_VAR, "0");
+  mPersist.SetValue(TW_FORCE_DIGEST_CHECK_VAR, "0");
+  mPersist.SetValue(TW_USE_COMPRESSION_VAR, "0");
+  mPersist.SetValue(TW_GUI_SORT_ORDER, "1");
+  mPersist.SetValue(TW_RM_RF_VAR, "0");
+  mPersist.SetValue(TW_SKIP_DIGEST_CHECK_VAR, "0");
+  mPersist.SetValue(TW_SKIP_DIGEST_GENERATE_VAR, "0");
+  mPersist.SetValue(TW_SDEXT_SIZE, "0");
+  mPersist.SetValue(TW_SWAP_SIZE, "0");
+  mPersist.SetValue(TW_SDPART_FILE_SYSTEM, "ext3");
+  mPersist.SetValue(TW_TIME_ZONE_VAR, OF_DEFAULT_TIMEZONE);
+  mPersist.SetValue(TW_TIME_ZONE_GUISEL, OF_DEFAULT_TIMEZONE);
+  mPersist.SetValue(TW_TIME_ZONE_GUIOFFSET, "0");
+  mPersist.SetValue(TW_TIME_ZONE_GUIDST, "1");
+  #ifdef OF_NO_REFLASH_CURRENT_ORANGEFOX
+	mPersist.SetValue(TW_AUTO_REFLASHTWRP_VAR, "0");
+  #else
+	mPersist.SetValue(TW_AUTO_REFLASHTWRP_VAR, "1");
+  #endif
+
+  // avb2.0 disable
+  // by patching boot image
+  #ifdef OF_PATCH_AVB20
+  	mConst.SetValue(OF_PATCH_AVB20_VAR, "1");
+  #else
+  	mConst.SetValue(OF_PATCH_AVB20_VAR, "0");
+  #endif
+
+  // by patching vbmeta
+  #ifdef OF_SUPPORT_VBMETA_AVB2_PATCHING
+  	mConst.SetValue(OF_AUTO_DISABLE_VBMETA_AVB2_VAR, "1");
+  #else
+  	mConst.SetValue(OF_AUTO_DISABLE_VBMETA_AVB2_VAR, "0");
+  #endif
+
+  mPersist.SetValue(TW_AUTO_DISABLE_AVB2_VAR, "0");
+  // avb2.0
+
+  mData.SetValue(TW_ACTION_BUSY, "0");
+  mData.SetValue("tw_wipe_cache", "0");
+  mData.SetValue("tw_wipe_dalvik", "0");
+  mData.SetValue(TW_ZIP_INDEX, "0");
+  mData.SetValue(TW_ZIP_QUEUE_COUNT, "0");
+  mData.SetValue(TW_FILENAME, "/sdcard");
+  mData.SetValue(TW_SIMULATE_ACTIONS, "0");
+  mData.SetValue(TW_SIMULATE_FAIL, "0");
+  mData.SetValue(TW_IS_ENCRYPTED, "0");
+  mData.SetValue(TW_IS_DECRYPTED, "0");
+  mData.SetValue(TW_CRYPTO_PASSWORD, "0");
+  mData.SetValue(TW_CRYPTO_PWTYPE, "0"); // Set initial value so that recovery will not be confused when using unencrypted data or failed to decrypt data
+  mData.SetValue("tw_terminal_state", "0");
+  mData.SetValue("tw_background_thread_running", "0");
+  mData.SetValue(TW_RESTORE_FILE_DATE, "0");
+  mPersist.SetValue("tw_military_time", "0");
+  mPersist.SetValue(TW_UNMOUNT_VENDOR, "1");
+#ifdef AB_OTA_UPDATER
+	mPersist.SetValue(TW_UNMOUNT_SYSTEM, "0");
+#else
+	mPersist.SetValue(TW_UNMOUNT_SYSTEM, "1");
+#endif
+
+#ifdef TW_INCLUDE_CRYPTO
+	mPersist.SetValue(TW_USE_SHA2, "1");
+	mPersist.SetValue(TW_NO_SHA2, "0");
+#else
+	mPersist.SetValue(TW_NO_SHA2, "1");
+#endif
+
+#ifdef TW_NO_SCREEN_TIMEOUT
+  mConst.SetValue("tw_screen_timeout_secs", "0");
+  mConst.SetValue("tw_no_screen_timeout", "1");
+#else
+  mPersist.SetValue("tw_screen_timeout_secs", "60");
+  mPersist.SetValue("tw_no_screen_timeout", "0");
+#endif
+
+#ifdef BOARD_BOOT_HEADER_VERSION
+	mConst.SetValue("tw_boot_header_version", BOARD_BOOT_HEADER_VERSION);
+	property_set("tw_boot_header_version", GetStrValue("tw_boot_header_version").c_str());
+#endif
+
+  if (GetIntValue("tw_is_vendor_boot") == 1 && GetIntValue("tw_boot_header_version") < 4)
+	mConst.SetValue("tw_is_vendor_boot_header_v3", "1");
+  else
+	mConst.SetValue("tw_is_vendor_boot_header_v3", "0");
+
+  mData.SetValue("tw_gui_done", "0");
+  mData.SetValue("tw_encrypt_backup", "0");
+  mData.SetValue("tw_sleep_total", "5");
+  mData.SetValue("tw_sleep", "5");
+  mData.SetValue("tw_enable_fastboot", "0");
+  if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+	mConst.SetValue(TW_VIRTUAL_AB_ENABLED, "1");
+	mData.SetValue("of_ab_device", "1");
+  }
+  else {
+  	mConst.SetValue(TW_VIRTUAL_AB_ENABLED, "0");
+  }
+
+  // Brightness handling
+  string findbright;
+#ifdef TW_BRIGHTNESS_PATH
+  findbright = EXPAND(TW_BRIGHTNESS_PATH);
+  LOGINFO("TW_BRIGHTNESS_PATH := %s\n", findbright.c_str());
+  if (!TWFunc::Path_Exists(findbright))
+    {
+      LOGINFO("Specified brightness file '%s' not found.\n",
+	      findbright.c_str());
+      findbright = "";
+    }
+#endif
+  if (findbright.empty())
+    {
+      // Attempt to locate the brightness file
+      findbright = Find_File::Find("brightness", "/sys/class/backlight");
+      if (findbright.empty())
+	findbright =
+	  Find_File::Find("brightness", "/sys/class/leds/lcd-backlight");
+    }
+  if (findbright.empty())
+    {
+      LOGINFO("Unable to locate brightness file\n");
+      mConst.SetValue("tw_has_brightnesss_file", "0");
+    }
+  else
+    {
+      LOGINFO("Found brightness file at '%s'\n", findbright.c_str());
+      mConst.SetValue("tw_has_brightnesss_file", "1");
+      mConst.SetValue("tw_brightness_file", findbright);
+      string maxBrightness;
+#ifdef TW_MAX_BRIGHTNESS
+      ostringstream maxVal;
+      maxVal << TW_MAX_BRIGHTNESS;
+      maxBrightness = maxVal.str();
+#else
+      // Attempt to locate the max_brightness file
+      string maxbrightpath =
+	findbright.insert(findbright.rfind('/') + 1, "max_");
+      if (TWFunc::Path_Exists(maxbrightpath))
+	{
+	  ifstream maxVal(maxbrightpath.c_str());
+	  if (maxVal >> maxBrightness)
+	    {
+	      LOGINFO("Got max brightness %s from '%s'\n",
+		      maxBrightness.c_str(), maxbrightpath.c_str());
+	    }
+	  else
+	    {
+	      // Something went wrong, set that to indicate error
+	      maxBrightness = "-1";
+	    }
+	}
+      if (atoi(maxBrightness.c_str()) <= 0)
+	{
+	  // Fallback into default
+	  ostringstream maxVal;
+	  maxVal << 255;
+	  maxBrightness = maxVal.str();
+	}
+#endif
+      mConst.SetValue("tw_brightness_max", maxBrightness);
+      mPersist.SetValue("tw_brightness", maxBrightness);
+      mPersist.SetValue("tw_brightness_pct", "100");
+#ifdef TW_SECONDARY_BRIGHTNESS_PATH
+      string secondfindbright = EXPAND(TW_SECONDARY_BRIGHTNESS_PATH);
+      if (secondfindbright != "" && TWFunc::Path_Exists(secondfindbright))
+	{
+	  LOGINFO("Will use a second brightness file at '%s'\n",
+		  secondfindbright.c_str());
+	  mConst.SetValue("tw_secondary_brightness_file", secondfindbright);
+	}
+      else
+	{
+	  LOGINFO("Specified secondary brightness file '%s' not found.\n",
+		  secondfindbright.c_str());
+	}
+#endif
+#ifdef TW_DEFAULT_BRIGHTNESS
+      int defValInt = TW_DEFAULT_BRIGHTNESS;
+      int maxValInt = atoi(maxBrightness.c_str());
+      // Deliberately int so the % is always a whole number
+      int defPctInt = (((double) defValInt / maxValInt) * 100);
+      ostringstream defPct;
+      defPct << defPctInt;
+      mPersist.SetValue("tw_brightness_pct", defPct.str());
+
+      ostringstream defVal;
+      defVal << TW_DEFAULT_BRIGHTNESS;
+      mPersist.SetValue("tw_brightness", defVal.str());
+      TWFunc::Set_Brightness(defVal.str());
+#else
+      TWFunc::Set_Brightness(maxBrightness);
+#endif
+    }
+
+#ifndef TW_EXCLUDE_ENCRYPTED_BACKUPS
+  mConst.SetValue("tw_include_encrypted_backup", "1");
+#else
+  LOGINFO("TW_EXCLUDE_ENCRYPTED_BACKUPS := true\n");
+  mConst.SetValue("tw_include_encrypted_backup", "0");
+#endif
+#ifdef TW_HAS_MTP
+  mConst.SetValue("tw_has_mtp", "1");
+  mPersist.SetValue("tw_mtp_enabled", "1");
+  mPersist.SetValue("tw_mtp_debug", "0");
+#else
+  LOGINFO("TW_EXCLUDE_MTP := true\n");
+  mConst.SetValue("tw_has_mtp", "0");
+  mConst.SetValue("tw_mtp_enabled", "0");
+#endif
+  mPersist.SetValue("tw_mount_system_ro", "2");
+  mPersist.SetValue("tw_never_show_system_ro_page", "0");
+  mPersist.SetValue("tw_language", EXPAND(TW_DEFAULT_LANGUAGE));
+  LOGINFO("LANG: %s\n", EXPAND(TW_DEFAULT_LANGUAGE));
+
+  mData.SetValue("tw_has_adopted_storage", "0");
+
+#ifdef AB_OTA_UPDATER
+  LOGINFO("AB_OTA_UPDATER := true\n");
+  mConst.SetValue("tw_has_boot_slots", "1");
+#else
+  mConst.SetValue("tw_has_boot_slots", "0");
+#endif
+
+#ifdef TW_NO_LEGACY_PROPS
+  LOGINFO("TW_NO_LEGACY_PROPS := true\n");
+#endif
+
+#ifdef TW_OEM_BUILD
+	LOGINFO("TW_OEM_BUILD := true\n");
+	mConst.SetValue("tw_oem_build", "1");
+#else
+	mConst.SetValue("tw_oem_build", "0");
+#endif
+
+#ifndef TW_EXCLUDE_NANO
+	mConst.SetValue("tw_include_nano", "1");
+#else
+	LOGINFO("TW_EXCLUDE_NANO := true\n");
+	mConst.SetValue("tw_include_nano", "0");
+ #endif
+
+	mData.SetValue("tw_flash_both_slots", "0");
+	mData.SetValue("tw_is_slot_part", "0");
+
+	mData.SetValue("tw_enable_adb_backup", "0");
+
+	if (TWFunc::Path_Exists("/system/bin/logcat"))
+		mConst.SetValue("tw_logcat_exists", "1");
+	else
+		mConst.SetValue("tw_logcat_exists", "0");
+
+	if (TWFunc::Path_Exists(TWFunc::Get_MagiskBoot()))
+		mConst.SetValue("tw_has_repack_tools", "1");
+	else
+		mConst.SetValue("tw_has_repack_tools", "0");
+
+	pthread_mutex_unlock(&m_valuesLock);
+}
+
+// Magic Values
+int DataManager::GetMagicValue(const string& varName, string& value)
+{
+	// Handle special dynamic cases
+	if (varName == "tw_time")
+	{
+		char tmp[32];
+
+		struct tm *current;
+		time_t now;
+		int tw_military_time;
+		now = time(0);
+		current = localtime(&now);
+		GetValue(TW_MILITARY_TIME, tw_military_time);
+		if (current->tm_hour >= 12)
+		{
+			if (tw_military_time == 1)
+				sprintf(tmp, "%d:%02d", current->tm_hour, current->tm_min);
+			else
+				sprintf(tmp, "%d:%02d PM", current->tm_hour == 12 ? 12 : current->tm_hour - 12, current->tm_min);
+		}
+		else
+		{
+			if (tw_military_time == 1)
+				sprintf(tmp, "%d:%02d", current->tm_hour, current->tm_min);
+			else
+				sprintf(tmp, "%d:%02d AM", current->tm_hour == 0 ? 12 : current->tm_hour, current->tm_min);
+		}
+		value = tmp;
+		return 0;
+	}
+	else if (varName == "tw_cpu_temp")
+	{
+		int tw_no_cpu_temp;
+		GetValue("tw_no_cpu_temp", tw_no_cpu_temp);
+		if (tw_no_cpu_temp == 1) return -1;
+
+		string cpu_temp_file;
+		static unsigned long convert_temp = 0;
+		static time_t cpuSecCheck = 0;
+		struct timeval curTime;
+		string results;
+
+		gettimeofday(&curTime, NULL);
+		if (curTime.tv_sec > cpuSecCheck)
+		{
+#ifdef TW_CUSTOM_CPU_TEMP_PATH
+			cpu_temp_file = EXPAND(TW_CUSTOM_CPU_TEMP_PATH);
+			if (TWFunc::read_file(cpu_temp_file, results) != 0)
+				return -1;
+#else
+			cpu_temp_file = "/sys/class/thermal/thermal_zone0/temp";
+			if (TWFunc::read_file(cpu_temp_file, results) != 0)
+				return -1;
+#endif
+			convert_temp = strtoul(results.c_str(), NULL, 0) / 1000;
+			if (convert_temp <= 0)
+				convert_temp = strtoul(results.c_str(), NULL, 0);
+			if (convert_temp >= 150)
+				convert_temp = strtoul(results.c_str(), NULL, 0) / 10;
+			cpuSecCheck = curTime.tv_sec + 5;
+		}
+		value = TWFunc::to_string(convert_temp);
+		return 0;
+	}
+	return -1;
+}
+
+void DataManager::Output_Version(void)
+{
+#ifndef TW_OEM_BUILD
+	if (android::base::GetProperty("ro.twrp.fastbootd", "") == "1") // do not proceed in fastbootd mode
+		return;
+
+	string Path;
+	char version[255];
+
+	std::string logDir = TWFunc::get_log_dir();
+	if (logDir.empty()) {
+		LOGINFO("Unable to find cache directory\n");
+		return;
+	}
+
+	std::string recoveryLogDir = logDir + "recovery/";
+
+	if (logDir == CACHE_LOGS_DIR) {
+		if (!PartitionManager.Mount_By_Path(CACHE_LOGS_DIR, false)) {
+			LOGINFO("Unable to mount '%s' to write version number.\n", Path.c_str());
+			return;
+		}
+
+		if (!TWFunc::Path_Exists(recoveryLogDir)) {
+			LOGINFO("Recreating %s folder.\n", recoveryLogDir.c_str());
+			if (!TWFunc::Create_Dir_Recursive(recoveryLogDir.c_str(), S_IRWXU | S_IRWXG | S_IWGRP | S_IXGRP, AID_MEDIA_RW, AID_MEDIA_RW)) {
+				LOGERR("DataManager::Output_Version -- Unable to make %s: %s\n", recoveryLogDir.c_str(), strerror(errno));
+				return;
+			}
+		}
+	}
+
+	std::string verPath = recoveryLogDir + ".version";
+	if (TWFunc::Path_Exists(verPath)) {
+		unlink(verPath.c_str());
+	}
+	FILE *fp = fopen(verPath.c_str(), "w");
+	if (fp == NULL) {
+		LOGINFO("Unable to open: %s. Data may be unmounted. Error: %s\n", verPath.c_str(), strerror(errno));
+		return;
+	}
+	strcpy(version, TW_VERSION_STR);
+	fwrite(version, sizeof(version[0]), strlen(version) / sizeof(version[0]), fp);
+	fclose(fp);
+	TWFunc::copy_file("/etc/recovery.fstab", recoveryLogDir + "recovery.fstab", 0644);
+	PartitionManager.Output_Storage_Fstab();
+	sync();
+	LOGINFO("Version number saved to '%s'\n", verPath.c_str());
+#endif
+}
+
+void DataManager::ReadSettingsFile(void)
+{
+#ifndef TW_OEM_BUILD
+  // Load up the values for TWRP - Sleep to let the card be ready
+  char mkdir_path[255], settings_file[255];
+#ifndef FOX_SETTINGS_ROOT_DIRECTORY
+  int is_enc, has_data_media;
+
+  GetValue(TW_IS_ENCRYPTED, is_enc);
+  GetValue(TW_HAS_DATA_MEDIA, has_data_media);
+
+  // if decryption fails, try to load/save some settings to /data/recovery/Fox/
+  if (is_enc == 1 && has_data_media == 1 && (TWFunc::Path_Exists("/data/unencrypted/key/version") || GetIntValue(TW_IS_FBE) == 1)) {
+	// only do this after TWFunc::OrangeFox_Startup() - don't do it before OpenrecoveryScript execution (eg, for OTAs)
+	if (GetStrValue("fox_startup_executed") == "1") {
+		static int dcrpfail_count=0;
+		TWFunc::Fox_Property_Set("of_decryption_failed", "true");
+		std::string tempdir = TW_STORAGE_PATH"/Fox";
+		SetValue("tw_settings_path", tempdir);
+		if (dcrpfail_count == 0) {
+			gui_print_color("warning", "I cannot load settings from encrypted device. I will try to save some settings to %s\n", tempdir.c_str());
+			dcrpfail_count++; // don't spam the console with this warning
+		}
+	}
+  }
+
+#endif // FOX_SETTINGS_ROOT_DIRECTORY
+  memset(mkdir_path, 0, sizeof(mkdir_path));
+  memset(settings_file, 0, sizeof(settings_file));
+  sprintf(mkdir_path, "%s", GetSettingsStoragePath().c_str());
+  sprintf(settings_file, "%s/%s", mkdir_path, TW_SETTINGS_FILE);
+
+  if (!PartitionManager.Mount_Settings_Storage(false))
+    {
+      usleep(500000);
+      if (!PartitionManager.Mount_Settings_Storage(false))
+	gui_msg(Msg(msg::kError, "unable_to_mount=Unable to mount {1}")
+		(settings_file));
+    }
+
+  TWFunc::Create_Dir_Recursive(mkdir_path, 0777, AID_MEDIA_RW, AID_MEDIA_RW);
+
+  LOGINFO("Attempt to load settings from settings file...\n");
+  LoadValues(settings_file);
+  Output_Version();
+#endif // ifdef TW_OEM_BUILD
+  PartitionManager.Mount_All_Storage();
+  update_tz_environment_variables();
+  TWFunc::Set_Brightness(GetStrValue("tw_brightness"));
+  
+  DataManager::FindPasswordBackup();
+  DataManager::RestorePasswordBackup();
+}
+
+string DataManager::GetCurrentStoragePath(void)
+{
+  return GetStrValue("tw_storage_path");
+}
+
+string DataManager::GetCurrentPartPath(void)
+{
+  return GetStrValue("part_option");
+}
+
+string DataManager::GetSettingsStoragePath(void)
+{
+#ifdef FOX_SETTINGS_ROOT_DIRECTORY
+  return Fox_Settings_Path;
+#else
+  return GetStrValue("tw_settings_path");
+#endif
+}
+
+void DataManager::Vibrate(const string& varName)
+{
+#ifndef TW_NO_HAPTICS
+	int vib_value = 0;
+	GetValue(varName, vib_value);
+	if (vib_value) {
+		vibrate(vib_value);
+	}
+#endif
+}
+
+#ifdef OF_CLASSIC_LEDS_FUNCTION
+// use R9.x Leds function
+void DataManager::Leds(bool enable)
+{
+  std::string leds, bs, bsmax, time, blink, bsm, leds1, bs1, bsmax1, time1, blink1, bsm1, max_brt, install_vibrate_value;
+  struct stat st;
+  int ledcolor;
+  leds = "/sys/class/leds/green";
+  bs = leds + "/brightness";
+  time = leds + "/led_time";
+  blink = leds + "/blink";
+  bsmax = leds + "/max_brightness";
+
+  leds1 = "/sys/class/leds/red";
+  bs1 = leds1 + "/brightness";
+  time1 = leds1 + "/led_time";
+  blink1 = leds1 + "/blink";
+  bsmax1 = leds1 + "/max_brightness";
+
+  string vibrate_path = "/sys/class/timed_output/vibrator/enable";
+  DataManager::GetValue("tw_action_vibrate", install_vibrate_value);
+  DataManager::GetValue("fox_led_color", ledcolor);
+
+  if (!TWFunc::Path_Exists("/sys/class/leds/white/brightness"))
+  {
+    LOGINFO("DEBUG - found white led on /sys/class/leds/white/ path\n");
+    TWFunc::read_file("/sys/class/leds/white/max_brightness", max_brt);
+    TWFunc::write_to_file("/sys/class/leds/white/brightness", max_brt);
+  }
+
+  if (!enable && stat(bs.c_str(), &st) == 0)
+    {
+      TWFunc::write_to_file(bs, "0");
+      TWFunc::write_to_file(bs1, "0");
+    }
+  else
+    {
+      if (stat(bs.c_str(), &st) == 0 && stat(time.c_str(), &st) == 0
+	  && stat(bsmax.c_str(), &st) == 0 && stat(blink.c_str(), &st) == 0)
+	{
+	  if (TWFunc::read_file(bsmax, bsm) == 0)
+	    {
+	      TWFunc::write_to_file(bs, bsmax);
+	      TWFunc::write_to_file(blink, "1");
+        TWFunc::write_to_file(time, "1 1 1 1");
+
+        if (ledcolor == 0) {
+          LOGINFO("Enable Yellow led\n");
+          TWFunc::write_to_file("/sys/class/leds/red/brightness", bsmax);
+          TWFunc::write_to_file("/sys/class/leds/red/blink", "1");
+          TWFunc::write_to_file("/sys/class/leds/red/led_time", "1 1 1 1");
+        }
+        TWFunc::write_to_file(vibrate_path, install_vibrate_value);
+	    }
+	}
+    }
+}
+#else
+void DataManager::Leds(bool enable)
+{
+  std::string leds, bs, bsmax, time, blink, bsm, leds1, bs1, bsmax1, time1, blink1, bsm1, max_brt, install_vibrate_value;
+  struct stat st;
+  int ledcolor;
+  leds = "/sys/class/leds/green";
+  bs = leds + "/brightness";
+  time = leds + "/led_time";
+  blink = leds + "/blink";
+  bsmax = leds + "/max_brightness";
+
+  leds1 = "/sys/class/leds/red";
+  bs1 = leds1 + "/brightness";
+  time1 = leds1 + "/led_time";
+  blink1 = leds1 + "/blink";
+  bsmax1 = leds1 + "/max_brightness";
+
+  DataManager::GetValue("tw_action_vibrate", install_vibrate_value);
+  DataManager::GetValue("fox_led_color", ledcolor);
+
+  if (!enable && stat(bs.c_str(), &st) == 0)
+    {
+      TWFunc::write_to_file(bs, "0");
+      TWFunc::write_to_file(bs1, "0");
+      if (TWFunc::Path_Exists("/sys/class/leds/white/brightness"))
+      {
+        LOGINFO("DEBUG - found white led on /sys/class/leds/white/ path\n");
+        TWFunc::write_to_file("/sys/class/leds/white/brightness", "0");
+      }
+    }
+  else
+    {
+      if (stat(bs.c_str(), &st) == 0 && stat(bsmax.c_str(), &st) == 0) {
+        if (stat(time.c_str(), &st) == 0 && stat(blink.c_str(), &st) == 0)
+        {
+          if (TWFunc::read_file(bsmax, bsm) == 0)
+            {
+              TWFunc::write_to_file(bs, bsm);
+              TWFunc::write_to_file(blink, "1");
+              TWFunc::write_to_file(time, "1 1 1 1");
+
+              if (ledcolor == 0) {
+                LOGINFO("Enable Yellow led\n");
+                TWFunc::write_to_file("/sys/class/leds/red/brightness", bsm);
+                TWFunc::write_to_file("/sys/class/leds/red/blink", "1");
+                TWFunc::write_to_file("/sys/class/leds/red/led_time", "1 1 1 1");
+              }
+              if (TWFunc::Path_Exists("/sys/class/leds/white/brightness"))
+              {
+                LOGINFO("DEBUG - found white led on /sys/class/leds/white/ path\n");
+                TWFunc::read_file("/sys/class/leds/white/max_brightness", max_brt);
+                TWFunc::write_to_file("/sys/class/leds/white/brightness", max_brt);
+              }
+            }
+        } else {
+        //[f/d] Just turn on led if device doesn't support blinking
+          if (TWFunc::read_file(bsmax, bsm) == 0)
+          {
+            TWFunc::write_to_file(bs, bsm);
+
+            if (ledcolor == 0) {
+              TWFunc::write_to_file("/sys/class/leds/red/brightness", bsm);
+            }
+          }
+        }
+      }
+    }
+}
+#endif
+

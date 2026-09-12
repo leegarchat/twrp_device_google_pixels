@@ -1,0 +1,11 @@
+--- a/bootable/recovery/minuitwrp/graphics.cpp
++++ b/bootable/recovery/minuitwrp/graphics.cpp
+@@ -206,7 +206,7 @@
+ {
+     GGLContext *gl = gr_context;
+     GGLint color[4];
+-#if defined(RECOVERY_ARGB) || defined(RECOVERY_BGRA) || defined(RECOVERY_ABGR)
++#if defined(RECOVERY_ARGB) || defined(RECOVERY_BGRA)
+     color[0] = ((b << 8) | r) + 1;
+     color[1] = ((g << 8) | g) + 1;
+     color[2] = ((r << 8) | b) + 1;

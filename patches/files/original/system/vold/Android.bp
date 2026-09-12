@@ -1,0 +1,368 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+cc_defaults {
+    name: "vold_default_flags",
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wextra",
+        "-Wno-missing-field-initializers",
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable",
+        "-Wno-macro-redefined",
+    ],
+
+    tidy: true,
+    tidy_checks: [
+        "-*",
+        "cert-*",
+        "clang-analyzer-security*",
+        "android-*",
+    ],
+    tidy_checks_as_errors: [
+        "clang-analyzer-security*",
+        "cert-*",
+    ],
+}
+
+cc_defaults {
+    name: "vold_default_libs",
+
+    static_libs: [
+        "android.hardware.health.storage@1.0",
+        "android.hardware.health.storage-V1-ndk",
+        "android.security.maintenance-ndk",
+        "libasync_safe",
+        "libavb",
+        "libbootloader_message",
+        "libdm",
+        "libext2_uuid",
+        "libfec",
+        "libfec_rs",
+        "libfs_avb",
+        "libfs_mgr",
+        "libscrypt_static",
+        "libsquashfs_utils",
+        "libvold_binder",
+    ],
+    shared_libs: [
+        "android.hardware.boot@1.0",
+        "android.hardware.boot-V1-ndk",
+        "libboot_control_client",
+        "libbase",
+        "libbinder",
+        "libbinder_ndk",
+        "libcrypto",
+        "libcrypto_utils",
+        "libcutils",
+        "libext4_utils",
+        "libf2fs_sparseblock",
+        "libgsi",
+        "libhardware",
+        "libhardware_legacy",
+        "libincfs",
+        "libhidlbase",
+        "libkeymint_support",
+        "liblogwrap",
+        "libselinux",
+        "libsysutils",
+        "libutils",
+    ],
+}
+
+cc_library_static {
+    name: "libvold_binder",
+    defaults: ["vold_default_flags"],
+
+    srcs: [
+        ":vold_aidl",
+    ],
+    shared_libs: [
+        "libbinder",
+        "libutils",
+    ],
+    aidl: {
+        local_include_dirs: ["binder"],
+        include_dirs: [
+            "frameworks/native/aidl/binder",
+            "frameworks/base/core/java",
+        ],
+        export_aidl_headers: true,
+    },
+    whole_static_libs: [
+        "libincremental_aidl-cpp",
+    ],
+    export_shared_lib_headers: [
+        "libbinder",
+    ],
+}
+
+cc_library_headers {
+    name: "libvold_headers",
+    recovery_available: true,
+    export_include_dirs: ["."],
+}
+
+// Static library factored out to support testing
+cc_library_static {
+    name: "libvold",
+    defaults: [
+        "vold_default_flags",
+        "vold_default_libs",
+        "keystore2_use_latest_aidl_ndk_shared",
+        "vold_defaults"
+    ],
+    include_dirs: [
+        "system/core/gatekeeperd/include"
+    ],
+    srcs: [
+        "AppFuseUtil.cpp",
+        "Benchmark.cpp",
+        "Checkpoint.cpp",
+        "cryptfs.cpp",
+        "CryptoType.cpp",
+        "Decrypt.cpp",
+        "EncryptInplace.cpp",
+        "FileDeviceUtils.cpp",
+        "FsCrypt.cpp",
+        "fscrypt_policy.cpp",
+        "HashPassword.cpp",
+        "IdleMaint.cpp",
+        "KeyBuffer.cpp",
+        "KeyStorage.cpp",
+        "KeyUtil.cpp",
+        "Keystore.cpp",
+        "Loop.cpp",
+        "MetadataCrypt.cpp",
+        "MoveStorage.cpp",
+        "NetlinkHandler.cpp",
+        "NetlinkManager.cpp",
+        "Process.cpp",
+        "Utils.cpp",
+        "VoldNativeService.cpp",
+        "VoldNativeServiceValidation.cpp",
+        "VoldUtil.cpp",
+        "VolumeManager.cpp",
+        "Weaver1.cpp",
+        "fs/Exfat.cpp",
+        "fs/Ext4.cpp",
+        "fs/F2fs.cpp",
+        "fs/Vfat.cpp",
+        "model/Disk.cpp",
+        "model/EmulatedVolume.cpp",
+        "model/ObbVolume.cpp",
+        "model/PrivateVolume.cpp",
+        "model/PublicVolume.cpp",
+        "model/StubVolume.cpp",
+        "model/VolumeBase.cpp",
+        "model/VolumeEncryption.cpp",
+    ],
+    product_variables: {
+        arc: {
+            exclude_srcs: [
+                "model/StubVolume.cpp",
+            ],
+            static_libs: [
+                "libarcvolume",
+            ],
+        },
+        debuggable: {
+            cppflags: ["-D__ANDROID_DEBUGGABLE__"],
+        },
+    },
+    shared_libs: [
+        "android.hardware.confirmationui@1.0",
+        "lib_android_keymaster_keymint_utils",
+        "android.hardware.gatekeeper-V1-ndk",
+        "android.hardware.gatekeeper@1.0",
+        "android.hardware.health.storage@1.0",
+        "android.hardware.health.storage-V1-ndk",
+        "android.hardware.keymaster@4.1",
+        "android.hardware.security.keymint-V3-ndk",
+        "android.hardware.weaver@1.0",
+        "android.security.apc-ndk",
+        "android.system.keystore2-V4-ndk",
+        "android.security.authorization-ndk",
+        "android.security.maintenance-ndk",
+        "libbinder",
+        "libbinder_ndk",
+        "libgatekeeper",
+        "libgatekeeper_aidl",
+        "libhardware",
+        "libhidlbase",
+        "liblog",
+        "libchrome",
+        "libkeymaster4_1support",
+        "libkeystoreinfo",
+        "libkeystore-attestation-application-id",
+        "libkeymint_support",
+        "libkeyutils",
+    ],
+    whole_static_libs: [
+        "libc++fs",
+    ],
+}
+
+cc_binary {
+    name: "vold",
+    defaults: [
+        "vold_default_flags",
+        "vold_default_libs",
+        "keystore2_use_latest_aidl_ndk_shared",
+    ],
+
+    srcs: ["main.cpp"],
+    static_libs: [
+        "libvold",
+    ],
+
+    init_rc: [
+        "vold.rc",
+    ],
+
+    required: [
+        "mke2fs",
+        "vold_prepare_subdirs",
+        "fuseMedia.o",
+    ],
+
+    product_variables: {
+        arc: {
+            exclude_srcs: [
+                "model/StubVolume.cpp",
+            ],
+            static_libs: [
+                "libarcvolume",
+            ],
+        },
+    },
+}
+
+cc_binary {
+    name: "vdc",
+    defaults: ["vold_default_flags"],
+
+    srcs: [
+        "vdc.cpp",
+        "Utils.cpp",
+    ],
+    shared_libs: [
+        "libbase",
+        "libbinder",
+        "libcutils",
+        "liblogwrap",
+        "libselinux",
+        "libutils",
+    ],
+    static_libs: [
+        "libvold_binder",
+    ],
+}
+
+cc_binary {
+    name: "secdiscard",
+    defaults: ["vold_default_flags"],
+
+    srcs: [
+        "FileDeviceUtils.cpp",
+        "secdiscard.cpp",
+    ],
+    shared_libs: ["libbase"],
+}
+
+cc_binary {
+    name: "vold_prepare_subdirs",
+    defaults: ["vold_default_flags"],
+
+    srcs: [
+        "vold_prepare_subdirs.cpp",
+        "Utils.cpp",
+    ],
+    shared_libs: [
+        "libbase",
+        "libcutils",
+        "liblogwrap",
+        "libselinux",
+        "libutils",
+    ],
+    static_libs: [
+        "libvold_binder",
+    ],
+}
+
+filegroup {
+    name: "vold_aidl",
+    srcs: [
+        "binder/android/os/IVold.aidl",
+        "binder/android/os/IVoldListener.aidl",
+        "binder/android/os/IVoldMountCallback.aidl",
+        "binder/android/os/IVoldTaskListener.aidl",
+    ],
+    path: "binder",
+}
+
+cc_library {
+    name: "libkeystoreinfo",
+    host_supported: true,
+    cflags: [
+        "-Wno-unused-parameter",
+        "-Wno-unused-variable"
+    ],
+    include_dirs: [
+        "external/sqlite/dist/",
+        "system/vold"
+    ],
+    recovery_available: true,
+    srcs: [
+        "KeystoreInfo.cpp"
+    ],
+    shared_libs: [
+        "libsqlite"
+    ],
+    system_shared_libs: [
+        "libc", 
+        "libdl",
+        ],
+}
+
+cc_binary {
+    name: "fscryptpolicyget",
+    defaults: [
+        "vold_default_flags",
+        "vold_default_libs"
+    ],
+
+    srcs: ["fscryptpolicyget.cpp"],
+    static_libs: ["libvold"],
+
+    shared_libs: [
+        "android.hardware.health.storage@1.0",
+        "android.hardware.health.storage-V1-ndk",
+        "android.system.keystore2-V4-ndk",
+        "android.security.maintenance-ndk",
+        "libbinder_ndk",
+        "libkeymint_support",
+    ]
+}
+
+bootstrap_go_package {
+    name: "soong-vold_defaults",
+    pkgPath: "system/vold",
+    deps: [
+        "soong",
+        "soong-android",
+        "soong-cc"
+    ],
+    srcs: [
+        "vold_defaults.go",
+        "soong/makevars.go"
+    ],
+    pluginFor: ["soong_build"]
+}
+
+vold_defaults {
+  name: "vold_defaults"
+}

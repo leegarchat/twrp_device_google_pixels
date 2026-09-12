@@ -1,0 +1,10 @@
+--- a/system/core/trusty/keymaster/Android.bp
++++ b/system/core/trusty/keymaster/Android.bp
+@@ -88,6 +88,7 @@
+         "keymint/android.hardware.security.keymint-service.trusty.xml",
+     ],
+     vendor: true,
++    recovery_available: true,
+     cflags: [
+         "-Wall",
+         "-Wextra",

@@ -1,0 +1,15 @@
+--- a/bootable/recovery/install/install.cpp
++++ b/bootable/recovery/install/install.cpp
+@@ -365,10 +365,10 @@
+ }
+ 
+ static bool PerformPowerwashIfRequired(ZipArchiveHandle zip) {
++  // OrangeFox: forced powerwash disabled — never wipe data from OTA
+   const auto payload_properties = ExtractPayloadProperties(zip);
+   if (payload_properties.find("POWERWASH=1") != std::string::npos) {
+-    LOG(INFO) << "Payload properties has POWERWASH=1, wiping userdata...";
+-    return WipeData(nullptr);
++    LOG(WARNING) << "Payload properties has POWERWASH=1, but powerwash is disabled. Skipping wipe.";
+   }
+   return true;
+ }

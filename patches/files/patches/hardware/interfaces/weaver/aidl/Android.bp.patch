@@ -1,0 +1,10 @@
+--- a/hardware/interfaces/weaver/aidl/Android.bp
++++ b/hardware/interfaces/weaver/aidl/Android.bp
+@@ -11,6 +11,7 @@
+ aidl_interface {
+     name: "android.hardware.weaver",
+     vendor_available: true,
++    recovery_available: true,
+     srcs: ["android/hardware/weaver/*.aidl"],
+     stability: "vintf",
+     backend: {

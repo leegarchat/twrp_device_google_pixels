@@ -1,0 +1,28 @@
+[package]
+name = "recovery-tensor-daemon"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Unified recovery daemon for Pixel (Tensor) FBE decryption: Trusty storage proxy (RPMB/UFS) + Titan Mx Weaver HAL proxy"
+repository = "https://github.com/anomalyco/opencode"
+
+[[bin]]
+name = "recovery-tensor-daemon"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[features]
+# Enables the real Binder service glue in weaver/service.rs
+# (android_hardware_weaver + libbinder_rs bindings).
+# Soong build enables it via `features: ["binder"]` in Android.bp.
+# Plain cargo builds stay dependency-free (headless GSC self-check mode).
+binder = []
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

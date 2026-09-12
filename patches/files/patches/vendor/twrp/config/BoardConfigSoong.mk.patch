@@ -1,0 +1,10 @@
+--- a/vendor/twrp/config/BoardConfigSoong.mk
++++ b/vendor/twrp/config/BoardConfigSoong.mk
+@@ -38,6 +38,7 @@
+ # Documentation here:
+ # https://github.com/LineageOS/android_build_soong/commit/8328367c44085b948c003116c0ed74a047237a69
+ 
++include bootable/recovery/orangefox_soong.mk
+ SOONG_CONFIG_NAMESPACES += twrpVarsPlugin
+ 
+ SOONG_CONFIG_twrpVarsPlugin :=

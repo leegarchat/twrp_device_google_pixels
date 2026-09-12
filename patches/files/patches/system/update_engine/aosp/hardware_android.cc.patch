@@ -1,0 +1,22 @@
+--- a/system/update_engine/aosp/hardware_android.cc
++++ b/system/update_engine/aosp/hardware_android.cc
+@@ -214,16 +214,9 @@
+   return 0;
+ }
+ 
+-bool HardwareAndroid::SchedulePowerwash(bool save_rollback_data) {
+-  LOG(INFO) << "Scheduling a powerwash to BCB.";
+-  LOG_IF(WARNING, save_rollback_data) << "save_rollback_data was true but "
+-                                      << "isn't supported.";
+-  string err;
+-  if (!update_bootloader_message({"--wipe_data", "--reason=wipe_data_from_ota"},
+-                                 &err)) {
+-    LOG(ERROR) << "Failed to update bootloader message: " << err;
+-    return false;
+-  }
++bool HardwareAndroid::SchedulePowerwash(bool /* save_rollback_data */) {
++  // OrangeFox: powerwash disabled — never write --wipe_data to BCB
++  LOG(WARNING) << "SchedulePowerwash called but disabled. Not writing to BCB.";
+   return true;
+ }
+ 

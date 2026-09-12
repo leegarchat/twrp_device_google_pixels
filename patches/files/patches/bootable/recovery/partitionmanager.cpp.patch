@@ -1,0 +1,205 @@
+--- a/bootable/recovery/partitionmanager.cpp
++++ b/bootable/recovery/partitionmanager.cpp
+@@ -137,6 +137,49 @@
+ 
+ std::string additional_fstab = "/etc/additional.fstab";
+ 
++static bool FscryptMountMetadataEncryptedWithTimeout(
++	const std::string& blk_device,
++	const std::string& mount_point,
++	const std::string& fs_type,
++	const std::string& extra_fstab,
++	int timeout_seconds) {
++	pid_t pid = fork();
++	if (pid < 0) {
++		LOGERR("Metadata decrypt: failed to fork helper process, errno=%d\n", errno);
++		return false;
++	}
++
++	if (pid == 0) {
++		bool ok = android::vold::fscrypt_mount_metadata_encrypted(
++			blk_device,
++			mount_point,
++			false,
++			false,
++			fs_type,
++			"",
++			extra_fstab);
++		_exit(ok ? 0 : 1);
++	}
++
++	int status = 0;
++	if (TWFunc::Wait_For_Child_Timeout(pid, &status, "MetadataDecrypt", timeout_seconds) != 0) {
++		LOGERR("Metadata decrypt timed out after %d seconds\n", timeout_seconds);
++		return false;
++	}
++
++	if (!WIFEXITED(status)) {
++		LOGERR("Metadata decrypt: helper exited unexpectedly (status=%d)\n", status);
++		return false;
++	}
++
++	if (WEXITSTATUS(status) != 0) {
++		LOGINFO("Metadata decrypt helper reported failure\n");
++		return false;
++	}
++
++	return true;
++}
++
+ TWPartitionManager::TWPartitionManager(void) {
+ 	mtp_was_enabled = false;
+ 	mtp_write_fd = -1;
+@@ -243,8 +286,32 @@
+ 	#endif
+ 	return ver;
+ }
+-
+ void inline Process_Keymaster_Version(TWPartition *ven, bool Display_Error) {
++
++	LOGINFO("Keymaster_Ver::KeyMint Start custom code'\n");
++
++	std::string product_device = android::base::GetProperty("ro.product.device", "");
++    if (ven) ven->UnMount(Display_Error);
++    LOGINFO("Keymaster_Ver::Tensor zuma-family device detected (%s); forcing empty keymaster_ver to use AIDL KeyMint path\n", product_device.c_str());
++    android::base::SetProperty(TW_KEYMASTER_VERSION_PROP, "");
++    return;
++
++
++	std::string keymint_version;
++	TWFunc::Get_Service_From_Manifest("/vendor", "android.hardware.security.keymint", keymint_version);
++	if (keymint_version.empty()) {
++		TWFunc::Get_Service_From_Manifest("", "android.hardware.security.keymint", keymint_version);
++	}
++	LOGINFO("Keymaster_Ver::KeyMint manifest probe result='%s'\n", keymint_version.c_str());
++	if (!keymint_version.empty()) {
++		if (ven) ven->UnMount(Display_Error);
++		LOGINFO("Keymaster_Ver::KeyMint AIDL detected in vendor manifest (version '%s'); skipping legacy keymaster_ver override\n", keymint_version.c_str());
++		android::base::SetProperty(TW_KEYMASTER_VERSION_PROP, "");
++		return;
++	}
++	LOGINFO("Keymaster_Ver::KeyMint End custom code'\n");
++    
++
+ 	// Fetch the Keymaster Service version to be started
+ 	std::string version;
+ #ifndef TW_FORCE_KEYMASTER_VER
+@@ -687,9 +754,21 @@
+ 				Mount_By_Path(Decrypt_Data->Key_Directory, false);
+ 		if (!Decrypt_Data->Key_Directory.empty()) {
+ 			Set_Crypto_Type("file");
++			if (Decrypt_Data->Mount_Point == "/data" && !Decrypt_Data->Fstab_File_System.empty() && Decrypt_Data->Current_File_System != Decrypt_Data->Fstab_File_System) {
++				LOGINFO("Metadata decrypt: overriding /data fs type from '%s' to fstab '%s'\n", Decrypt_Data->Current_File_System.c_str(), Decrypt_Data->Fstab_File_System.c_str());
++				Decrypt_Data->Current_File_System = Decrypt_Data->Fstab_File_System;
++			}
+ #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
+ #ifdef USE_FSCRYPT
+-			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, "", TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
++			std::string keymint_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
++			if (!keymint_state.empty() && keymint_state != "running") {
++				LOGINFO("Skipping metadata decrypt: keymint service state is '%s'\n", keymint_state.c_str());
++			} else if (FscryptMountMetadataEncryptedWithTimeout(
++				Decrypt_Data->Actual_Block_Device,
++				Decrypt_Data->Mount_Point,
++				Decrypt_Data->Current_File_System,
++				TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
++				30)) {
+ 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+ 				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
+ 				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
+@@ -699,9 +778,44 @@
+ 				while (!Decrypt_Data->Mount(false) && --retry_count)
+ 					usleep(500);
+ 				if (Decrypt_Data->Mount(false)) {
++					// Metadata decrypt mounts /data via fs_mgr_do_mount() in a forked
++					// child, bypassing TWPartition::Mount() and Check_FS_Type().
++					// Current_File_System is still "ext4" (encrypted block unprobed).
++					// Re-probe the now-decrypted block device to detect f2fs.
++					Decrypt_Data->Check_FS_Type();
++					// f2fs checkpoint commit: without explicit commit, f2fs may still
++					// have checkpoint disabled (from a prior OTA), causing all recovery
++					// writes to be rolled back.
++					if (Decrypt_Data->Current_File_System == "f2fs") {
++						string cp_opts = Decrypt_Data->Mount_Options;
++						size_t cpos = cp_opts.find("checkpoint_merge");
++						if (cpos != string::npos) {
++							size_t cend = cpos + strlen("checkpoint_merge");
++							if (cend < cp_opts.size() && cp_opts[cend] == ',') cend++;
++							else if (cpos > 0 && cp_opts[cpos-1] == ',') cpos--;
++							cp_opts.erase(cpos, cend - cpos);
++						}
++						if (!cp_opts.empty()) cp_opts += ",";
++						cp_opts += "checkpoint=enable";
++						if (mount(Decrypt_Data->Decrypted_Block_Device.c_str(),
++								  Decrypt_Data->Mount_Point.c_str(), "f2fs",
++								  MS_REMOUNT | Decrypt_Data->Mount_Flags,
++								  cp_opts.c_str()) == 0) {
++							LOGINFO("f2fs checkpoint committed on /data (post metadata decrypt)\n");
++						} else {
++							LOGINFO("f2fs checkpoint commit failed on /data: %s\n", strerror(errno));
++						}
++					}
+ 					if (!Decrypt_Data->Decrypt_FBE_DE()) {
+ 						LOGERR("Unable to decrypt FBE device\n");
+ 					}
++					if (DataManager::GetIntValue("tw_mtp_enabled") != 0) {
++						LOGINFO("Restarting MTP after metadata decrypt\n");
++						Disable_MTP();
++						usleep(500000);
++						if (!Enable_MTP())
++							Disable_MTP();
++					}
+ 
+ 				} else {
+ 					LOGINFO("Failed to mount data after metadata decrypt\n");
+@@ -2194,7 +2308,10 @@
+ 		}
+ 		property_set("twrp.decrypt.done", "true");
+ 		dat->Setup_File_System(false);
+-		dat->Current_File_System = dat->Fstab_File_System;  // Needed if we're ignoring blkid because encrypted devices start out as emmc
++		if (dat->Ignore_Blkid)
++			dat->Current_File_System = dat->Fstab_File_System; // Needed on devices where blkid probing is intentionally disabled
++		else
++			dat->Check_FS_Type();
+ 
+ 		sleep(1); // Sleep for a bit so that the device will be ready
+ 
+@@ -2334,6 +2451,20 @@
+ #endif
+ }
+ 
++void TWPartitionManager::Reset_Users_Decryption_Status() {
++#ifdef TW_INCLUDE_FBE
++	std::vector<users_struct>::iterator iter;
++	for (iter = Users_List.begin(); iter != Users_List.end(); iter++) {
++		(*iter).isDecrypted = false;
++		string user_prop_decrypted = "twrp.user." + (*iter).userId + ".decrypt";
++		property_set(user_prop_decrypted.c_str(), "0");
++	}
++	DataManager::SetValue("tw_all_users_decrypted", "0");
++	property_set("twrp.all.users.decrypted", "false");
++	LOGINFO("Reset all users decryption status\n");
++#endif
++}
++
+ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
+ #ifdef TW_INCLUDE_CRYPTO
+   char crypto_blkdev[PROPERTY_VALUE_MAX];
+@@ -2396,6 +2527,17 @@
+ 				}
+ 				Post_Decrypt("");
+ 			}
++			if (DataManager::GetIntValue("tw_mtp_enabled") != 0) {
++				LOGINFO("Restarting MTP after user decrypt (user %d)\n", user_id);
++				Disable_MTP();
++				usleep(500000);
++				if (!Enable_MTP())
++					Disable_MTP();
++			}
++
++			// Cache password for auto-decrypt on /data remount (memory only, not persisted)
++			DataManager::SetValue("tw_fbe_cached_password", Password);
++			LOGINFO("FBE password cached for auto-decrypt on remount\n");
+ 
+ 			return 0;
+ 		} else {

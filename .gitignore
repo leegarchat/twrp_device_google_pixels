@@ -1,5 +1,6 @@
 /docs
 /releases
 .build_platform.conf
+/patches/__pycache__
 /subpatch/__pycache__
 /__pycache__

@@ -1,0 +1,34 @@
+--- a/build/make/core/config.mk
++++ b/build/make/core/config.mk
+@@ -384,7 +384,9 @@
+   $(if $(filter-out true false,$($(var))), \
+     $(error Valid values of $(var) are "true", "false", and "". Not "$($(var))")))
+ 
+-.KATI_READONLY := $(_build_broken_var_names)
++# Darth9: comment this out (for broken plugins global support)
++#.KATI_READONLY := $(_build_broken_var_names)
++# Darth9
+ 
+ # Returns true if it is a low memory device, otherwise it returns false.
+ define is-low-mem-device
+@@ -753,6 +755,20 @@
+ # Path to tools.jar
+ HOST_JDK_TOOLS_JAR := $(ANDROID_JAVA8_HOME)/lib/tools.jar
+ 
++# Darth9
++# OrangeFox post script
++FOX_CURRENT_DEV_STR := $(shell git -C bootable/recovery log -1 --format='%ad (%h)' --date=short)
++ifdef NOT_ORANGEFOX
++  FOX_VENDOR :=
++  BASH :=
++else
++  FOX_VENDOR := vendor/recovery/OrangeFox_A14.sh
++  BASH := bash
++  # broken plugins global support
++  BUILD_BROKEN_PLUGIN_VALIDATION := soong-libaosprecovery_defaults soong-libguitwrp_defaults soong-libminuitwrp_defaults soong-vold_defaults
++endif
++# Darth9
++
+ APICHECK_COMMAND := $(JAVA) -Xmx4g -jar $(APICHECK)
+ 
+ # Boolean variable determining if the allow list for compatible properties is enabled

@@ -1,0 +1,10 @@
+--- a/system/vold/Decrypt.h
++++ b/system/vold/Decrypt.h
+@@ -38,6 +38,7 @@
+     int Get_Password_Type(const userid_t user_id, std::string& filename);
+     bool Decrypt_DE();
+     bool Decrypt_User(const userid_t user_id, const std::string& Password);
++    bool Reset_FBE_Caches();
+ }
+ }
+ __END_DECLS

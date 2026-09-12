@@ -105,7 +105,9 @@ echo "=============================================="
 
 cd "$SOURCE_ROOT"
 
-python device/google/pixels/patch.py --mod
+# Apply maintainer micro-patches (PEP format: patches/files/{modified,original,new,patches}).
+# Fails the build on conflict so a stale patch never ships silently.
+python3 "$SCRIPT_DIR/patches/apply_patches.py" --apply --root "$SOURCE_ROOT"
 
 if [ ! -f "external/guava/Android.bp" ] || [ ! -f "external/gflags/Android.bp" ]; then
     if ! repo sync -c -d --force-sync external/gflags external/guava; then

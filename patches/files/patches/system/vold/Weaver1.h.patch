@@ -1,0 +1,30 @@
+--- a/system/vold/Weaver1.h
++++ b/system/vold/Weaver1.h
+@@ -29,6 +29,7 @@
+ #include <utility>
+ 
+ #include <android/hardware/weaver/1.0/IWeaver.h>
++#include <aidl/android/hardware/weaver/IWeaver.h>
+ #include "Utils.h"
+ 
+ namespace android {
+@@ -40,7 +41,7 @@
+ 	public:
+ 		Weaver();
+ 		// false if we failed to open the weaver device.
+-		explicit operator bool() { return mDevice.get() != nullptr; }
++		explicit operator bool() { return (mDevice.get() != nullptr) || (mAidlDevice != nullptr); }
+ 
+ 		bool GetSlots(uint32_t* slots);
+ 		bool GetKeySize(uint32_t* keySize);
+@@ -50,7 +51,10 @@
+ 
+ 	private:
+ 		sp<hardware::weaver::V1_0::IWeaver> mDevice;
++		std::shared_ptr<::aidl::android::hardware::weaver::IWeaver> mAidlDevice;
++
+ 		hardware::weaver::V1_0::WeaverConfig config;
++		::aidl::android::hardware::weaver::WeaverConfig aidlConfig;
+ 		bool GottenConfig;
+ 
+ 		bool GetConfig();
