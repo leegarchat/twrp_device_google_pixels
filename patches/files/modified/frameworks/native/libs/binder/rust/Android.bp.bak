@@ -94,6 +94,7 @@ rust_library {
 rust_bindgen {
     name: "libbinder_ndk_bindgen",
     crate_name: "binder_ndk_bindgen",
+    recovery_available: true,
     wrapper_src: "sys/BinderBindings.hpp",
     source_stem: "bindings",
     bindgen_flag_files: [

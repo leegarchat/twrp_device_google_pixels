@@ -92,6 +92,8 @@ fn c_path(path: &Path) -> Option<CString> {
 
 fn set_mode(path: &Path, mode: u32) -> bool {
     match c_path(path) {
+        // Safety: `c` is a valid NUL-terminated path; chmod has no
+        // additional preconditions and its error is returned as bool.
         Some(c) => unsafe { libc::chmod(c.as_ptr(), mode) == 0 },
         None => false,
     }
@@ -116,6 +118,10 @@ fn apply_metadata(
     m_gid: u32,
     is_link: bool,
 ) {
+    // Safety: all pointers passed below come from `CString`s that outlive
+    // the calls; `st` is a valid zeroed `libc::stat` for lstat output.
+    // chown/chmod/lchown/utimensat failures are intentionally ignored
+    // (best-effort metadata, same as the C version).
     unsafe {
         let mut st: libc::stat = std::mem::zeroed();
         let use_live = c_path(src)
@@ -203,19 +209,23 @@ extern "C" fn prop_read_cb(
     value: *const libc::c_char,
     _serial: u32,
 ) {
+    // Safety: bionic guarantees non-null NUL-terminated name/value here.
     let name = unsafe { CStr::from_ptr(name).to_string_lossy() };
+    // Safety: same guarantee for the value pointer.
     let value = unsafe { CStr::from_ptr(value).to_string_lossy() };
     eprintln!("[{name}]: [{value}]");
 }
 
 #[cfg(target_os = "android")]
 extern "C" fn prop_foreach_cb(pi: *const PropInfo, cookie: *mut libc::c_void) {
+    // Safety: `pi` comes from the foreach iterator, `cookie` is unused (null).
     unsafe { __system_property_read_callback(pi, prop_read_cb, cookie) };
 }
 
 #[cfg(target_os = "android")]
 fn dump_getprop(log: &mut Logger) {
     log.info(format_args!("\n--- DUMPING PROPERTIES (Native Bionic) ---\n"));
+    // Safety: stateless bionic iterator with a valid callback and null cookie.
     let rc = unsafe { __system_property_foreach(prop_foreach_cb, std::ptr::null_mut()) };
     if rc != 0 {
         log.err(format_args!("[SNAPSHOT] cannot read properties (service not up yet?)\n"));
@@ -309,6 +319,8 @@ fn get_or_create_block_device(target_partname: &str) -> Option<PathBuf> {
                 (it.next().and_then(|s| s.parse::<u32>().ok()), it.next().and_then(|s| s.parse::<u32>().ok()))
             {
                 let _ = fs::create_dir_all("/dev/block");
+                // Safety: `c` is a valid path CString; maj/min come from
+                // sysfs dev number parsing above; mknod failure is handled.
                 unsafe {
                     if let Some(c) = c_path(&dev_path) {
                         // mode must carry the file type for mknod.
