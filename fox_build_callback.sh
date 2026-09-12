@@ -423,11 +423,13 @@ case "$CALL_TYPE" in
         fi
 
         # --- Per-platform keymint binary injection ---
-        # Zuma/Zumapro use prebuilt Rust keymint from prebuilt/<platform>/bin/hw/.
+        # Zuma/Zumapro use the shared prebuilt Rust keymint from
+        # families/common/keymint/bin/hw/ (one binary for both).
         # GS201 uses C++ keymint built from source (system/core/trusty/keymaster)
         # via PRODUCT_PACKAGES; soong places it at $PRODUCT_OUT/vendor/bin/hw/.
-        # VINTF keymint fragments are always prebuilt in prebuilt/<platform>/etc/.
-        prebuilt_dir="$SCRIPT_DIR/prebuilt/$platform"
+        # VINTF keymint fragments live in families/<platform>/etc/.
+        family_dir="$SCRIPT_DIR/families/$platform"
+        common_keymint_bin="$SCRIPT_DIR/families/common/keymint/bin"
         PRODUCT_OUT="${TARGET_DIR%/recovery/root}"
 
         echo "    [PLATFORM] Injecting keymint for: $platform"
@@ -446,19 +448,19 @@ case "$CALL_TYPE" in
                 echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes keymint-service.trusty"
             fi
         else
-            # Zuma/Zumapro: copy prebuilt Rust keymint
-            if [ -d "$prebuilt_dir/bin" ]; then
-                cp -af "$prebuilt_dir/bin" "$TARGET_DIR/vendor/"
+            # Zuma/Zumapro: copy shared prebuilt Rust keymint
+            if [ -d "$common_keymint_bin" ]; then
+                cp -af "$common_keymint_bin" "$TARGET_DIR/vendor/"
                 find "$TARGET_DIR/vendor/bin/hw" -type f -exec chmod 755 {} +
                 echo "    [PLATFORM]   + Rust keymint binary (prebuilt)"
             else
-                echo "    [PLATFORM] WARNING: No prebuilt bin dir for $platform"
+                echo "    [PLATFORM] WARNING: No prebuilt keymint bin dir"
             fi
         fi
 
-        # --- VINTF keymint fragment (always from prebuilt) ---
-        if [ -d "$prebuilt_dir/etc" ]; then
-            cp -af "$prebuilt_dir/etc" "$TARGET_DIR/vendor/"
+        # --- VINTF keymint fragment (per family) ---
+        if [ -d "$family_dir/etc" ]; then
+            cp -af "$family_dir/etc" "$TARGET_DIR/vendor/"
             echo "    [PLATFORM]   + VINTF keymint fragment"
         fi
 

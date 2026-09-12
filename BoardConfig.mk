@@ -107,89 +107,14 @@ BOARD_KERNEL_OFFSET := 0x00008000
 BOARD_RAMDISK_OFFSET := 0x01000000
 BOARD_KERNEL_TAGS_OFFSET := 0x00000100
 
-ifeq ($(DEVICE_BUILD_FLAG),zumapro)
-VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \
-        earlycon=exynos4210,0x10870000 \
-        console=ttySAC0,115200 \
-        androidboot.console=ttySAC0 printk.devkmsg=on \
-        cma_sysfs.experimental=Y \
-        cgroup.memory=nokmem \
-        rcupdate.rcu_expedited=1 \
-        rcu_nocbs=all \
-        rcutree.enable_rcu_lazy \
-        swiotlb=noforce \
-        disable_dma32=on \
-        sysctl.kernel.sched_pelt_multiplier=4 \
-        kasan=off \
-        at24.write_timeout=100 \
-        log_buf_len=1024K bootconfig"
-else ifeq ($(DEVICE_BUILD_FLAG),gs101)
-VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \\
-        earlycon=exynos4210,0x10A00000 \\
-        console=ttySAC0,115200 \\
-        androidboot.console=ttySAC0 \\
-        printk.devkmsg=on \\
-        swiotlb=noforce \\
-        cma_sysfs.experimental=Y \\
-        cgroup_disable=memory \\
-        rcupdate.rcu_expedited=1 \\
-        androidboot.usbcontroller=11110000.dwc3 \\
-        rcu_nocbs=all \\
-        stack_depot_disable=off \\
-        page_pinner=on \\
-        swiotlb=1024 \\
-        disable_dma32=on \\
-        at24.write_timeout=100 \\
-        log_buf_len=1024K \\
-        bootconfig"
-VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \
-        earlycon=exynos4210,0x10A00000 \
-        console=ttySAC0,115200 \
-        androidboot.console=ttySAC0 \
-        printk.devkmsg=on \
-        swiotlb=noforce \
-        cma_sysfs.experimental=Y \
-        cgroup_disable=memory \
-        rcupdate.rcu_expedited=1 \
-        androidboot.usbcontroller=11210000.dwc3 \
-        rcu_nocbs=all \
-        stack_depot_disable=off \
-        page_pinner=on \
-        swiotlb=1024 \
-        disable_dma32=on \
-        at24.write_timeout=100 \
-        log_buf_len=1024K \
-        bootconfig"
-else
-VENDOR_CMDLINE := "dyndbg=\"func alloc_contig_dump_pages +p\" \
-        earlycon=exynos4210,0x10A00000 \
-        console=ttySAC0,115200 \
-        androidboot.console=ttySAC0 \
-        printk.devkmsg=on \
-        swiotlb=noforce \
-        cma_sysfs.experimental=Y \
-        cgroup_disable=memory \
-        rcupdate.rcu_expedited=1 \
-        androidboot.usbcontroller=11210000.dwc3 \
-        rcu_nocbs=all \
-        stack_depot_disable=off \
-        page_pinner=on \
-        swiotlb=1024 \
-        disable_dma32=on \
-        at24.write_timeout=100 \
-        log_buf_len=1024K \
-        bootconfig"
+# Kernel cmdline / bootconfig / flash block size come from the SoC family
+# fragment. Empty flag = default family (zuma). A wrong family name fails
+# the build here (missing fragment) instead of silently misconfiguring.
+FAMILY_MK := $(DEVICE_PATH)/families/$(DEVICE_BUILD_FLAG)/family.mk
+ifeq ($(DEVICE_BUILD_FLAG),)
+FAMILY_MK := $(DEVICE_PATH)/families/zuma/family.mk
 endif
-BOARD_BOOTCONFIG += androidboot.usbcontroller=11210000.dwc3
-ifeq ($(DEVICE_BUILD_FLAG),gs101)
-BOARD_BOOTCONFIG := androidboot.usbcontroller=11110000.dwc3
-BOARD_BOOTCONFIG += androidboot.boot_devices=14700000.ufs
-else ifeq ($(DEVICE_BUILD_FLAG),gs201)
-BOARD_BOOTCONFIG += androidboot.boot_devices=14700000.ufs
-else
-BOARD_BOOTCONFIG += androidboot.boot_devices=13200000.ufs
-endif
-BOARD_BOOTCONFIG += androidboot.load_modules_parallel=true
+include $(FAMILY_MK)
 
 BOARD_MKBOOTIMG_ARGS += --pagesize $(BOARD_KERNEL_PAGESIZE)
 BOARD_MKBOOTIMG_ARGS += --header_version $(BOARD_BOOT_HEADER_VERSION)
@@ -198,19 +123,6 @@ BOARD_MKBOOTIMG_ARGS += --kernel_offset $(BOARD_KERNEL_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --ramdisk_offset $(BOARD_RAMDISK_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --vendor_cmdline $(VENDOR_CMDLINE)
-
-# Partitions - Blocks
-ifeq ($(DEVICE_BUILD_FLAG),zumapro)
-BOARD_FLASH_BLOCK_SIZE := 4096
-else
-BOARD_FLASH_BLOCK_SIZE := 131072
-endif
-
-# gs101: vendor_boot contains DLKM+DTB — must patch stock, not overwrite
-ifeq ($(DEVICE_BUILD_FLAG),gs101)
-VENDOR_BOOT_PATCH_STOCK := true
--include $(DEVICE_PATH)/custom_bootimg.mk
-endif
 
 # Partitions - Sizes
 BOARD_BOOTIMAGE_PARTITION_SIZE := 67108864
@@ -238,8 +150,9 @@ TARGET_BOARD_PLATFORM_GPU := mali-g71
 BOARD_VINTF_CHECK := false
 
 # Properties
-TARGET_VENDOR_PROP += $(DEVICE_PATH)/prebuilt/vendor.prop
-TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/prebuilt/$(DEVICE_BUILD_FLAG)/recovery.fstab
+TARGET_VENDOR_PROP += $(DEVICE_PATH)/families/common/vendor.prop
+FAMILY_OR_DEFAULT := $(if $(DEVICE_BUILD_FLAG),$(DEVICE_BUILD_FLAG),zuma)
+TARGET_RECOVERY_FSTAB := $(DEVICE_PATH)/families/$(FAMILY_OR_DEFAULT)/recovery.fstab
 
 # Recovery
 TARGET_RECOVERY_PIXEL_FORMAT := ABGR_8888
@@ -248,7 +161,7 @@ TARGET_USERIMAGES_USE_F2FS := true
 TARGET_USES_MKE2FS := true
 RECOVERY_SDCARD_ON_DATA := true
 TARGET_NO_RECOVERY := true
-TARGET_RECOVERY_WIPE := $(DEVICE_PATH)/prebuilt/recovery.wipe
+TARGET_RECOVERY_WIPE := $(DEVICE_PATH)/families/common/recovery.wipe
 BOARD_RECOVERY_SNAPSHOT := false
 
 # SPL

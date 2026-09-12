@@ -9,7 +9,7 @@
 # gs101 (Pixel 6 series, future): vendor_boot contains DLKM + DTB + recovery ramdisk
 #   in a single partition (no vendor_kernel_boot). Cannot overwrite vendor_boot entirely —
 #   must patch stock image, replacing only the recovery ramdisk fragment.
-#   Requires prebuilt stock vendor_boot at $(DEVICE_PATH)/prebuilt/gs101/vendor_boot_stock.img
+#   Requires prebuilt stock vendor_boot at $(DEVICE_PATH)/families/gs101/vendor_boot_stock.img
 #
 # To activate stock-patching mode for gs101, set VENDOR_BOOT_PATCH_STOCK := true
 # in BoardConfig.mk (or via build.sh --family gs101).
@@ -20,7 +20,7 @@ FOX_MAGISKBOOT ?= $(PWD)/vendor/recovery/tools/magiskboot
 ifeq ($(VENDOR_BOOT_PATCH_STOCK),true)
 # --- gs101 mode: patch stock vendor_boot, replace only recovery ramdisk fragment ---
 
-VENDOR_BOOT_STOCK ?= $(PWD)/$(DEVICE_PATH)/prebuilt/gs101/vendor_boot_stock.img
+VENDOR_BOOT_STOCK ?= $(PWD)/$(DEVICE_PATH)/families/gs101/vendor_boot_stock.img
 
 ifdef BUILDING_VENDOR_BOOT_IMAGE
 $(INSTALLED_VENDOR_BOOTIMAGE_TARGET): $(recovery_uncompressed_ramdisk) $(FOX_MAGISKBOOT)

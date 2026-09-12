@@ -20,6 +20,11 @@ PRODUCT_TARGET_VNDK_VERSION := 34
 # Dynamic Partitions
 PRODUCT_USE_DYNAMIC_PARTITIONS := true
 
+# Recovery ramdisk overlays: common root/ plus every per-device overlay.
+# Per-device init stubs and props live in devices/<codename>/recovery/root/
+# and are picked up here automatically — adding a device needs no mk edit.
+TARGET_RECOVERY_DEVICE_DIRS := $(wildcard $(LOCAL_PATH)/devices/*/recovery)
+
 # Boot control HAL (Pixel-specific implementation)
 PRODUCT_PACKAGES += \
     android.hardware.boot@1.2-service-pixel \
