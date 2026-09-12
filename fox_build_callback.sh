@@ -190,16 +190,16 @@ lgz_detect_jobs() {
     echo 4
 }
 
-# Emit one pack manifest line with EXPLICIT metadata captured right now.
-# Rationale: `- - -` + --preserve-all left owner at the tool default
-# (65534) in real builds, so record mode/owner deterministically via stat.
-# Context stays `-`: build hosts cannot reliably read SELinux xattrs.
+# Emit one pack manifest line with EXPLICIT metadata.
+# Mode comes from stat; owner is forced to root (ramdisk norm — image
+# assembly normalizes to root anyway, and staging owners are unreliable:
+# sandboxed build shells may stage files as 65534). Context stays `-`:
+# build hosts cannot reliably read SELinux xattrs.
 lgz_manifest_entry() {
     local kind="$1" filepath="$2" relpath="$3"
-    local mode owner
+    local mode
     mode=$(stat -c%a "$filepath" 2>/dev/null || echo "644")
-    owner=$(stat -c%u:%g "$filepath" 2>/dev/null || echo "0:0")
-    echo "$kind $relpath $mode $owner -"
+    echo "$kind $relpath $mode 0:0 -"
 }
 
 lgz_compress_ramdisk() {
