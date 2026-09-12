@@ -1,0 +1,36 @@
+--- a/system/tools/aidl/build/properties.go
++++ b/system/tools/aidl/build/properties.go
+@@ -91,19 +91,20 @@
+ }
+ 
+ type rustProperties struct {
+-	Name              *string
+-	Crate_name        string
+-	Owner             *string
+-	Defaults          []string
+-	Host_supported    *bool
+-	Vendor_available  *bool
+-	Product_available *bool
+-	Srcs              []string
+-	Rustlibs          []string
+-	Stem              *string
+-	Target            rustTargetProperties
+-	Apex_available    []string
+-	Min_sdk_version   *string
++	Name               *string
++	Crate_name         string
++	Owner              *string
++	Defaults           []string
++	Host_supported     *bool
++	Vendor_available   *bool
++	Product_available  *bool
++	Recovery_available *bool
++	Srcs               []string
++	Rustlibs           []string
++	Stem               *string
++	Target             rustTargetProperties
++	Apex_available     []string
++	Min_sdk_version    *string
+ }
+ 
+ type phonyProperties struct {
