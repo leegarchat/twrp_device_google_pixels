@@ -13,7 +13,7 @@
 # reacting to sys.usb.config changes when sys.usb.patch_dwc3=1.
 #
 
-MODULE_PATH="/system/lib64/modules/otg_host_shim.ko"
+MODULE_BASENAME="otg_host_shim"
 PROC_SHIM="/proc/otg_host_shim"
 PROC_READY="/proc/otg_host_ready"
 
@@ -37,29 +37,92 @@ else
     log_error "Failed to mount debugfs."
 fi
 
+# Monolithic kernels (CONFIG_MODULES=n) have no /proc/modules: nothing to inject.
+if [ ! -e /proc/modules ]; then
+    log_info "Monolithic kernel (/proc/modules absent), skipping module injection."
+else
+
+# _ko_try_load <mod> — pick the best .ko for this kernel and load it.
+#
+# Selection matrix:
+#   - version:  uname -r major.minor (X.Y — patchlevel ignored),
+#               e.g. 6.1 from "6.1.162-android14-11".
+#   - pagesize: getconf PAGESIZE (4096 → <mod>_<ver>.ko,
+#               16384 → <mod>_<ver>_16k.ko).
+#   - exact match first; then brute force low→high (sort -V gives
+#     5.15 < 5.15_16k < 6.1 < ...) staying within the detected pagesize.
+#     Cross-pagesize candidates are tried only when PAGESIZE is unknown.
+#   - insmod -f: our vermagic comes from reference kernel sources and never
+#     matches stock Pixel kernels exactly; the X.Y + pagesize selection above
+#     is the real compatibility gate, -f only bypasses the string check.
+#
+# Returns 0 if loaded or already loaded, 1 if nothing worked.
+_ko_try_load() {
+    local mod="$1"
+    local dir="/system/lib64/modules"
+
+    # Already loaded?
+    if grep -q "^${mod} " /proc/modules 2>/dev/null; then
+        return 0
+    fi
+
+    local ver pagesz wanted="" ordered="" cand
+    ver=$(uname -r 2>/dev/null | cut -d. -f1,2)
+    pagesz=$(getconf PAGESIZE 2>/dev/null)
+
+    if [ -n "$ver" ] && [ -n "$pagesz" ]; then
+        if [ "$pagesz" = "16384" ]; then
+            wanted="$dir/${mod}_${ver}_16k.ko"
+        elif [ "$pagesz" = "4096" ]; then
+            wanted="$dir/${mod}_${ver}.ko"
+        fi
+    fi
+
+    if [ -n "$wanted" ] && [ -f "$wanted" ]; then
+        ordered="$wanted"
+    fi
+
+    for cand in $(ls "$dir"/${mod}_*.ko 2>/dev/null | sort -V); do
+        [ "$cand" = "$wanted" ] && continue
+        case "$cand" in
+            *_16k.ko)
+                [ "$pagesz" = "4096" ] && continue
+                ;;
+            *)
+                [ "$pagesz" = "16384" ] && continue
+                ;;
+        esac
+        ordered="$ordered $cand"
+    done
+
+    if [ -z "$ordered" ]; then
+        log_error "No candidate files for $mod in $dir (uname=$(uname -r 2>/dev/null), pagesize=${pagesz:-unknown})."
+        return 1
+    fi
+
+    for cand in $ordered; do
+        log_info "Trying $cand (uname=$(uname -r 2>/dev/null), pagesize=${pagesz:-unknown})..."
+        if insmod -f "$cand" 2>/dev/null; then
+            log_info "Successfully injected $cand."
+            return 0
+        fi
+    done
+    log_error "All candidates failed for $mod."
+    return 1
+}
+
 if [ ! -f "$PROC_SHIM" ]; then
     log_info "/proc/otg_host_shim not found. Module is not loaded."
-    log_info "Attempting to inject module from: $MODULE_PATH"
-    
-    if [ -f "$MODULE_PATH" ]; then
-        insmod "$MODULE_PATH"
-        INSMOD_STATUS=$?
-        
-        if [ $INSMOD_STATUS -eq 0 ]; then
-            log_info "Successfully injected $MODULE_PATH."
-        else
-            log_error "insmod failed with exit code $INSMOD_STATUS."
-            resetprop sys.usb.patch_dwc3 0
-            exit 1
-        fi
-    else
-        log_error "Module file not found at $MODULE_PATH!"
+    if ! _ko_try_load "$MODULE_BASENAME"; then
+        log_error "Module injection failed."
         resetprop sys.usb.patch_dwc3 0
         exit 1
     fi
 else
     log_info "Module is already loaded (/proc/otg_host_shim exists)."
 fi
+
+fi # /proc/modules present
 
 if [ -f "$PROC_SHIM" ]; then
     STATUS=$(cat "$PROC_READY" 2>/dev/null)

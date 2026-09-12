@@ -204,12 +204,83 @@ find_magisk_zip() {
 #
 # Guards:
 #   - /proc/modules absent  → monolithic kernel (CONFIG_MODULES=n): skip.
-#   - ko file absent        → module not installed in this build: skip.
+#   - no candidate .ko      → module not installed in this build: skip.
 #   - register_kprobe fails → BBG absent or upstream-fixed kernel: no-op.
 #
-load_susfs_rename_fix() {
-    local ko="/system/lib64/modules/susfs_rename_fix.ko"
+#
+# _ko_try_load <mod> <proc_entry> — pick the best .ko for this kernel and load it.
+#
+# Selection matrix:
+#   - version:  uname -r major.minor (X.Y — patchlevel ignored),
+#               e.g. 6.1 from "6.1.162-android14-11".
+#   - pagesize: getconf PAGESIZE (4096 → <mod>_<ver>.ko,
+#               16384 → <mod>_<ver>_16k.ko).
+#   - exact match first; then brute force low→high (sort -V gives
+#     5.15 < 5.15_16k < 6.1 < ...) staying within the detected pagesize.
+#     Cross-pagesize candidates are tried only when PAGESIZE is unknown.
+#   - insmod -f: our vermagic comes from reference kernel sources and never
+#     matches stock Pixel kernels exactly; the X.Y + pagesize selection above
+#     is the real compatibility gate, -f only bypasses the string check.
+#
+# Returns 0 if loaded or already loaded, 1 if nothing worked.
+#
+_ko_try_load() {
+    local mod="$1" proc_entry="$2"
+    local dir="/system/lib64/modules"
 
+    # Already loaded?
+    if [ -n "$proc_entry" ] && [ -e "$proc_entry" ]; then
+        return 0
+    fi
+    if grep -q "^${mod} " /proc/modules 2>/dev/null; then
+        return 0
+    fi
+
+    local ver pagesz wanted="" ordered="" cand
+    ver=$(uname -r 2>/dev/null | cut -d. -f1,2)
+    pagesz=$(getconf PAGESIZE 2>/dev/null)
+
+    if [ -n "$ver" ] && [ -n "$pagesz" ]; then
+        if [ "$pagesz" = "16384" ]; then
+            wanted="$dir/${mod}_${ver}_16k.ko"
+        elif [ "$pagesz" = "4096" ]; then
+            wanted="$dir/${mod}_${ver}.ko"
+        fi
+    fi
+
+    if [ -n "$wanted" ] && [ -f "$wanted" ]; then
+        ordered="$wanted"
+    fi
+
+    for cand in $(ls "$dir"/${mod}_*.ko 2>/dev/null | sort -V); do
+        [ "$cand" = "$wanted" ] && continue
+        case "$cand" in
+            *_16k.ko)
+                [ "$pagesz" = "4096" ] && continue
+                ;;
+            *)
+                [ "$pagesz" = "16384" ] && continue
+                ;;
+        esac
+        ordered="$ordered $cand"
+    done
+
+    if [ -z "$ordered" ]; then
+        echo "W:ko_pick: no candidate files for $mod in $dir (uname=$(uname -r 2>/dev/null), pagesize=${pagesz:-unknown})" >> "$LOGF"
+        return 1
+    fi
+
+    for cand in $ordered; do
+        echo "I:ko_pick: trying $cand (uname=$(uname -r 2>/dev/null), pagesize=${pagesz:-unknown})" >> "$LOGF"
+        if insmod -f "$cand" 2>>"$LOGF"; then
+            echo "I:ko_pick: loaded $cand" >> "$LOGF"
+            return 0
+        fi
+    done
+    return 1
+}
+
+load_susfs_rename_fix() {
     # Monolithic kernels (CONFIG_MODULES=n) have no /proc/modules.
     # insmod would return -ENOSYS (harmless), but skip explicitly for clarity.
     if [ ! -e /proc/modules ]; then
@@ -217,15 +288,10 @@ load_susfs_rename_fix() {
         return 0
     fi
 
-    if [ ! -f "$ko" ]; then
-        echo "W:susfs_fix: $ko not found, skipping BBG fast-symlink fix" >> "$LOGF"
-        return 0
-    fi
-
-    if insmod "$ko" 2>>"$LOGF"; then
-        echo "I:susfs_fix: $ko loaded \u2014 fast-symlink rename panic fix active" >> "$LOGF"
+    if _ko_try_load "susfs_rename_fix" "/proc/susfs_rename_fix"; then
+        echo "I:susfs_fix: loaded \u2014 fast-symlink rename panic fix active" >> "$LOGF"
     else
-        echo "W:susfs_fix: insmod $ko failed \u2014 unsupported kernel or already loaded" >> "$LOGF"
+        echo "W:susfs_fix: no usable susfs_rename_fix.ko for this kernel" >> "$LOGF"
     fi
 }
 
