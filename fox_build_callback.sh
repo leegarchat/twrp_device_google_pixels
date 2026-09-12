@@ -277,12 +277,15 @@ lgz_compress_ramdisk() {
     done < <(find "$ramdisk_root" -name '*.zip' -type f | sort)
 
     local entry_count
-    entry_count=$(grep -c -E '^(file|zip) ' "$pack_manifest" || echo 0)
+    entry_count=$(grep -c -E '^(file|zip) ' "$pack_manifest" 2>/dev/null || echo 0)
+    # grep -c prints "0" AND fails when nothing matches, so normalize.
+    entry_count=$(printf '%s' "$entry_count" | tr -d -c '0-9' | tail -c 20)
+    entry_count="${entry_count:-0}"
     if [ "$entry_count" -eq 0 ]; then
-        echo "    [LGZ] No files to pack"
+        echo "    [LGZ] No files to pack — continuing to snapshot generation"
         rm -f "$pack_manifest" "$packed_list" "$cluster"
-        return 0
-    fi
+        pack_ok=0
+    else
 
     local total_original
     total_original=$(tr '\n' '\0' < "$packed_list" | du -cb --files0-from=- 2>/dev/null | tail -1 | cut -f1)
@@ -298,31 +301,48 @@ lgz_compress_ramdisk() {
     local cluster_size
     cluster_size=$(stat -c%s "$cluster" 2>/dev/null || echo 0)
 
-    if [ "$pack_rc" -ne 0 ] || [ "$cluster_size" -le 0 ] || \
-       [ "$cluster_size" -ge "$total_original" ]; then
+    local pack_ok=1
+    if [ "$pack_rc" -ne 0 ]; then
+        echo "    [LGZ] ERROR: pack tool failed (rc=$pack_rc, entries=$entry_count) — keeping originals"
+        echo "    [LGZ] ERROR: command was: $lgz_bin pack <manifest:$entry_count entries> $cluster -l $level"
+        pack_ok=0
+    elif [ "$cluster_size" -le 0 ]; then
+        echo "    [LGZ] ERROR: pack produced empty cluster — keeping originals"
+        pack_ok=0
+    elif [ "$cluster_size" -ge "$total_original" ]; then
         echo "    [LGZ] Pack provided no gain (orig $total_original, cluster $cluster_size) — keeping originals"
-        rm -f "$pack_manifest" "$packed_list" "$cluster"
-        return 0
+        pack_ok=0
+    elif ! "$lgz_bin" list "$cluster" >/dev/null 2>&1; then
+        echo "    [LGZ] ERROR: cluster failed self-check (list) — keeping originals"
+        pack_ok=0
     fi
 
-    # Prune originals: the cluster is the only copy now.
-    # Only packed files/zips are removed; dirs and symlinks stay in place.
-    while IFS= read -r orig; do
-        rm -f "$orig"
-    done < "$packed_list"
-    rm -f "$pack_manifest" "$packed_list"
+    if [ "$pack_ok" -eq 0 ]; then
+        rm -f "$pack_manifest" "$packed_list" "$cluster"
+    else
+        # Prune originals: the cluster is the only copy now.
+        # Only packed files/zips are removed; dirs and symlinks stay in place.
+        while IFS= read -r orig; do
+            rm -f "$orig"
+        done < "$packed_list"
+        rm -f "$pack_manifest" "$packed_list"
 
-    local saved=$((total_original - cluster_size))
-    local ratio=$((cluster_size * 100 / total_original))
-    echo ""
-    echo "    [LGZ] ========================================="
-    echo "    [LGZ] Cluster pack complete!"
-    echo "    [LGZ]   Entries packed:  $entry_count"
-    echo "    [LGZ]   Original total:  $total_original bytes"
-    echo "    [LGZ]   Cluster total:   $cluster_size bytes"
-    echo "    [LGZ]   Space saved:     $saved bytes (${ratio}%)"
-    echo "    [LGZ]   Cluster:         /lgz_cluster.lgz"
-    echo "    [LGZ] ========================================="
+        local saved=$((total_original - cluster_size))
+        local ratio=$((cluster_size * 100 / total_original))
+        echo ""
+        echo "    [LGZ] ========================================="
+        echo "    [LGZ] Cluster pack complete!"
+        echo "    [LGZ]   Entries packed:  $entry_count"
+        echo "    [LGZ]   Original total:  $total_original bytes"
+        echo "    [LGZ]   Cluster total:   $cluster_size bytes"
+        echo "    [LGZ]   Space saved:     $saved bytes (${ratio}%)"
+        echo "    [LGZ]   Cluster:         /lgz_cluster.lgz"
+        echo "    [LGZ] ========================================="
+    fi
+    fi # entry_count > 0 (pack attempted)
+
+    # NOTE: snapshot/file-list generation below ALWAYS runs, even when
+    # packing was skipped or failed — reflash needs these lists.
 
     # Generate ramdisk snapshot manifest and cpio file lists using find.
     # We build our own manifest instead of relying on builder-generated
