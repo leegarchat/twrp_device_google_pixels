@@ -223,9 +223,9 @@ mod binder_glue {
 
     use android_hardware_weaver::aidl::android::hardware::weaver::IWeaver::BnWeaver;
     use android_hardware_weaver::aidl::android::hardware::weaver::IWeaver::IWeaver;
-    use android_hardware_weaver::aidl::android::hardware::weaver::WeaverConfig as AidlConfig;
-    use android_hardware_weaver::aidl::android::hardware::weaver::WeaverReadResponse as AidlResp;
-    use android_hardware_weaver::aidl::android::hardware::weaver::WeaverReadStatus as AidlStatus;
+    use android_hardware_weaver::aidl::android::hardware::weaver::WeaverConfig::WeaverConfig as AidlConfig;
+    use android_hardware_weaver::aidl::android::hardware::weaver::WeaverReadResponse::WeaverReadResponse as AidlResp;
+    use android_hardware_weaver::aidl::android::hardware::weaver::WeaverReadStatus::WeaverReadStatus as AidlStatus;
 
     pub struct BinderWeaver {
         hal: WeaverHal,

@@ -80,6 +80,7 @@ impl GscDevice {
                 io::ErrorKind::InvalidInput,
                 "gsc device path contains NUL",
             )))?;
+        // Safety: path is a valid CString; flags are valid; fd checked below.
         let raw = unsafe { libc::open(dev_c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
         if raw < 0 {
             return Err(GscError::Open(io::Error::last_os_error()));
@@ -106,7 +107,8 @@ impl GscDevice {
             reply_len: 0,
             call_status: 0,
         };
-        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), GSC_IOC_GSA_NOS_CALL, &mut req) };
+        // Safety: fd is a valid GSC fd; request code fits i32; &mut req borrows the locked buffer.
+        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), GSC_IOC_GSA_NOS_CALL as _, &mut req) };
         if rc < 0 {
             let e = io::Error::last_os_error();
             match e.raw_os_error() {
@@ -149,7 +151,8 @@ impl GscDevice {
             reply_len: reply_cap as u32,
             call_status: 0,
         };
-        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), GSC_IOC_GSA_NOS_CALL, &mut req) };
+        // Safety: fd is a valid GSC fd; request code fits i32; &mut req borrows the locked buffer.
+        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), GSC_IOC_GSA_NOS_CALL as _, &mut req) };
         if rc < 0 {
             return Err(GscError::Ioctl(io::Error::last_os_error()));
         }

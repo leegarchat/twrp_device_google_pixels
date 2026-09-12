@@ -68,8 +68,10 @@ pub fn sync_parent(path: &Path) {
         Ok(c) => c,
         Err(_) => return,
     };
+    // Safety: path is a valid CString; flags are valid; fd checked below.
     let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
     if fd >= 0 {
+        // Safety: fd is valid and owned here; no use after close.
         unsafe {
             libc::fsync(fd);
             libc::close(fd);
@@ -83,6 +85,7 @@ pub fn raw_open(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
     let c = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
         io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL")
     })?;
+    // Safety: path is a valid CString; flags are valid; fd checked below.
     let fd = unsafe { libc::open(c.as_ptr(), flags | libc::O_CLOEXEC, 0o600) };
     if fd < 0 {
         return Err(io::Error::last_os_error());
@@ -95,7 +98,8 @@ pub fn raw_open(path: &Path, flags: libc::c_int) -> io::Result<OwnedFd> {
 pub fn read_at(fd: libc::c_int, mut buf: &mut [u8], mut offset: u64) -> io::Result<usize> {
     let mut total = 0;
     while !buf.is_empty() {
-        let n = unsafe {
+        // Safety: fd is valid; buf is a live exclusive slice of stated length.
+    let n = unsafe {
             libc::pread(
                 fd,
                 buf.as_mut_ptr() as *mut libc::c_void,
@@ -124,7 +128,8 @@ pub fn read_at(fd: libc::c_int, mut buf: &mut [u8], mut offset: u64) -> io::Resu
 /// Full pwrite loop at `offset`.
 pub fn write_at(fd: libc::c_int, mut buf: &[u8], mut offset: u64) -> io::Result<()> {
     while !buf.is_empty() {
-        let n = unsafe {
+        // Safety: fd is valid; buf is a live shared slice of stated length.
+    let n = unsafe {
             libc::pwrite(
                 fd,
                 buf.as_ptr() as *const libc::c_void,

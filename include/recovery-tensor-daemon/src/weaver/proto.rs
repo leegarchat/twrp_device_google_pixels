@@ -52,7 +52,7 @@ fn encode_varint(out: &mut Vec<u8>, mut val: u64) {
 }
 
 fn encode_uint32_field(out: &mut Vec<u8>, field: u32, val: u32) {
-    encode_varint(out, (field as u64) << 3 | 0);
+    encode_varint(out, (field as u64) << 3);
     encode_varint(out, val as u64);
 }
 

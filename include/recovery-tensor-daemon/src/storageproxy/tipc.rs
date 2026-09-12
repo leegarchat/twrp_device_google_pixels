@@ -38,13 +38,15 @@ impl TipcConn {
             io::Error::new(io::ErrorKind::InvalidInput, "trusty port contains NUL")
         })?;
         // Mode 0600: the fd hands out Trusty secure-storage access.
+        // Safety: path is a valid CString; flags/mode are valid; fd checked below.
         let raw = unsafe { libc::open(dev_c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC, 0o600) };
         if raw < 0 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: `open` succeeded, we own the fd.
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
-        let rc = unsafe { libc::ioctl(fd.as_raw_fd(), tipc_ioc_connect(), port_c.as_ptr()) };
+        // Safety: fd is valid; request code fits i32; port string is a valid CString pointer.
+        let rc = unsafe { libc::ioctl(fd.as_raw_fd(), tipc_ioc_connect() as _, port_c.as_ptr()) };
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -56,10 +58,10 @@ impl TipcConn {
     /// Returns the decoded header and the payload length. `payload` must be
     /// at least `MAX_PAYLOAD + 1` bytes (mirrors the C `req_buffer` + NUL).
     pub fn read_msg(&self, payload: &mut [u8]) -> Result<(Header, usize), ReadError> {
-        assert!(payload.len() >= MAX_PAYLOAD + 1);
+        assert!(payload.len() > MAX_PAYLOAD);
         let mut hdr_buf = [0u8; HEADER_SIZE];
         // Two-element readv keeps header and payload split without copying.
-        let mut iovs = [
+        let iovs = [
             libc::iovec {
                 iov_base: hdr_buf.as_mut_ptr() as *mut libc::c_void,
                 iov_len: hdr_buf.len(),
@@ -70,6 +72,7 @@ impl TipcConn {
             },
         ];
         let rc = loop {
+            // Safety: fd is valid; iovs describes the two live stack buffers.
             let rc = unsafe { libc::readv(self.fd.as_raw_fd(), iovs.as_ptr(), 2) };
             if rc < 0 {
                 let e = io::Error::last_os_error();
@@ -113,6 +116,7 @@ impl TipcConn {
         ];
         let niov = if body.is_empty() { 1 } else { 2 };
         loop {
+            // Safety: fd is valid; iovs describes live buffers; niov matches.
             let rc = unsafe { libc::writev(self.fd.as_raw_fd(), iovs.as_ptr(), niov) };
             if rc < 0 {
                 let e = io::Error::last_os_error();

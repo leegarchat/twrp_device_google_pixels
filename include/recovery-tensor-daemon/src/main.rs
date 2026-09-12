@@ -2,8 +2,8 @@
 //!
 //! Merges two formerly separate C/C++ daemons into one multicall binary:
 //!   * `storageproxy` — Trusty secure-storage proxy (TIPC + RPMB over UFS/SG_IO).
-//!   * `weaver`       — Titan M (GSC/Citadel) proxy publishing
-//!                      `android.hardware.weaver.IWeaver/default` over Binder.
+//!   * `weaver` — Titan M (GSC/Citadel) proxy publishing
+//!     `android.hardware.weaver.IWeaver/default` over Binder.
 //!   * `run`          — both services in parallel threads with joint coordination.
 //!
 //! Only `libc` is used as an external dependency so the binary stays
@@ -96,6 +96,7 @@ fn parse_storage_opts(args: &[String], sub: &str) -> StorageArgs {
 fn cmd_storageproxy(args: &[String]) -> ExitCode {
     let opts = parse_storage_opts(args, "storageproxy");
     // Restrict file creation mask like the original C daemon (0700 dirs, 0600 files).
+    // Safety: umask has no preconditions.
     unsafe { libc::umask(0o077) };
     match storageproxy::run(&opts.trusty_dev, opts.rpmb_dev.as_deref(), &opts.data_path) {
         Ok(()) => ExitCode::SUCCESS,
@@ -115,6 +116,7 @@ fn cmd_weaver(args: &[String]) -> ExitCode {
         usage();
     }
     let dev = args.first().map(String::as_str).unwrap_or(DEFAULT_GSC_DEV);
+    // Safety: umask has no preconditions.
     unsafe { libc::umask(0o077) };
     weaver::run(dev);
 }
@@ -124,6 +126,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
     // gsc device: run -d <t> [-r <r>] -p <p> [gsc_dev].
     let (opts_args, gsc_dev) = split_run_args(args);
     let opts = parse_storage_opts(&opts_args, "run");
+    // Safety: umask has no preconditions.
     unsafe { libc::umask(0o077) };
 
     logi!("main", "starting storageproxy + weaver");
@@ -137,13 +140,10 @@ fn cmd_run(args: &[String]) -> ExitCode {
             }
         });
     match sp_handle {
-        Ok(handle) => {
-            // Weaver runs on the main thread: under Soong it joins the Binder
-            // thread pool forever; without `binder` it supervises the GSC link.
+        Ok(_handle) => {
+            // Diverges: joins the Binder pool (Soong) or supervises the GSC
+            // link forever; the `!` return coerces to the match type.
             weaver::run(&gsc_dev);
-            // Unreachable in practice; kept for coordination completeness.
-            let _ = handle.join();
-            ExitCode::SUCCESS
         }
         Err(e) => {
             loge!("main", "failed to spawn storageproxy thread: {e}");

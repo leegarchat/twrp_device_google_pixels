@@ -109,6 +109,7 @@ impl Rpmb {
         let dev_c = CString::new(dev).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidInput, "rpmb device path contains NUL")
         })?;
+        // Safety: path is a valid CString; flags are valid; fd checked below.
         let raw = unsafe { libc::open(dev_c.as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
         if raw < 0 {
             return Err(io::Error::last_os_error());
@@ -116,7 +117,8 @@ impl Rpmb {
         // SAFETY: owned fd from a successful open.
         let fd = unsafe { OwnedFd::from_raw_fd(raw) };
         let mut ver: libc::c_int = 0;
-        let rc = unsafe { libc::ioctl(fd.as_raw_fd(), SG_GET_VERSION_NUM, &mut ver) };
+        // Safety: fd is valid; SG_GET_VERSION_NUM fits i32; &mut ver is a valid out-param.
+        let rc = unsafe { libc::ioctl(fd.as_raw_fd(), SG_GET_VERSION_NUM as _, &mut ver) };
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -157,7 +159,8 @@ impl Rpmb {
             duration: 0,
             info: 0,
         };
-        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), SG_IO, &mut hdr) };
+        // Safety: fd is valid; SG_IO fits i32; &mut hdr points at a live sg_io_hdr.
+        let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), SG_IO as _, &mut hdr) };
         if rc < 0 {
             return Err(io::Error::last_os_error());
         }

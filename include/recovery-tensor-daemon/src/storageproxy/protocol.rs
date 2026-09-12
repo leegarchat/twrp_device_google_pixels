@@ -119,7 +119,7 @@ pub fn encode_response(header: &Header, result: i32, payload: &[u8], out: &mut V
 /// Splits a NUL-terminated file name out of a request payload of the form
 /// `u32 flags + name + '\0'`, validating that the name occupies the whole
 /// remainder of the payload.
-pub fn parse_open_like<'a>(payload: &'a [u8]) -> Result<(u32, &'a str), ()> {
+pub fn parse_open_like(payload: &[u8]) -> Result<(u32, &str), ()> {
     if payload.len() < 4 {
         return Err(());
     }

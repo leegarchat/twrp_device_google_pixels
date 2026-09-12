@@ -124,6 +124,7 @@ impl Daemon {
 
     fn handle(&mut self, header: &Header, body: &[u8]) -> (i32, Vec<u8>) {
         if header.flags & STORAGE_MSG_FLAG_PRE_COMMIT != 0 {
+            // Safety: sync() has no preconditions.
             unsafe { libc::sync() };
         }
         match header.cmd {
@@ -250,7 +251,9 @@ impl Daemon {
             Ok(fd) => fd,
             Err(code) => return (code, Vec::new()),
         };
+        // Safety: fd comes from the validated open-handle table.
         unsafe { libc::fsync(fd) };
+        // Safety: fd comes from the validated open-handle table; removed right after.
         let rc = unsafe { libc::close(fd) };
         self.open.remove(&handle);
         if rc < 0 {
@@ -297,6 +300,7 @@ impl Daemon {
         if header.flags & STORAGE_MSG_FLAG_POST_COMMIT != 0 {
             // The C version had a phantom empty fd-table loop here; a plain
             // sync() is the intended barrier.
+            // Safety: sync() has no preconditions.
             unsafe { libc::sync() };
         }
         (STORAGE_NO_ERROR, Vec::new())
@@ -311,8 +315,10 @@ impl Daemon {
             Ok(fd) => fd,
             Err(code) => return (code, Vec::new()),
         };
+        // Safety: all-zero bit pattern is valid for plain-old-data libc::stat.
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstat(fd, &mut st) } < 0 {
+        // Safety: fd is valid; &mut st points at a live stat struct.
+            if unsafe { libc::fstat(fd, &mut st) } < 0 {
             return (fs::translate_errno(&io::Error::last_os_error()), Vec::new());
         }
         (STORAGE_NO_ERROR, (st.st_size as u64).to_le_bytes().to_vec())
@@ -327,7 +333,8 @@ impl Daemon {
             Ok(fd) => fd,
             Err(code) => return (code, Vec::new()),
         };
-        if unsafe { libc::ftruncate(fd, req.size as libc::off_t) } < 0 {
+        // Safety: fd comes from the validated open-handle table; length is protocol-bounded.
+            if unsafe { libc::ftruncate(fd, req.size as libc::off_t) } < 0 {
             return (fs::translate_errno(&io::Error::last_os_error()), Vec::new());
         }
         (STORAGE_NO_ERROR, Vec::new())
@@ -342,14 +349,17 @@ impl Daemon {
             Ok(fd) => fd,
             Err(code) => return (code, Vec::new()),
         };
+        // Safety: all-zero bit pattern is valid for plain-old-data libc::stat.
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        if unsafe { libc::fstat(fd, &mut st) } < 0 {
+        // Safety: fd is valid; &mut st points at a live stat struct.
+            if unsafe { libc::fstat(fd, &mut st) } < 0 {
             return (fs::translate_errno(&io::Error::last_os_error()), Vec::new());
         }
         let max: u64 = if ((st.st_mode as libc::mode_t) & libc::S_IFMT) == libc::S_IFBLK {
             const BLKGETSIZE64: libc::c_ulong = 0x80081272;
             let mut size: u64 = 0;
-            if unsafe { libc::ioctl(fd, BLKGETSIZE64, &mut size) } < 0 {
+            // Safety: fd is a valid block-device fd; BLKGETSIZE64 fits i32; &mut size is valid.
+            if unsafe { libc::ioctl(fd, BLKGETSIZE64 as _, &mut size) } < 0 {
                 return (fs::translate_errno(&io::Error::last_os_error()), Vec::new());
             }
             size
