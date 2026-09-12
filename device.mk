@@ -6,7 +6,7 @@
 
 # device.mk — Package list, crypto config, and build props for Tensor-based Pixels.
 # Covers gs201 (Tensor G2), zuma (Tensor G3), zumapro (Tensor G4).
-# Custom recovery modules (weaver, storageproxyd, etc.) are built from selfcode/.
+# Custom recovery modules are built from include/ (Rust).
 
 LOCAL_PATH := device/google/pixels
 
@@ -74,13 +74,11 @@ PRODUCT_SOONG_NAMESPACES += $(LOCAL_PATH)
 PRODUCT_PACKAGES += \
     ramdisk_snapshot
 
-# Persistent storage proxy for Trusty TEE RPMB (needed before keymint)
+# Unified Tensor daemon (Rust multicall): Trusty storage proxy (RPMB/UFS)
+# + Titan Mx Weaver HAL proxy. Replaces the former C daemons
+# recovery_storageproxyd and recovery_weaver.
 PRODUCT_PACKAGES += \
-    recovery_storageproxyd
-
-# A14-native Weaver HAL proxy (talks to Titan M2 via /dev/gsc0 directly)
-PRODUCT_PACKAGES += \
-    recovery_weaver
+    recovery-tensor-daemon
 
 # gs201/gs101 Trusty TA speaks Keymaster 4.0 (not KeyMint AIDL) — the AOSP C++ binary
 # auto-negotiates via GetVersion fallback. Build it so callback can swap it in.
