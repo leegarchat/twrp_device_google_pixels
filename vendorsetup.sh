@@ -20,8 +20,8 @@
 
 # vendorsetup.sh — OrangeFox build variables for Pixel (Tensor G3/G4) Pixel family.
 # This script is sourced by the OrangeFox build system after `lunch twrp_pixels-eng`.
-# It exports all FOX_*, OF_*, TW_* environment variables that control the build,
-# and cross-compiles the LGZ compressor/decompressor binaries.
+# It exports all FOX_*, OF_*, TW_* environment variables that control the build.
+# LGZ binaries are prebuilt (Rust, static musl) in include/ — verified below.
 #
 # FDEVICE must match the lunch target suffix and directory name under device/google/.
 # Runtime device detection (shiba/husky/akita) is done in runatboot.sh via ro.hardware.
@@ -213,55 +213,24 @@ export FOX_ENABLE_KERNELSU_NEXT_SUPPORT=1
 # --- Size reduction: theme/font cleanup handled in fox_build_callback.sh ---
 export FOX_DELETE_INITD_ADDON=1
 
-# --- Custom UI callback: overlay fox_mod_ui XMLs over default pages during build ---
+# --- Custom build callback: LGZ cluster pack, platform injection (fox_build_callback.sh) ---
 export FOX_LOCAL_CALLBACK_SCRIPT="$(gettop)/device/google/pixels/fox_build_callback.sh"
 
-# --- LGZ v3: cross-compile compressor/decompressor ---
-# Uses 7zip LZMA SDK sources from external/lzma/C/ — no external liblzma dependency.
-LGZ_SRC_DIR="$(gettop)/device/google/pixels/selfcode/lgz"
-LGZ_SRC_FILE="$LGZ_SRC_DIR/lgzv3.c"
-LZMA_DIR="$(gettop)/external/lzma/C"
-LZMA_SRCS="$LZMA_DIR/Alloc.c $LZMA_DIR/LzFind.c $LZMA_DIR/LzmaDec.c $LZMA_DIR/LzmaEnc.c $LZMA_DIR/Lzma2Dec.c $LZMA_DIR/Lzma2Enc.c $LZMA_DIR/CpuArch.c"
-LZMA_CFLAGS="-I$LZMA_DIR -D_7ZIP_ST -O3 -pipe -fopenmp -flto"
-if [ -f "$LGZ_SRC_FILE" ]; then
-    echo "[LGZ] Cross-compiling lgz v3 binaries..."
-    # Host binary (for build-time compression with OpenMP + LTO)
-    if ! [ -x "$LGZ_SRC_DIR/lgz_host_bin" ]; then
-        echo "[LGZ]   Compiling host binary (lgzv3, -O3 -fopenmp -flto)..."
-        gcc $LZMA_CFLAGS -march=native -mtune=native \
-            -o "$LGZ_SRC_DIR/lgz_host_bin" "$LGZ_SRC_FILE" $LZMA_SRCS 2>&1
-        if [ $? -eq 0 ]; then
-            echo "[LGZ]   Host binary OK: $LGZ_SRC_DIR/lgz_host_bin"
-        else
-            echo "[LGZ]   ERROR: Host compilation failed."
-        fi
-    else
-        echo "[LGZ]   Host binary already exists, skipping."
-    fi
-    # ARM64 static binary (for device — placed in ramdisk by fox_build_callback.sh)
-    # Uses AOSP prebuilt clang + musl sysroot (no external cross-toolchain needed)
-    if ! [ -f "$LGZ_SRC_DIR/lgz_device" ]; then
-        echo "[LGZ]   Cross-compiling ARM64 static binary (lgzv3)..."
-        CLANG="$(gettop)/prebuilts/clang/host/linux-x86/clang-r510928/bin/clang"
-        MUSL_SYSROOT="$(gettop)/prebuilts/build-tools/sysroots/aarch64-unknown-linux-musl"
-        if [ -x "$CLANG" ] && [ -d "$MUSL_SYSROOT" ]; then
-            "$CLANG" --target=aarch64-unknown-linux-musl \
-                --sysroot="$MUSL_SYSROOT" --rtlib=compiler-rt \
-                -static -O2 -I"$LZMA_DIR" -D_7ZIP_ST \
-                -o "$LGZ_SRC_DIR/lgz_device" "$LGZ_SRC_FILE" $LZMA_SRCS 2>&1
-            if [ $? -eq 0 ]; then
-                echo "[LGZ]   ARM64 binary OK: $LGZ_SRC_DIR/lgz_device"
-            else
-                echo "[LGZ]   ERROR: ARM64 cross-compilation failed."
-            fi
-        else
-            echo "[LGZ]   ERROR: AOSP clang or musl sysroot not found."
-            echo "[LGZ]   Expected: $CLANG"
-            echo "[LGZ]   Sysroot:  $MUSL_SYSROOT"
-        fi
-    else
-        echo "[LGZ]   ARM64 binary already exists, skipping."
-    fi
+# --- LGZ (Rust): prebuilt static binaries, no compilation ---
+# Host compressor (x86_64, full flavor) and device decompressor (arm64,
+# lean flavor) live in include/. The callback installs the latter as
+# /system/bin/lgz and packs the ramdisk with the former.
+LGZ_HOST_BIN="$(gettop)/device/google/pixels/include/lgz_compress_full_x64"
+LGZ_DEVICE_BIN="$(gettop)/device/google/pixels/include/lgz_compress_lean_arm64"
+if [ -x "$LGZ_HOST_BIN" ]; then
+    echo "[LGZ]   Host compressor OK: $LGZ_HOST_BIN"
+else
+    echo "[LGZ]   ERROR: host compressor missing/not executable: $LGZ_HOST_BIN"
+fi
+if [ -f "$LGZ_DEVICE_BIN" ]; then
+    echo "[LGZ]   Device decompressor OK: $LGZ_DEVICE_BIN"
+else
+    echo "[LGZ]   ERROR: device decompressor missing: $LGZ_DEVICE_BIN"
 fi
 
     export | grep "FOX"
