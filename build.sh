@@ -29,8 +29,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 
 # --- Source-safe exits (reference: evox make_n.sh safe_exit) ---
-# In a sourced shell `exit` would kill the user's terminal; route every
-# abort through fox_leave(), which returns when sourced, exits when executed.
+# In a sourced shell `exit` would kill the user's terminal. Every abort
+# therefore ends in an inline return/exit block (return works ONLY at the
+# top level of a sourced script — never hidden inside a function).
 fox_sourced=false
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
     fox_sourced=true
@@ -43,22 +44,23 @@ fox_safe_exit() {
     SAFE_EXIT_REQUESTED=true
 }
 
-fox_leave() {
-    local code="${1:-$SAFE_EXIT_CODE}"
-    if [[ "$fox_sourced" == true ]]; then
-        return "$code"
-    else
-        exit "$code"
-    fi
-}
+# Stop the flow NOW: inline return/exit (see note above).
+# Usage (top level ONLY):
+#   if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+#       if [[ "$fox_sourced" == true ]]; then
+#           return "$SAFE_EXIT_CODE"
+#       else
+#           exit "$SAFE_EXIT_CODE"
+#       fi
+#   fi
 
 fox_on_interrupt() {
     echo ""
     echo "[build] Interrupted (SIGINT/SIGTERM)."
     trap - SIGINT SIGTERM
-    fox_leave 130
     # Sourced mode continues after the trap: stop the flow explicitly.
     SAFE_EXIT_REQUESTED=true
+    SAFE_EXIT_CODE=130
 }
 
 trap fox_on_interrupt SIGINT SIGTERM
@@ -156,7 +158,7 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             shift
             ;;
         -h|--help)
-            sed -n '2,22p' "$0"
+            sed -n '2,22p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
             ;;
         *)
@@ -167,7 +169,11 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
 done
 
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-    fox_leave
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
+    else
+        exit "$SAFE_EXIT_CODE"
+    fi
 fi
 export LGZ_LEVEL
 
@@ -188,7 +194,13 @@ cd "$SOURCE_ROOT"
 # Fails the build on conflict so a stale patch never ships silently.
 python3 "$SCRIPT_DIR/patches/apply_patches.py" --apply --root "$SOURCE_ROOT" \
     || fox_safe_exit 1
-if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then fox_leave; fi
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
+    else
+        exit "$SAFE_EXIT_CODE"
+    fi
+fi
 
 if [ ! -f "external/guava/Android.bp" ] || [ ! -f "external/gflags/Android.bp" ]; then
     if ! repo sync -c -d --force-sync external/gflags external/guava; then
@@ -196,7 +208,13 @@ if [ ! -f "external/guava/Android.bp" ] || [ ! -f "external/gflags/Android.bp" ]
         fox_safe_exit 1
     fi
 fi
-if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then fox_leave; fi
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
+    else
+        exit "$SAFE_EXIT_CODE"
+    fi
+fi
 
 PRODUCT_OUT="out/target/product/pixels"
 if [[ "$CLEAN" == "true" && -d "$PRODUCT_OUT" ]]; then
@@ -239,7 +257,13 @@ echo "  Parallelism:   -j$JOBS"
 echo "=============================================="
 
 mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
-if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then fox_leave; fi
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
+    else
+        exit "$SAFE_EXIT_CODE"
+    fi
+fi
 
 echo ""
 echo "=============================================="
