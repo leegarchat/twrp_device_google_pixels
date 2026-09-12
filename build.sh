@@ -3,10 +3,12 @@
 # build.sh — OrangeFox Recovery build script for all Tensor Pixel devices.
 #
 # Usage:
-#   ./build.sh [--family gs201|zuma|zumapro|gs101] [--notrm] [-j N] [--name TAG] [--patch N]
+#   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N]
 #
 # Options:
-#   --family FAMILY   Set SoC family before lunch (gs201/zuma/zumapro/gs101).
+#   --family TARGET   Device codename (husky, shiba, ...) or SoC family
+#                     (gs201/zuma/zumapro/gs101). Families and devices are
+#                     discovered from families/ and devices/ — no hardcoded list.
 #                     If omitted, vendorsetup.sh interactive menu is used.
 #   --notrm           Don't clean out/target/product/pixels before build.
 #   -j N              Parallelism for make (default: $(nproc)).
@@ -37,16 +39,23 @@ while [[ $# -gt 0 ]]; do
             shift
             FAMILY="${1:-}"
             if [[ -z "$FAMILY" ]]; then
-                echo "ERROR: --family requires an argument (gs201|zuma|zumapro|gs101)"
+                echo "ERROR: --family requires an argument (device or family)"
                 exit 1
             fi
-            case "$FAMILY" in
-                gs201|zuma|zumapro|gs101) ;;
-                *)
-                    echo "ERROR: unknown family '$FAMILY'. Valid: gs201, zuma, zumapro, gs101"
-                    exit 1
-                    ;;
-            esac
+            # families/common/ holds shared files, it is not buildable.
+            if [[ "$FAMILY" != "common" && -d "$SCRIPT_DIR/families/$FAMILY" ]]; then
+                : # already a SoC family
+            elif [[ -f "$SCRIPT_DIR/devices/$FAMILY/device.conf" ]]; then
+                _DEV="$FAMILY"
+                # shellcheck disable=SC1090
+                . "$SCRIPT_DIR/devices/$FAMILY/device.conf"  # sets FAMILY
+                echo "[build] Resolved device $_DEV -> family $FAMILY"
+            else
+                echo "ERROR: unknown family/device '$FAMILY'."
+                echo "  Families: $(for d in "$SCRIPT_DIR"/families/*/; do b=$(basename "$d"); [ "$b" = "common" ] || printf '%s ' "$b"; done | sort | tr '\n' ' ')"
+                echo "  Devices:  $(for d in "$SCRIPT_DIR"/devices/*/; do basename "$d"; done | sort | tr '\n' ' ')"
+                exit 1
+            fi
             shift
             ;;
         --notrm)
