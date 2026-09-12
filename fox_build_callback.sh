@@ -38,7 +38,16 @@ fi
 # =========================================================================
 # LGZ compression configuration
 # =========================================================================
-
+# Policy: pack EVERYTHING in the recovery ramdisk into one solid cluster,
+# EXCEPT:
+#   1. init + its full transitive closure (linker*, libc/m/dl, log,
+#      selinux, fs_mgr, ...). Verified via readelf DT_NEEDED closure.
+#      init must run BEFORE the unpack, so its files stay raw.
+#      (snapshot + lgz binaries themselves are excluded for the same reason.)
+#   2. Build-time generated lists (cluster, snapshot/file manifests) —
+#      they are created by this same callback AFTER packing.
+# first_stage ramdisk (vendor_ramdisk/) is NEVER touched: it is only read
+# here for file lists. Android + bootloader need it intact.
 # Files/directories to NEVER compress (critical for boot)
 LGZ_EXCLUDE_LIST=(
     "init"
@@ -77,26 +86,11 @@ LGZ_EXCLUDE_LIST=(
     "libunwindstack.so"
     "libvendorsupport.so"
     "libz.so"
+    "lgz_cluster.lgz"
+    "ramdisk_snapshot_manifest.txt"
+    "recovery_file_list.txt"
+    "first_stage_file_list.txt"
 )
-
-# Directories to scan for compressible files
-LGZ_SCAN_DIRS=(
-    "system/bin"
-    "system/lib64"
-    "vendor/bin"
-    # "vendor/firmware"
-    "vendor/lib64"
-    "sbin"
-)
-
-# Additional file patterns to compress (fonts, resources)
-LGZ_EXTRA_PATTERNS=(
-    "twres/fonts/*.ttf"
-    "twres/fonts/*.otf"
-)
-
-# Minimum file size to bother compressing (bytes)
-LGZ_MIN_SIZE=4096
 
 # =========================================================================
 # LGZ helper functions
@@ -111,17 +105,6 @@ lgz_is_excluded() {
             return 0
         fi
     done
-    return 1
-}
-
-lgz_is_elf_or_so() {
-    local filepath="$1"
-    # Check ELF magic: 0x7f 'E' 'L' 'F'
-    local magic
-    magic=$(xxd -l 4 -p "$filepath" 2>/dev/null)
-    if [ "$magic" = "7f454c46" ]; then
-        return 0
-    fi
     return 1
 }
 
@@ -224,7 +207,6 @@ lgz_compress_ramdisk() {
     echo "    [LGZ] Installed device decompressor to /system/bin/lgz"
 
     local level="${LGZ_LEVEL:-0}"
-    local min_zip_size=102400   # zips >= 100 KB join the cluster via ingestion
     local cluster="$ramdisk_root/lgz_cluster.lgz"
     local pack_manifest packed_list
     pack_manifest=$(mktemp)
@@ -232,81 +214,32 @@ lgz_compress_ramdisk() {
 
     echo "# LGZ cluster pack manifest (UCOMP02, generated $(date -u))" > "$pack_manifest"
 
-    # Collect ELF binaries and shared libraries as `file` entries
-    for scan_dir in "${LGZ_SCAN_DIRS[@]}"; do
-        local full_dir="$ramdisk_root/$scan_dir"
-        [ -d "$full_dir" ] || continue
+    # Walk the WHOLE recovery ramdisk: every regular file joins the
+    # cluster unless excluded. *.zip goes through transparent ingestion
+    # (DFE.zip gets its NEO.config patched BEFORE packing).
+    echo "    [LGZ] Scanning full ramdisk tree..."
+    while IFS= read -r filepath; do
+        local relpath="${filepath#$ramdisk_root/}"
 
-        echo "    [LGZ] Scanning: $scan_dir"
-
-        while IFS= read -r filepath; do
-            local relpath="${filepath#$ramdisk_root/}"
-            local basename
-            basename="$(basename "$filepath")"
-
-            # Skip excluded files
-            if lgz_is_excluded "$filepath"; then
-                echo "    [LGZ]   SKIP (excluded): $relpath"
-                continue
-            fi
-
-            # Skip files that are too small
-            local filesize
-            filesize=$(stat -c%s "$filepath" 2>/dev/null || echo 0)
-            if [ "$filesize" -lt "$LGZ_MIN_SIZE" ]; then
-                continue
-            fi
-
-            # Only pack ELF binaries and .so files
-            if ! lgz_is_elf_or_so "$filepath"; then
-                case "$basename" in
-                    *.so|*.so.*)
-                        ;;
-                    *)
-                        continue
-                        ;;
-                esac
-            fi
-
-            lgz_manifest_entry file "$filepath" "$relpath" >> "$pack_manifest"
-            echo "$filepath" >> "$packed_list"
-        done < <(find "$full_dir" -type f | sort)
-    done
-
-    # Fonts and other resource files as `file` entries (pure LZMA2 data)
-    for pattern in "${LGZ_EXTRA_PATTERNS[@]}"; do
-        for filepath in $ramdisk_root/$pattern; do
-            [ -f "$filepath" ] || continue
-
-            local relpath="${filepath#$ramdisk_root/}"
-            local filesize
-            filesize=$(stat -c%s "$filepath" 2>/dev/null || echo 0)
-
-            if [ "$filesize" -lt "$LGZ_MIN_SIZE" ]; then
-                continue
-            fi
-
-            lgz_manifest_entry file "$filepath" "$relpath" >> "$pack_manifest"
-            echo "$filepath" >> "$packed_list"
-        done
-    done
-
-    # Large zips join the cluster via transparent ingestion.
-    # DFE.zip gets its NEO.config patched BEFORE packing.
-    while IFS= read -r zipfile; do
-        local zip_size
-        zip_size=$(stat -c%s "$zipfile" 2>/dev/null || echo 0)
-        if [ "$zip_size" -lt "$min_zip_size" ]; then
+        # Skip excluded files (init closure, tooling, generated lists)
+        if lgz_is_excluded "$filepath"; then
             continue
         fi
 
-        lgz_patch_dfe_zip "$zipfile"
-
-        local relpath="${zipfile#$ramdisk_root/}"
-        echo "    [LGZ-ZIP] Ingest: $relpath ($zip_size bytes)"
-        lgz_manifest_entry zip "$zipfile" "$relpath" >> "$pack_manifest"
-        echo "$zipfile" >> "$packed_list"
-    done < <(find "$ramdisk_root" -name '*.zip' -type f | sort)
+        case "$filepath" in
+            *.zip)
+                lgz_patch_dfe_zip "$filepath"
+                local zip_size
+                zip_size=$(stat -c%s "$filepath" 2>/dev/null || echo 0)
+                echo "    [LGZ-ZIP] Ingest: $relpath ($zip_size bytes)"
+                lgz_manifest_entry zip "$filepath" "$relpath" >> "$pack_manifest"
+                ;;
+            *)
+                lgz_manifest_entry file "$filepath" "$relpath" >> "$pack_manifest"
+                ;;
+        esac
+        echo "$filepath" >> "$packed_list"
+    done < <(find "$ramdisk_root" -type f | sort)
 
     local entry_count
     entry_count=$(grep -c -E '^(file|zip) ' "$pack_manifest" 2>/dev/null || echo 0)
