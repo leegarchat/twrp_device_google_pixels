@@ -245,7 +245,7 @@ mod binder_glue {
             })
         }
 
-        fn read(&self, slotId: i32, key: &[u8]) -> binder::Result<AidlResp> {
+        fn read(&self, slot_id: i32, key: &[u8]) -> binder::Result<AidlResp> {
             // Like the C++ daemon, transport/applet failures surface as a
             // FAILED response parcel, not as a binder transport error.
             let failed = |timeout: i64| AidlResp {
@@ -253,7 +253,7 @@ mod binder_glue {
                 value: Vec::new(),
                 status: AidlStatus::FAILED,
             };
-            match self.hal.read(slotId, key) {
+            match self.hal.read(slot_id, key) {
                 Ok(out) => {
                     let status = match out.status {
                         ReadStatus::Ok => AidlStatus::OK,
@@ -268,15 +268,15 @@ mod binder_glue {
                     Ok(AidlResp { timeout, value, status })
                 }
                 Err(e) => {
-                    crate::loge!("weaver", "read slot {slotId} failed: {e}");
+                    crate::loge!("weaver", "read slot {slot_id} failed: {e}");
                     Ok(failed(0))
                 }
             }
         }
 
-        fn write(&self, slotId: i32, key: &[u8], value: &[u8]) -> binder::Result<()> {
-            self.hal.write(slotId, key, value).map_err(|e| {
-                crate::loge!("weaver", "write slot {slotId} failed: {e}");
+        fn write(&self, slot_id: i32, key: &[u8], value: &[u8]) -> binder::Result<()> {
+            self.hal.write(slot_id, key, value).map_err(|e| {
+                crate::loge!("weaver", "write slot {slot_id} failed: {e}");
                 binder::Status::new_service_specific_error_str(STATUS_FAILED, Some(format!("{e}")))
             })
         }

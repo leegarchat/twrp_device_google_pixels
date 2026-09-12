@@ -82,8 +82,8 @@ pub fn run(trusty_dev: &str, rpmb_dev: Option<&str>, data_path: &str) -> Result<
                     first_connect = false;
                 }
                 // Returns only when the connection breaks.
-                if let Err(e) = daemon.proxy_loop(&conn) {
-                    crate::logd!("sp", "proxy loop exited: {e}");
+                if let Err(_e) = daemon.proxy_loop(&conn) {
+                    crate::logd!("sp", "proxy loop exited: {_e}");
                 }
             }
             Err(e) => {
@@ -176,7 +176,7 @@ impl Daemon {
             Ok(p) => p,
             Err(code) => return (code, Vec::new()),
         };
-        match std::fs::remove_file(&path) {
+        match std::fs::remove_file(path) {
             Ok(()) => (STORAGE_NO_ERROR, Vec::new()),
             Err(e) => (fs::translate_errno(&e), Vec::new()),
         }
