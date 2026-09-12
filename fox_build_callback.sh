@@ -190,6 +190,18 @@ lgz_detect_jobs() {
     echo 4
 }
 
+# Emit one pack manifest line with EXPLICIT metadata captured right now.
+# Rationale: `- - -` + --preserve-all left owner at the tool default
+# (65534) in real builds, so record mode/owner deterministically via stat.
+# Context stays `-`: build hosts cannot reliably read SELinux xattrs.
+lgz_manifest_entry() {
+    local kind="$1" filepath="$2" relpath="$3"
+    local mode owner
+    mode=$(stat -c%a "$filepath" 2>/dev/null || echo "644")
+    owner=$(stat -c%u:%g "$filepath" 2>/dev/null || echo "0:0")
+    echo "$kind $relpath $mode $owner -"
+}
+
 lgz_compress_ramdisk() {
     local ramdisk_root="$1"
     local lgz_bin
@@ -256,7 +268,7 @@ lgz_compress_ramdisk() {
                 esac
             fi
 
-            echo "file $relpath - - -" >> "$pack_manifest"
+            lgz_manifest_entry file "$filepath" "$relpath" >> "$pack_manifest"
             echo "$filepath" >> "$packed_list"
         done < <(find "$full_dir" -type f | sort)
     done
@@ -274,7 +286,7 @@ lgz_compress_ramdisk() {
                 continue
             fi
 
-            echo "file $relpath - - -" >> "$pack_manifest"
+            lgz_manifest_entry file "$filepath" "$relpath" >> "$pack_manifest"
             echo "$filepath" >> "$packed_list"
         done
     done
@@ -292,7 +304,7 @@ lgz_compress_ramdisk() {
 
         local relpath="${zipfile#$ramdisk_root/}"
         echo "    [LGZ-ZIP] Ingest: $relpath ($zip_size bytes)"
-        echo "zip $relpath - - -" >> "$pack_manifest"
+        lgz_manifest_entry zip "$zipfile" "$relpath" >> "$pack_manifest"
         echo "$zipfile" >> "$packed_list"
     done < <(find "$ramdisk_root" -name '*.zip' -type f | sort)
 
