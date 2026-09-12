@@ -126,187 +126,48 @@ lgz_is_elf_or_so() {
 }
 
 lgz_get_host_binary() {
-    # Try to find lgz host binary
-    # 1. Check if built by Android build system
-    # local android_host_out="${ANDROID_HOST_OUT:-out/host/linux-x86}"
-    # if [ -x "$android_host_out/bin/lgz" ]; then
-    #     echo "$android_host_out/bin/lgz"
-    #     return 0
-    # fi
-
-    # 2. Check if pre-built locally in device tree (v3 binary first, then legacy)
-    if [ -x "$SCRIPT_DIR/selfcode/lgz/lgz_host_bin" ]; then
-        echo "$SCRIPT_DIR/selfcode/lgz/lgz_host_bin"
+    # Rust compressor, prebuilt (static musl x86_64). No on-the-fly
+    # compilation — binaries are maintained in include/.
+    local bin="$SCRIPT_DIR/include/lgz_compress_full_x64"
+    if [ -x "$bin" ]; then
+        echo "$bin"
         return 0
     fi
-    if [ -x "$SCRIPT_DIR/selfcode/lgz/lgz_host" ]; then
-        echo "$SCRIPT_DIR/selfcode/lgz/lgz_host"
-        return 0
-    fi
-
-    # 3. Try to compile on-the-fly using 7zip LZMA SDK from AOSP tree (lgzv3.c preferred)
-    local LGZ_SRC="$SCRIPT_DIR/selfcode/lgz/lgzv3.c"
-    local LGZ_OUT="$SCRIPT_DIR/selfcode/lgz/lgz_host_bin"
-    if [ ! -f "$LGZ_SRC" ]; then
-        LGZ_SRC="$SCRIPT_DIR/selfcode/lgz/lgz.c"
-        LGZ_OUT="$SCRIPT_DIR/selfcode/lgz/lgz_host"
-    fi
-    if [ -f "$LGZ_SRC" ]; then
-        local LZMA_DIR
-        LZMA_DIR="$(gettop)/external/lzma/C"
-        if [ -d "$LZMA_DIR" ]; then
-            echo "    [LGZ] Compiling lgz host binary from $(basename $LGZ_SRC)..."
-            gcc -O3 -pipe -fopenmp -flto -I"$LZMA_DIR" -D_7ZIP_ST \
-                -o "$LGZ_OUT" "$LGZ_SRC" \
-                "$LZMA_DIR/Alloc.c" "$LZMA_DIR/LzFind.c" "$LZMA_DIR/LzmaDec.c" \
-                "$LZMA_DIR/LzmaEnc.c" "$LZMA_DIR/Lzma2Dec.c" "$LZMA_DIR/Lzma2Enc.c" \
-                "$LZMA_DIR/CpuArch.c" 2>&1
-            if [ $? -eq 0 ] && [ -x "$LGZ_OUT" ]; then
-                echo "$LGZ_OUT"
-                return 0
-            fi
-            echo "    [LGZ] ERROR: Failed to compile lgz."
-        else
-            echo "    [LGZ] ERROR: LZMA SDK not found at $LZMA_DIR"
-        fi
-    fi
-
+    echo "    [LGZ] ERROR: host compressor not found/executable: $bin" >&2
     return 1
 }
 
-lgz_compress_zip_contents() {
-    local ramdisk_root="$1"
-    local lgz_bin="$2"
-    local manifest="$ramdisk_root/lgz_zip_manifest.txt"
-    local min_zip_size=102400   # only process zips >= 100 KB
-    local min_file_size=4096    # only compress inner files >= 4 KB
-    local total_saved=0
-    local zip_count=0
+lgz_patch_dfe_zip() {
+    # --- DFE.zip: patch NEO.config FSTAB_EXTENSION to match build platform ---
+    # Must run BEFORE cluster packing: the packer ingests the zip as-is.
+    local zipfile="$1"
+    local zip_basename
+    zip_basename="$(basename "$zipfile")"
+    [ "$zip_basename" = "DFENEO.zip" ] || return 0
 
-    [ -z "$lgz_bin" ] && return 1
-
-    echo ""
-    echo "    === LGZ Zip Inner Compression ==="
-
-    echo "# LGZ zip inner compression manifest" > "$manifest"
-    echo "# Zips whose contents were LGZ-compressed at build time" >> "$manifest"
-    echo "# Generated: $(date -u)" >> "$manifest"
-
-
-    while IFS= read -r zipfile; do
-        local zip_size
-        zip_size=$(stat -c%s "$zipfile" 2>/dev/null || echo 0)
-        echo "    [LGZ-ZIP] Found zip: ${zipfile#$ramdisk_root/} (${zip_size} bytes)"
-        if [ "$zip_size" -lt "$min_zip_size" ]; then
-            # echo "    [LGZ-ZIP]   SKIP (too small)"
-            continue
-        fi
-
-        local relpath="${zipfile#$ramdisk_root/}"
-        echo "    [LGZ-ZIP] Processing: $relpath ($zip_size bytes)"
-
-        local tmpdir
-        tmpdir=$(mktemp -d)
-
-        if ! unzip -q -o "$zipfile" -d "$tmpdir" 2>/dev/null; then
-            echo "    [LGZ-ZIP]   SKIP (bad zip): $relpath"
-            rm -rf "$tmpdir"
-            continue
-        fi
-
-        local compressed_any=0
-        local inner_saved=0
-
-        while IFS= read -r inner_file; do
-            local inner_size
-            inner_size=$(stat -c%s "$inner_file" 2>/dev/null || echo 0)
-            [ "$inner_size" -lt "$min_file_size" ] && continue
-
-            local tmp_comp="${inner_file}.lgz_tmp"
-            if "$lgz_bin" compress "$inner_file" "$tmp_comp" > /dev/null 2>&1; then
-                local comp_size
-                comp_size=$(stat -c%s "$tmp_comp" 2>/dev/null || echo 0)
-                if [ "$comp_size" -gt 0 ] && [ "$comp_size" -lt "$inner_size" ]; then
-                    mv -f "$tmp_comp" "$inner_file"
-                    compressed_any=1
-                    inner_saved=$((inner_saved + inner_size - comp_size))
-                else
-                    rm -f "$tmp_comp"
-                fi
-            else
-                rm -f "$tmp_comp"
-            fi
-        done < <(find "$tmpdir" -type f)
-
-        # --- DFE.zip: patch NEO.config FSTAB_EXTENSION to match build platform ---
-        local zip_basename
-        zip_basename="$(basename "$zipfile")"
-        if [ "$zip_basename" = "DFENEO.zip" ]; then
-            local neo_config
-            neo_config=$(find "$tmpdir" -name "NEO.config" -type f | head -1)
-            if [ -n "$neo_config" ]; then
-                local platform="$PLATFORM"
-                if grep -q '^FSTAB_EXTENSION=' "$neo_config"; then
-                    sed -i "s/^FSTAB_EXTENSION=.*/FSTAB_EXTENSION=$platform/" "$neo_config"
-                    echo "    [LGZ-ZIP]   DFE: patched NEO.config FSTAB_EXTENSION=$platform"
-                    compressed_any=1
-                else
-                    echo "    [LGZ-ZIP]   DFE: WARNING: FSTAB_EXTENSION not found in NEO.config"
-                fi
-            else
-                echo "    [LGZ-ZIP]   DFE: WARNING: NEO.config not found inside DFE.zip"
-            fi
-        fi
-
-        if [ "$compressed_any" -eq 1 ]; then
-            # Repack as store-mode zip (LZMA2 data doesn't benefit from deflate)
-            local new_zip="${zipfile}.lgz_new"
-            pushd "$tmpdir" > /dev/null
-            zip -0 -r -q "$new_zip" . 2>/dev/null
-            popd > /dev/null
-
-            local new_size
-            new_size=$(stat -c%s "$new_zip" 2>/dev/null || echo 0)
-
-            if [ "$new_size" -gt 0 ] && [ "$new_size" -lt "$zip_size" ]; then
-                local ratio=$((new_size * 100 / zip_size))
-                echo "    [LGZ-ZIP]   OK: $relpath ($zip_size -> $new_size, ${ratio}%)"
-                
-                # Тупо и жестко: удаляем оригинал и копируем сжатый
-                rm -f "$zipfile"
-                cp -f "$new_zip" "$zipfile"
-                
-                # Проверяем, применился ли размер на диск
-                local verify_size=$(stat -c%s "$zipfile" 2>/dev/null || echo 0)
-                if [ "$verify_size" != "$new_size" ]; then
-                    echo "    [LGZ-ZIP]   WTF ERROR: File did not overwrite! Expected $new_size, got $verify_size"
-                fi
-                
-                echo "/$relpath" >> "$manifest"
-                total_saved=$((total_saved + zip_size - new_size))
-                zip_count=$((zip_count + 1))
-                rm -f "$new_zip"
-            else
-                echo "    [LGZ-ZIP]   SKIP (no gain): $relpath"
-                rm -f "$new_zip"
-            fi
-        else
-            echo "    [LGZ-ZIP]   SKIP (nothing compressible): $relpath"
-        fi
-
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    if ! unzip -q -o "$zipfile" -d "$tmpdir" 2>/dev/null; then
+        echo "    [LGZ-ZIP]   DFE: WARNING: bad zip, skipping NEO.config patch"
         rm -rf "$tmpdir"
-    done < <(find "$ramdisk_root" -name '*.zip' -type f | sort)
-
-    if [ "$zip_count" -gt 0 ]; then
-        echo "    [LGZ-ZIP] ========================================="
-        echo "    [LGZ-ZIP] Zip inner compression complete!"
-        echo "    [LGZ-ZIP]   Archives processed: $zip_count"
-        echo "    [LGZ-ZIP]   Total saved: $total_saved bytes"
-        echo "    [LGZ-ZIP] ========================================="
-    else
-        echo "    [LGZ-ZIP] No zip archives benefited from inner compression"
-        rm -f "$manifest"
+        return 0
     fi
+    local neo_config
+    neo_config=$(find "$tmpdir" -name "NEO.config" -type f | head -1)
+    if [ -n "$neo_config" ]; then
+        if grep -q '^FSTAB_EXTENSION=' "$neo_config"; then
+            sed -i "s/^FSTAB_EXTENSION=.*/FSTAB_EXTENSION=$PLATFORM/" "$neo_config"
+            echo "    [LGZ-ZIP]   DFE: patched NEO.config FSTAB_EXTENSION=$PLATFORM"
+            local new_zip="${zipfile}.dfe_new"
+            ( cd "$tmpdir" && zip -0 -r -q "$new_zip" . 2>/dev/null ) \
+                && mv -f "$new_zip" "$zipfile"
+        else
+            echo "    [LGZ-ZIP]   DFE: WARNING: FSTAB_EXTENSION not found in NEO.config"
+        fi
+    else
+        echo "    [LGZ-ZIP]   DFE: WARNING: NEO.config not found inside DFE.zip"
+    fi
+    rm -rf "$tmpdir"
 }
 
 lgz_compress_ramdisk() {
@@ -321,17 +182,25 @@ lgz_compress_ramdisk() {
 
     echo "    [LGZ] Using compressor: $lgz_bin"
 
-    local manifest_file="$ramdisk_root/lgz_compressed_files.txt"
-    local total_original=0
-    local total_compressed=0
-    local file_count=0
+    # Install the on-device decompressor FIRST: init needs it at
+    # /system/bin/lgz for cluster unpack, and the "lgz" basename is in
+    # LGZ_EXCLUDE_LIST so the pack scan skips it.
+    local target_lgz_dir="$ramdisk_root/system/bin"
+    mkdir -p "$target_lgz_dir"
+    cp -f "$SCRIPT_DIR/include/lgz_compress_lean_arm64" "$target_lgz_dir/lgz"
+    chmod 755 "$target_lgz_dir/lgz"
+    echo "    [LGZ] Installed device decompressor to /system/bin/lgz"
 
-    # Clear manifest
-    echo "# LGZ compressed files manifest" > "$manifest_file"
-    echo "# Format: <octal_permissions> <path_in_ramdisk>" >> "$manifest_file"
-    echo "# Generated: $(date -u)" >> "$manifest_file"
+    local level="${LGZ_LEVEL:-0}"
+    local min_zip_size=102400   # zips >= 100 KB join the cluster via ingestion
+    local cluster="$ramdisk_root/lgz_cluster.lgz"
+    local pack_manifest packed_list
+    pack_manifest=$(mktemp)
+    packed_list=$(mktemp)
 
-    # Scan ELF binaries and shared libraries
+    echo "# LGZ cluster pack manifest (UCOMP02, generated $(date -u))" > "$pack_manifest"
+
+    # Collect ELF binaries and shared libraries as `file` entries
     for scan_dir in "${LGZ_SCAN_DIRS[@]}"; do
         local full_dir="$ramdisk_root/$scan_dir"
         [ -d "$full_dir" ] || continue
@@ -356,58 +225,23 @@ lgz_compress_ramdisk() {
                 continue
             fi
 
-            # Only compress ELF binaries and .so files
+            # Only pack ELF binaries and .so files
             if ! lgz_is_elf_or_so "$filepath"; then
-                # Check if it's a .so by extension (some stripped .so may fail magic check)
                 case "$basename" in
                     *.so|*.so.*)
                         ;;
                     *)
-                        # Если файл находится в директории firmware, сжимаем его (игнорируем фильтр)
-                        if [[ "$relpath" == *vendor/firmware/* ]]; then
-                            # Ничего не делаем, идем дальше к сжатию
-                            : 
-                        else
-                            continue
-                        fi
+                        continue
                         ;;
                 esac
             fi
 
-            # Save original permissions
-            local orig_perms
-            orig_perms=$(stat -c%a "$filepath" 2>/dev/null || echo "755")
-
-            # Compress
-            local tmp_compressed="${filepath}.lgz_tmp"
-            if "$lgz_bin" compress "$filepath" "$tmp_compressed" > /dev/null 2>&1; then
-                local comp_size
-                comp_size=$(stat -c%s "$tmp_compressed" 2>/dev/null || echo 0)
-
-                # Only replace if compressed is smaller
-                if [ "$comp_size" -gt 0 ] && [ "$comp_size" -lt "$filesize" ]; then
-                    local ratio=$((comp_size * 100 / filesize))
-                    echo "    [LGZ]   OK: $relpath ($filesize -> $comp_size bytes, ${ratio}%)"
-
-                    mv -f "$tmp_compressed" "$filepath"
-                    chmod "$orig_perms" "$filepath"
-
-                    echo "$orig_perms /$relpath" >> "$manifest_file"
-                    total_original=$((total_original + filesize))
-                    total_compressed=$((total_compressed + comp_size))
-                    file_count=$((file_count + 1))
-                else
-                    echo "    [LGZ]   SKIP (no gain): $relpath"
-                    rm -f "$tmp_compressed"
-                fi
-            else
-                echo "    [LGZ]   FAIL: $relpath"
-                rm -f "$tmp_compressed"
-            fi
+            echo "file $relpath - - -" >> "$pack_manifest"
+            echo "$filepath" >> "$packed_list"
         done < <(find "$full_dir" -type f | sort)
     done
 
-    # Compress fonts and other resource files (non-ELF, pure LZMA2)
+    # Fonts and other resource files as `file` entries (pure LZMA2 data)
     for pattern in "${LGZ_EXTRA_PATTERNS[@]}"; do
         for filepath in $ramdisk_root/$pattern; do
             [ -f "$filepath" ] || continue
@@ -420,49 +254,75 @@ lgz_compress_ramdisk() {
                 continue
             fi
 
-            local orig_perms
-            orig_perms=$(stat -c%a "$filepath" 2>/dev/null || echo "644")
-
-            local tmp_compressed="${filepath}.lgz_tmp"
-            if "$lgz_bin" compress "$filepath" "$tmp_compressed" > /dev/null 2>&1; then
-                local comp_size
-                comp_size=$(stat -c%s "$tmp_compressed" 2>/dev/null || echo 0)
-
-                if [ "$comp_size" -gt 0 ] && [ "$comp_size" -lt "$filesize" ]; then
-                    local ratio=$((comp_size * 100 / filesize))
-                    echo "    [LGZ]   OK: $relpath ($filesize -> $comp_size bytes, ${ratio}%)"
-
-                    mv -f "$tmp_compressed" "$filepath"
-                    chmod "$orig_perms" "$filepath"
-
-                    echo "$orig_perms /$relpath" >> "$manifest_file"
-                    total_original=$((total_original + filesize))
-                    total_compressed=$((total_compressed + comp_size))
-                    file_count=$((file_count + 1))
-                else
-                    echo "    [LGZ]   SKIP (no gain): $relpath"
-                    rm -f "$tmp_compressed"
-                fi
-            else
-                rm -f "$tmp_compressed"
-            fi
+            echo "file $relpath - - -" >> "$pack_manifest"
+            echo "$filepath" >> "$packed_list"
         done
     done
 
-    # Copy lgz binary into ramdisk for runtime decompression
-    local lgz_device_bin="$SCRIPT_DIR/selfcode/lgz/lgz_device"
-    local target_lgz_dir="$ramdisk_root/system/bin"
-    mkdir -p "$target_lgz_dir"
+    # Large zips join the cluster via transparent ingestion.
+    # DFE.zip gets its NEO.config patched BEFORE packing.
+    while IFS= read -r zipfile; do
+        local zip_size
+        zip_size=$(stat -c%s "$zipfile" 2>/dev/null || echo 0)
+        if [ "$zip_size" -lt "$min_zip_size" ]; then
+            continue
+        fi
 
-    # If we have a pre-built device binary, use it; otherwise it's built by Android.bp
-    if [ -f "$lgz_device_bin" ]; then
-        echo "    [LGZ] Installing lgz device binary to /system/bin/lgz"
-        cp -f "$lgz_device_bin" "$target_lgz_dir/lgz"
-        chmod 755 "$target_lgz_dir/lgz"
+        lgz_patch_dfe_zip "$zipfile"
+
+        local relpath="${zipfile#$ramdisk_root/}"
+        echo "    [LGZ-ZIP] Ingest: $relpath ($zip_size bytes)"
+        echo "zip $relpath - - -" >> "$pack_manifest"
+        echo "$zipfile" >> "$packed_list"
+    done < <(find "$ramdisk_root" -name '*.zip' -type f | sort)
+
+    local entry_count
+    entry_count=$(grep -c -E '^(file|zip) ' "$pack_manifest" || echo 0)
+    if [ "$entry_count" -eq 0 ]; then
+        echo "    [LGZ] No files to pack"
+        rm -f "$pack_manifest" "$packed_list" "$cluster"
+        return 0
     fi
 
-    # Compress files INSIDE zip archives (LZMA2 beats deflate on binaries)
-    lgz_compress_zip_contents "$ramdisk_root" "$lgz_bin"
+    local total_original
+    total_original=$(tr '\n' '\0' < "$packed_list" | du -cb --files0-from=- 2>/dev/null | tail -1 | cut -f1)
+    total_original="${total_original:-0}"
+
+    # Pack: manifest paths are relative, so run from the ramdisk root.
+    # --preserve-all stores perms/owner from the FS for correct restore.
+    echo "    [LGZ] Packing $entry_count entries (level $level)..."
+    ( cd "$ramdisk_root" && "$lgz_bin" pack "$pack_manifest" "$cluster" \
+        -l "$level" -j "$(nproc)" --preserve-all )
+    local pack_rc=$?
+
+    local cluster_size
+    cluster_size=$(stat -c%s "$cluster" 2>/dev/null || echo 0)
+
+    if [ "$pack_rc" -ne 0 ] || [ "$cluster_size" -le 0 ] || \
+       [ "$cluster_size" -ge "$total_original" ]; then
+        echo "    [LGZ] Pack provided no gain (orig $total_original, cluster $cluster_size) — keeping originals"
+        rm -f "$pack_manifest" "$packed_list" "$cluster"
+        return 0
+    fi
+
+    # Prune originals: the cluster is the only copy now.
+    # Only packed files/zips are removed; dirs and symlinks stay in place.
+    while IFS= read -r orig; do
+        rm -f "$orig"
+    done < "$packed_list"
+    rm -f "$pack_manifest" "$packed_list"
+
+    local saved=$((total_original - cluster_size))
+    local ratio=$((cluster_size * 100 / total_original))
+    echo ""
+    echo "    [LGZ] ========================================="
+    echo "    [LGZ] Cluster pack complete!"
+    echo "    [LGZ]   Entries packed:  $entry_count"
+    echo "    [LGZ]   Original total:  $total_original bytes"
+    echo "    [LGZ]   Cluster total:   $cluster_size bytes"
+    echo "    [LGZ]   Space saved:     $saved bytes (${ratio}%)"
+    echo "    [LGZ]   Cluster:         /lgz_cluster.lgz"
+    echo "    [LGZ] ========================================="
 
     # Generate ramdisk snapshot manifest and cpio file lists using find.
     # We build our own manifest instead of relying on builder-generated
@@ -529,24 +389,6 @@ lgz_compress_ramdisk() {
     echo "    [LGZ] Ramdisk snapshot manifest: $snap_count entries"
     echo "    [LGZ] Recovery cpio file list: $recovery_count entries"
     echo "    [LGZ] First stage cpio file list: $fstage_count entries"
-
-    # Summary
-    if [ "$file_count" -gt 0 ]; then
-        local saved=$((total_original - total_compressed))
-        local overall_ratio=$((total_compressed * 100 / total_original))
-        echo ""
-        echo "    [LGZ] ========================================="
-        echo "    [LGZ] Compression complete!"
-        echo "    [LGZ]   Files compressed: $file_count"
-        echo "    [LGZ]   Original total:   $total_original bytes"
-        echo "    [LGZ]   Compressed total:  $total_compressed bytes"
-        echo "    [LGZ]   Space saved:       $saved bytes (${overall_ratio}%)"
-        echo "    [LGZ]   Manifest:          /lgz_compressed_files.txt"
-        echo "    [LGZ] ========================================="
-    else
-        echo "    [LGZ] No files were compressed"
-        rm -f "$manifest_file"
-    fi
 }
 
 # =========================================================================
@@ -557,21 +399,8 @@ case "$CALL_TYPE" in
     --first-call)
         echo "=== [zuma] fox_build_callback: --first-call ==="
         echo "    Ramdisk: $TARGET_DIR"
-
-        # Overlay custom UI pages over the default OrangeFox pages
-        PAGES_DIR="$TARGET_DIR/twres/pages"
-        if [ -d "$PAGES_DIR" ]; then
-            for xml in "$SCRIPT_DIR/fox_mod_ui/"*.xml; do
-                [ -f "$xml" ] || continue
-                BASENAME="$(basename "$xml")"
-                echo "    Replacing: twres/pages/$BASENAME"
-                cp -f "$xml" "$PAGES_DIR/$BASENAME"
-            done
-        else
-            echo "    WARNING: $PAGES_DIR not found, skipping XML overlay"
-        fi
-
-
+        # NOTE: UI XML pages are patched natively in the tree
+        # (patches/files/.../pages/*.xml) — no overlay step needed.
         ;;
 
     --second-call)
