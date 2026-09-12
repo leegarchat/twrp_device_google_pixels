@@ -1,0 +1,37 @@
+// Pre-rendered vendor fstabs for zumapro (Tensor G4).
+// Rendered once from pixel-source/conf-zumapro/{fstab.ro.system,
+// fstab.zumapro.common,f2fs/fstab.rw.zumapro.f2fs} with the same sed
+// substitutions the genrules used (hw-encrypt + fips). No build-time
+// codegen: plain prebuilt_etc with the historical module names, so
+// device.mk PRODUCT_PACKAGES lines are unchanged.
+// NOTE: fstab.zuma[.fips] here is the zumapro f2fs flavor, distinct from
+// families/zuma/fstab/fstab.zuma.
+prebuilt_etc {
+    name: "fstab.zumapro",
+    src: "fstab.zumapro",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.zumapro-fips",
+    src: "fstab.zumapro-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.zuma.f2fs",
+    filename: "fstab.zuma",
+    src: "fstab.zuma",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.zuma-fips.f2fs",
+    filename: "fstab.zuma-fips",
+    src: "fstab.zuma-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}

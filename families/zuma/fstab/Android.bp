@@ -1,0 +1,18 @@
+// Pre-rendered vendor fstab for zuma (Tensor G3).
+// Rendered once from pixel-source/conf-zuma/fstab.zuma.in with the same
+// sed substitutions the genrules used (hw-encrypt + fips). No build-time
+// codegen: plain prebuilt_etc with the historical module names, so
+// device.mk PRODUCT_PACKAGES lines are unchanged.
+prebuilt_etc {
+    name: "fstab.zuma",
+    src: "fstab.zuma",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.zuma-fips",
+    src: "fstab.zuma-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}

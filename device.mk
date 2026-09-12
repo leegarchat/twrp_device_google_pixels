@@ -92,11 +92,14 @@ PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
 endif
 
 
-# Firstage ramdisk packages
-# conf-zuma/Android.bp    → fstab.zuma* from fstab.zuma.in        (Tensor G3, UFS 13200000)
-# conf-zumapro/f2fs/      → fstab.zumapro* from modular sources   (Tensor G4, UFS 13200000)
-# conf-gs201/Android.bp   → fstab.gs201* from fstab.gs201.in      (Tensor G2, UFS 14700000)
-# conf-gs101/             → future: fstab.gs101* (Tensor G1, UFS 14700000 — same as gs201)
+# Firstage ramdisk packages — pre-rendered plain fstabs, no BP codegen.
+# Module names are historical (PRODUCT_PACKAGES unchanged); sources live in
+# families/<fam>/fstab/ as static prebuilt_etc (rendered once from the old
+# vendor-ref/conf-* templates with identical sed substitutions).
+# families/zuma/fstab/    → fstab.zuma*                             (Tensor G3, UFS 13200000)
+# families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
+# families/gs201/fstab/   → fstab.gs201*                            (Tensor G2, UFS 14700000)
+# gs101                   → reuses gs201 fstab (Tensor G1, UFS 14700000 — same as gs201)
 ifeq ($(DEVICE_BUILD_FLAG),zumapro)
 PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
