@@ -20,10 +20,13 @@ PRODUCT_TARGET_VNDK_VERSION := 34
 # Dynamic Partitions
 PRODUCT_USE_DYNAMIC_PARTITIONS := true
 
-# Recovery ramdisk overlays: common root/ plus every per-device overlay.
-# Per-device init stubs and props live in devices/<codename>/recovery/root/
-# and are picked up here automatically — adding a device needs no mk edit.
-TARGET_RECOVERY_DEVICE_DIRS := $(wildcard $(LOCAL_PATH)/devices/*/recovery)
+# Recovery ramdisk overlays: the common root/ FIRST, then every per-device
+# overlay. Per-device init stubs and props live in
+# devices/<codename>/recovery/root/ and are picked up here automatically —
+# adding a device needs no mk edit.
+# NOTE: keep $(LOCAL_PATH) first: build/make uses TARGET_RECOVERY_DEVICE_DIRS
+# *instead of* (not in addition to) TARGET_DEVICE_DIR/recovery/root.
+TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH) $(wildcard $(LOCAL_PATH)/devices/*)
 
 # Boot control HAL (Pixel-specific implementation)
 PRODUCT_PACKAGES += \
