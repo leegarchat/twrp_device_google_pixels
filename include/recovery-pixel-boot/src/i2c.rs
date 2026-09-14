@@ -1,0 +1,138 @@
+//! i2c — MAX77759 TCPC USB-switch control.
+//!
+//! Port of the tail of otg_patch.sh: discover the TCPC on its I2C bus via
+//! sysfs, grab the address with I2C_SLAVE_FORCE, write USBSW_CTRL(0x93) <- USBSW_CONNECT(0x09).
+
+use std::ffi::CString;
+use std::fs::OpenOptions;
+use std::io::Error;
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::AsRawFd;
+use std::path::Path;
+
+// bionic ioctl(2) takes a 32-bit request; glibc takes c_ulong.
+#[cfg(target_os = "android")]
+const I2C_SLAVE_FORCE: libc::c_int = 0x0706;
+#[cfg(not(target_os = "android"))]
+const I2C_SLAVE_FORCE: libc::c_ulong = 0x0706;
+const I2C_MAJOR: u32 = 89;
+const USBSW_CTRL_REG: u8 = 0x93;
+const USBSW_CONNECT: u8 = 0x09;
+
+#[inline]
+fn make_dev(major: u32, minor: u32) -> libc::dev_t {
+    (((major as libc::dev_t) & 0xfff) << 8) | ((minor as libc::dev_t) & 0xff)
+}
+
+/// Scan a sysfs driver dir for `<bus>-<addr>` entries (e.g. "11-0025").
+/// Returns the first hit. Separated for host testability.
+pub fn find_tcpc_dev(sysfs_dir: &Path) -> Option<(u32, u16)> {
+    let entries = std::fs::read_dir(sysfs_dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let (bus_str, addr_str) = match name.split_once('-') {
+            Some(p) => p,
+            None => continue,
+        };
+        if bus_str.is_empty() || !bus_str.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        // addr must be non-empty hex ("0025", "25", ...).
+        if addr_str.is_empty() || !addr_str.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        if let (Ok(bus), Ok(addr)) = (
+            bus_str.parse::<u32>(),
+            u16::from_str_radix(addr_str, 16),
+        ) {
+            return Some((bus, addr));
+        }
+    }
+    None
+}
+
+pub fn patch_max77759_i2c() -> Result<(), String> {
+    let tcpc_sysfs = Path::new("/sys/bus/i2c/drivers/max77759tcpc");
+    let (bus, addr) =
+        find_tcpc_dev(tcpc_sysfs).ok_or_else(|| "max77759 TCPC not found in sysfs".to_string())?;
+
+    let dev_node = format!("/dev/i2c-{bus}");
+    let dev_path = Path::new(&dev_node);
+
+    // ueventd normally creates the node; mknod is a fallback only.
+    if !dev_path.exists() {
+        let dev_id = make_dev(I2C_MAJOR, bus);
+        let c_node = CString::new(dev_node.clone()).map_err(|_| "CString error".to_string())?;
+        let mode = (libc::S_IFCHR | 0o660) as libc::mode_t;
+        // SAFETY: node path is a valid NUL-terminated C string, mode/dev
+        // describe a character device; mknod has no thread-safety concerns.
+        let res = unsafe { libc::mknod(c_node.as_ptr(), mode, dev_id) };
+        if res != 0 {
+            return Err(format!(
+                "mknod failed for {dev_node}: {}",
+                Error::last_os_error()
+            ));
+        }
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open(dev_path)
+        .map_err(|e| format!("cannot open {dev_node}: {e}"))?;
+    let fd = file.as_raw_fd();
+
+    // SAFETY: fd is our own open /dev/i2c-N, request is I2C_SLAVE_FORCE with
+    // a u16 slave address: the standard i2c-dev ioctl contract.
+    if unsafe { libc::ioctl(fd, I2C_SLAVE_FORCE, addr as libc::c_ulong) } < 0 {
+        return Err(format!(
+            "ioctl I2C_SLAVE_FORCE (0x{addr:02x}) failed: {}",
+            Error::last_os_error()
+        ));
+    }
+
+    let payload: [u8; 2] = [USBSW_CTRL_REG, USBSW_CONNECT];
+    // SAFETY: payload is a live 2-byte stack array, fd is ours; partial
+    // writes are treated as failure by the length check below.
+    let written =
+        unsafe { libc::write(fd, payload.as_ptr() as *const libc::c_void, payload.len()) };
+    if written != payload.len() as isize {
+        return Err(format!("I2C write failed: {}", Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_bus_addr_in_real_tempdir() {
+        let d = std::env::temp_dir().join(format!("fox_test_tcpc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("11-0025")).unwrap();
+        std::fs::write(d.join("uevent"), b"junk").unwrap();
+        assert_eq!(find_tcpc_dev(&d), Some((11, 0x25)));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn rejects_garbage_entries() {
+        let d = std::env::temp_dir().join(format!("fox_test_tcpc2_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::create_dir_all(d.join("not-a-device-zz")).unwrap();
+        std::fs::create_dir_all(d.join("module")).unwrap();
+        assert_eq!(find_tcpc_dev(&d), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn missing_dir_is_none() {
+        assert_eq!(
+            find_tcpc_dev(Path::new("/definitely/not/here")),
+            None
+        );
+    }
+}

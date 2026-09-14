@@ -1,0 +1,15 @@
+// Soong build for TWRP/OrangeFox recovery.
+//
+// Static Rust replacement for the runatinit.sh / runatboot.sh / otg_patch.sh /
+// otg_auto_v3.sh shell scripts. Same pattern as ramdisk_snapshot and
+// recovery-tensor-daemon: recovery binary, rlib std, only liblibc.
+rust_binary {
+    name: "recovery-pixel-boot",
+    srcs: ["src/main.rs"],
+    crate_name: "recovery_pixel_boot",
+    recovery: true,
+    rustlibs: [
+        "liblibc",
+    ],
+    prefer_rlib: true,
+}

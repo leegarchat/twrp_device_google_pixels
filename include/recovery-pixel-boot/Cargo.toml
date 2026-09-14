@@ -1,0 +1,20 @@
+[package]
+name = "recovery-pixel-boot"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Static Rust replacement for runatinit/runatboot/otg shell scripts (Pixel recovery)"
+
+[[bin]]
+name = "recovery-pixel-boot"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
