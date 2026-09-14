@@ -18,8 +18,9 @@
 # Detects device codename from ro.hardware and applies:
 #   1. Family-common properties (zuma_common.prop)
 #   2. Device-specific properties (shiba.prop, husky.prop, etc.)
-#   3. LGZ decompression of build-time compressed zip payloads
-#   4. Magisk binary extraction and link creation
+#   3. Magisk binary extraction and link creation
+# (Zip payloads need no runtime restore: the solid LGZ cluster ingests
+# *.zip at build time and `lgz decompress` in init.cpp restores them.)
 #
 # This ensures correct device identity for MTP/USB enumeration and UI
 # BEFORE the USB gadget writes ${ro.product.model} to configfs.
@@ -197,147 +198,6 @@ fi
 
 _log "--- calling fix_twrp_flags ---"
 fix_twrp_flags
-_log "--- defining lgz/magisk functions ---"
-lgz_decompress_zips() {
-    local manifest="/lgz_zip_manifest.txt"
-    _log "--- lgz_decompress_zips ---"
-    _log "  manifest=$manifest"
-    if [ ! -f "$manifest" ]; then
-        _log "  manifest not found, skip"
-        return 0
-    fi
-
-    local lgz="/system/bin/lgz"
-    chmod 777 "$lgz" 2>/dev/null
-    if [ ! -x "$lgz" ]; then
-        _log "  lgz not executable: $lgz"
-        return 0
-    fi
-    _log "  lgz=$lgz"
-
-    # ── Probe 'zip' binary ────────────────────────────────────────────────
-    # Log the full picture of every zip-related binary available right now.
-    _log "  --- zip binary probe ---"
-    _log "    ls -la /system/bin/zip:     $(ls -la /system/bin/zip 2>&1)"
-    _log "    readlink /system/bin/zip:   $(readlink /system/bin/zip 2>&1) (rc=$?)"
-    _log "    ls -la /system/bin/unzip:   $(ls -la /system/bin/unzip 2>&1)"
-    _log "    readlink /system/bin/unzip: $(readlink /system/bin/unzip 2>&1)"
-    _log "    ls -la /system/bin/ziptool: $(ls -la /system/bin/ziptool 2>&1)"
-    _log "    ziptool symlinks:           $(ls -la /system/bin/ 2>/dev/null | grep ziptool)"
-    _log "    ls -la /system/bin/busybox: $(ls -la /system/bin/busybox 2>&1)"
-    _log "    ls -la /system/bin/toybox:  $(ls -la /system/bin/toybox 2>&1)"
-    # Check if busybox has the zip applet compiled in
-    if [ -x /system/bin/busybox ]; then
-        local _bb_has_zip
-        _bb_has_zip=$(/system/bin/busybox --list 2>/dev/null | grep '^zip$' || true)
-        _log "    busybox --list | grep zip: '${_bb_has_zip}'"
-    fi
-    # Check if toybox has zip
-    if [ -x /system/bin/toybox ]; then
-        local _tb_has_zip
-        _tb_has_zip=$(/system/bin/toybox --help 2>&1 | grep '\bzip\b' | head -1 || true)
-        _log "    toybox --help grep zip: '${_tb_has_zip}'"
-    fi
-
-    # Determine which zip binary is actually usable right now.
-    # /sbin/zip is a static ELF available from early-init but /sbin is not in PATH.
-    # Priority: /sbin/zip → /system/bin/zip → busybox zip applet
-    local _zip_bin
-    _zip_bin=""
-    printf 'x' > /tmp/_ziptest_in.txt
-    for _zcandidate in /sbin/zip /system/bin/zip; do
-        [ -x "$_zcandidate" ] || continue
-        if (cd /tmp && "$_zcandidate" -0 /tmp/_ziptest_out.zip _ziptest_in.txt) >/dev/null 2>&1 \
-                && [ -s /tmp/_ziptest_out.zip ]; then
-            _zip_bin="$_zcandidate"
-            _log "    -> $_zcandidate functional: YES"
-            break
-        else
-            _log "    -> $_zcandidate exists but NOT functional (symlink to ziptool?)"
-        fi
-        rm -f /tmp/_ziptest_out.zip
-    done
-    if [ -z "$_zip_bin" ] && [ -x /system/bin/busybox ]; then
-        if (cd /tmp && /system/bin/busybox zip -0 /tmp/_ziptest_out.zip _ziptest_in.txt) >/dev/null 2>&1 \
-                && [ -s /tmp/_ziptest_out.zip ]; then
-            _zip_bin="/system/bin/busybox zip"
-            _log "    -> busybox zip applet functional: YES"
-        else
-            local _bb_zip_err
-            _bb_zip_err=$(/system/bin/busybox zip 2>&1 | head -1 || true)
-            _log "    -> busybox zip NOT functional: ${_bb_zip_err}"
-        fi
-    fi
-    rm -f /tmp/_ziptest_in.txt /tmp/_ziptest_out.zip
-    if [ -z "$_zip_bin" ]; then
-        _log "    -> NO usable zip binary found! repack will fail"
-    else
-        _log "    -> using: $_zip_bin"
-    fi
-    _log "  --- end zip probe ---"
-
-    echo "I:lgz-zip: Decompressing zip contents..." >> /tmp/recovery.log
-
-    local _lcount _zip_rc _lgz_ok _lgz_total
-    _lcount=0
-    while IFS= read -r zippath; do
-        case "$zippath" in \#*|"") continue ;; esac
-        if [ ! -f "$zippath" ]; then
-            _log "  zip not found: $zippath"
-            continue
-        fi
-        _log "  processing: $zippath"
-        local tmpdir
-        tmpdir=$(mktemp -d /tmp/lgz_zip.XXXXXX)
-
-        if unzip -q -o "$zippath" -d "$tmpdir" 2>>"$DBGLOG"; then
-            _lgz_total=$(find "$tmpdir" -type f | wc -l)
-            _lgz_ok=0
-            _log "    unzip ok -> $tmpdir  (files: $_lgz_total)"
-            find "$tmpdir" -type f | while IFS= read -r f; do
-                if "$lgz" decompress "$f" "${f}.dec" 2>/dev/null; then
-                    mv -f "${f}.dec" "$f"
-                    _lgz_ok=$((_lgz_ok + 1))
-                fi
-            done
-            _log "    lgz decompress: $_lgz_ok/$_lgz_total files modified"
-            rm -f "${zippath}.tmp"
-            _zip_rc=127
-            if [ -n "$_zip_bin" ]; then
-                case "$_zip_bin" in
-                    */busybox\ zip|*/busybox\ *)
-                        # two-word busybox applet call
-                        local _bb _app
-                        _bb="${_zip_bin%% *}"
-                        _app="${_zip_bin#* }"
-                        (cd "$tmpdir" && "$_bb" "$_app" -0 -r "${zippath}.tmp" . 2>>"$DBGLOG")
-                        _zip_rc=$?
-                        ;;
-                    *)
-                        (cd "$tmpdir" && "$_zip_bin" -0 -r "${zippath}.tmp" . 2>>"$DBGLOG")
-                        _zip_rc=$?
-                        ;;
-                esac
-            fi
-            _log "    zip repack rc=$_zip_rc  output_exists=$([ -f "${zippath}.tmp" ] && echo yes || echo no)"
-
-            if [ -f "${zippath}.tmp" ]; then
-                mv -f "${zippath}.tmp" "$zippath"
-                echo "I:lgz-zip: Restored: $zippath" >> /tmp/recovery.log
-                _log "    repack ok: $zippath"
-                _lcount=$((_lcount + 1))
-            else
-                _log "    repack FAILED: $zippath  (zip_rc=$_zip_rc  zip_bin=${_zip_bin:-<none>})"
-            fi
-        else
-            _log "    unzip FAILED (rc=$?): $zippath"
-        fi
-
-        rm -rf "$tmpdir"
-    done < "$manifest"
-    _log "lgz_decompress_zips done (processed: $_lcount)"
-}
-
 unzip_magiskboot_binary() {
     local zip="$1"
     _log "--- unzip_magiskboot_binary ---"
@@ -370,9 +230,6 @@ unzip_magiskboot_binary() {
     _log "unzip_magiskboot_binary done"
 }
 
-_log "--- calling lgz_decompress_zips ---"
-lgz_decompress_zips
-_log "lgz_decompress_zips returned"
 
 _log "--- searching Magisk zip in /system/bin/ ---"
 _log "  candidates: $(ls /system/bin/Magisk-*.zip 2>/dev/null | tr '\n' ' ')"
