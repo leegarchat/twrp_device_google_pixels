@@ -4,3 +4,5 @@
 /patches/__pycache__
 /subpatch/__pycache__
 /__pycache__
+test*
+/**/target**
