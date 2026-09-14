@@ -335,13 +335,13 @@ on boot
     chmod 0660 /sys/class/android_usb/android0/bDeviceClass
 
 
-service otg_enable /system/bin/sh /system/bin/otg_patch.sh
+service otg_enable /system/bin/recovery-pixel-boot otg-patch
     disabled
     oneshot
     seclabel u:r:recovery:s0
 
 
-service otg_auto /system/bin/sh /system/bin/otg_auto_v3.sh
+service otg_auto /system/bin/recovery-pixel-boot otg-auto
     disabled
     seclabel u:r:recovery:s0
 

@@ -15,7 +15,7 @@ on early-init
     # Sets ro.product.model, ro.product.device, fingerprints, etc. from
     # /system/etc/device_props/{device}.prop based on ro.hardware.
     # Must complete before USB gadget writes ${ro.product.model} to configfs.
-    exec u:r:recovery:s0 root root -- /system/bin/sh /system/bin/runatinit.sh
+    exec u:r:recovery:s0 root root -- /system/bin/recovery-pixel-boot init
 
 on init
     # --- CPU temperature zone discovery ---
@@ -72,6 +72,12 @@ on boot
     setprop persist.sys.usb.config mtp,adb
     setprop sys.usb.config mtp,adb
     setprop vendor.usb.use_ffs_mtp 1
+
+    # Vendor boot stage (static Rust, syscalls only): touch modules, haptics
+    # firmware, magisk links. Synchronous exec — init waits for completion,
+    # so modules are loaded before the recovery GUI scans evdev devices.
+    # Afterwards twrp.cpp still calls the stock (empty) runatboot.sh hook.
+    exec u:r:recovery:s0 root root -- /system/bin/recovery-pixel-boot boot
 
     # Clamp LTPO panel minimum refresh rate to 30Hz to prevent UI ghosting.
     # LTPO panels (husky, komodo etc.) idle at 1Hz causing visible ghosting;

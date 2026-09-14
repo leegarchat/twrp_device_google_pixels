@@ -86,7 +86,8 @@ PRODUCT_PACKAGES += \
 # + Titan Mx Weaver HAL proxy. Replaces the former C daemons
 # recovery_storageproxyd and recovery_weaver.
 PRODUCT_PACKAGES += \
-    recovery-tensor-daemon
+    recovery-tensor-daemon \
+    recovery-pixel-boot
 
 # gs201/gs101 Trusty TA speaks Keymaster 4.0 (not KeyMint AIDL) — the AOSP C++ binary
 # auto-negotiates via GetVersion fallback. Build it so callback can swap it in.

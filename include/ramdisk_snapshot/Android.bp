@@ -11,4 +11,8 @@ rust_binary {
     rustlibs: [
         "liblibc",
     ],
+    // Static std/rlib linkage like recovery-tensor-daemon: the binary must
+    // run pre-unpack from the ramdisk base (first-stage-adjacent, before
+    // /lgz_cluster.lgz is unpacked), so it cannot depend on libstd.dylib.so.
+    prefer_rlib: true,
 }
