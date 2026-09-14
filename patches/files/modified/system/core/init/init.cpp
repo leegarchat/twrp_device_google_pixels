@@ -951,6 +951,7 @@ int SecondStageMain(int argc, char** argv) {
     // --- RAMDISK SNAPSHOT: Save ramdisk state before any modification ---
     // Must run BEFORE LGZ decompression so the snapshot preserves compressed files.
     // This allows reflash_twrp.sh to recreate the exact boot image later.
+    // Non-fatal by design: snapshot is only needed for reflash, never for boot.
     {
         struct stat snap_st;
         if (stat("/ramdisk_snapshot_manifest.txt", &snap_st) == 0) {
@@ -981,9 +982,17 @@ int SecondStageMain(int argc, char** argv) {
     // Must run BEFORE PropertyInit, SELinux, RC parsing, or any file access.
     // /system/bin/lgz is the Rust lean (decompress-only) static binary.
     // It restores the packed tree (files/zips + perms/owner) over "/".
+    // NOTE: /system/bin/recovery AND its service definition
+    // (/init.recovery.service.rc) both live INSIDE the cluster, so a silent
+    // failure here used to fall through into a normal system boot with no
+    // diagnostics. The verify block below turns that into a loud reboot to
+    // the bootloader instead of limping into a half-unpacked ramdisk.
+    int ofox_lgz_status = -1;  // -1 = cluster absent (normal system boot, skip verify)
+    bool ofox_want_recovery = false;
     {
         struct stat lgz_st;
         if (stat("/lgz_cluster.lgz", &lgz_st) == 0) {
+            ofox_want_recovery = true;
             LOG(INFO) << "[LGZ] Unpacking solid cluster...";
             pid_t pid = fork();
             if (pid == 0) {
@@ -993,17 +1002,44 @@ int SecondStageMain(int argc, char** argv) {
             } else if (pid > 0) {
                 int wstatus;
                 waitpid(pid, &wstatus, 0);
+                ofox_lgz_status = wstatus;
                 if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0) {
                     LOG(INFO) << "[LGZ] Decompression completed successfully";
                 } else {
                     LOG(ERROR) << "[LGZ] Decompression failed, status=" << wstatus;
                 }
             } else {
+                ofox_lgz_status = 999;  // fork() failed
                 PLOG(ERROR) << "[LGZ] fork() failed";
             }
         }
     }
     // --- END LGZ ---
+
+    // --- OFOX VERIFY + FALLBACK ---
+    // Gated on cluster presence so a normal SYSTEM boot (no recovery fragment,
+    // no cluster) is never affected. The cluster manifest is fixed at build
+    // time, so the unpack tool's exit status is the whole signal: on success
+    // every entry is restored (verified 3631/3631 round-trip), on failure the
+    // tree is unusable and we reboot to the bootloader instead of limping
+    // into a half-unpacked ramdisk.
+    // NOTE: no per-file stats here by design. Recovery-mode detection itself
+    // lives in IsRecoveryMode() (util.cpp, patched to also accept the
+    // cluster as the marker), evaluated in first-stage BEFORE this unpack.
+    if (ofox_want_recovery) {
+        struct stat tst = {};
+        if (stat("/system/bin/recovery-tensor-daemon", &tst) != 0) {
+            LOG(WARNING) << "[OFOX] recovery-tensor-daemon missing (FBE may not work)";
+        }
+        if (ofox_lgz_status != 0) {
+            LOG(ERROR) << "[OFOX] recovery bootstrap failed: lgz=" << ofox_lgz_status
+                       << " (rebooting to bootloader)";
+            HandlePowerctlMessage("reboot,bootloader");
+            LOG(FATAL) << "[OFOX] forced reboot to bootloader after bootstrap failure";
+        }
+        LOG(INFO) << "[OFOX] recovery bootstrap OK";
+    }
+    // --- END OFOX VERIFY + FALLBACK ---
 
     // Update $PATH in the case the second stage init is newer than first stage init, where it is
     // first set.
