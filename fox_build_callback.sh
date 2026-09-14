@@ -46,21 +46,36 @@ echo "    [CONFIG] LGZ_LEVEL=$LGZ_LEVEL"
 # =========================================================================
 # LGZ compression configuration
 # =========================================================================
-# Policy: pack EVERYTHING in the recovery ramdisk into one solid cluster,
-# EXCEPT:
-#   1. init + its full transitive closure (linker*, libc/m/dl, log,
-#      selinux, fs_mgr, ...). Verified via readelf DT_NEEDED closure.
-#      init must run BEFORE the unpack, so its files stay raw.
-#      (snapshot + lgz binaries themselves are excluded for the same reason.)
-#   2. Build-time generated lists (cluster, snapshot/file manifests) —
-#      they are created by this same callback AFTER packing.
+# Policy (LGZ_POLICY):
+#   dirs (default, production) — pack ONLY LGZ_PACK_DIRS (V9-verified set:
+#     sbin x4 + system/bin x64 + system/lib64 x158 + twres/fonts x12 +
+#     vendor/bin/hw x1 = 239 entries, 0 .ko / 0 .zip); everything else stays
+#     open. Excludes always win.
+#   all — pack EVERYTHING except LGZ_EXCLUDE_LIST into one solid cluster
+#     (legacy experimental layout, max space saving).
+# LGZ_EXCLUDE_LIST (init closure + unpack/snapshot tooling + libstd +
+# generated lists) ALWAYS wins, in every policy.
 # first_stage ramdisk (vendor_ramdisk/) is NEVER touched: it is only read
 # here for file lists. Android + bootloader need it intact.
 # Files/directories to NEVER compress (critical for boot)
+# Boot-critical set (must be open BEFORE the cluster unpack runs):
+#   init closure (linker/libs) — init itself executes pre-unpack;
+#   lgz / ramdisk_snapshot + libstd.dylib.so — the unpack/snapshot tools
+#     and the snapshot binary's Rust std dependency;
+#   cluster + generated manifests — created by this callback post-pack.
+# TEST-ONLY extras (boot-path probing, keep for now):
+#   "*.rc" — all rc service definitions stay open (init.recovery.*.rc at
+#     root + system/etc/init/*.rc + ueventd.rc);
+#   "recovery" — /system/bin/recovery stays open so stock IsRecoveryMode
+#     (access check, first-stage) and service exec never depend on unpack.
 LGZ_EXCLUDE_LIST=(
     "init"
     "lgz"
     "ramdisk_snapshot"
+    "recovery-pixel-boot"
+    "libstd.dylib.so"
+    "*.rc"
+    "recovery"
     "linker"
     "linker64"
     "ld-android.so"
@@ -100,18 +115,77 @@ LGZ_EXCLUDE_LIST=(
     "first_stage_file_list.txt"
 )
 
+# Pack policy: dirs (default, V9-verified set) or all (legacy experimental).
+# Arrives via .build_platform.conf like LGZ_LEVEL (recipe
+# shells strip custom env); constant fallback keeps local/manual runs on
+# the production layout.
+: "${LGZ_POLICY:=dirs}"
+
 # =========================================================================
+# LGZ_PACK_DIRS — manual directory inclusions for LGZ_POLICY=dirs.
+# Ramdisk-relative dirs (no leading slash). EVERYTHING underneath joins
+# the cluster EXCEPT LGZ_EXCLUDE_LIST (excludes always win):
+#   "twres/"                  -> all of twres/ joins...
+#   "*.png" in excludes       -> ...except *.png anywhere
+#   "twres/dir/file.ext"      -> except that one exact file
+#   "twres/subdir/"           -> except that whole subtree
+# *.zip underneath joins via transparent ingestion (restored by
+# `lgz decompress` in init.cpp, like the rest of the cluster).
+# Prefill = V9-verified packed set (239 entries, bootable):
+# sbin x4 (aapt/ksud/magiskboot/zip) + system/bin x64 + system/lib64 x158
+# + twres/fonts x12 + vendor/bin/hw x1 (keymint-service.rust.trusty).
+# V9 shipped zips and .ko OPEN (0 in cluster).
+# =========================================================================
+LGZ_PACK_DIRS=(
+    "sbin"
+    "system/bin"
+    "system/lib64"
+    "twres/fonts"
+    "vendor/bin/hw"
+    # --- experiment examples (uncomment to test) ---
+    # "system/lib64/modules"   # hierarchical otg/susfs .ko -> cluster
+    # "twres/"                 # whole twres (needs *.png excludes to test)
+    # "vendor/"                # whole vendor subtree
+)
+
 # LGZ helper functions
 # =========================================================================
 
 lgz_is_excluded() {
-    local filename="$1"
+    local filename="$1" relpath="${2:-}"
     local basename
     basename="$(basename "$filename")"
+    [ -z "$relpath" ] && relpath="$basename"
+    local excl
     for excl in "${LGZ_EXCLUDE_LIST[@]}"; do
-        if [ "$basename" = "$excl" ]; then
-            return 0
-        fi
+        case "$excl" in
+            # Ramdisk-relative dir prefix (trailing slash): "twres/subdir/"
+            # matches everything underneath it.
+            */)
+                local prefix="${excl%/}/"
+                if [[ "$relpath" == "$prefix"* ]]; then
+                    return 0
+                fi
+                ;;
+            # Ramdisk-relative exact file: "twres/dir/file.ext".
+            */*)
+                if [ "$relpath" = "$excl" ]; then
+                    return 0
+                fi
+                ;;
+            # Suffix globs for test/probe layouts (e.g. "*.rc"): match by ending.
+            "*."*)
+                local suffix="${excl#\*}"
+                if [[ "$basename" == *"$suffix" ]]; then
+                    return 0
+                fi
+                ;;
+            *)
+                if [ "$basename" = "$excl" ]; then
+                    return 0
+                fi
+                ;;
+        esac
     done
     return 1
 }
@@ -222,15 +296,47 @@ lgz_compress_ramdisk() {
 
     echo "# LGZ cluster pack manifest (UCOMP02, generated $(date -u))" > "$pack_manifest"
 
-    # Walk the WHOLE recovery ramdisk: every regular file joins the
+    # all: every non-excluded file joins (legacy experimental layout).
+    # dirs: only files under LGZ_PACK_DIRS join (manual experiment layout).
+    local dirs_mode=0
+    if [ "$LGZ_POLICY" = "dirs" ]; then
+        dirs_mode=1
+        echo "    [LGZ] Policy dirs: packing ${#LGZ_PACK_DIRS[@]} listed dirs (excludes win)"
+    else
+        echo "    [LGZ] Policy all: packing every non-excluded file"
+    fi
+
+    # Walk roots: whole ramdisk, or only the listed dirs in dirs mode.
+    local scan_roots=()
+    if [ "$dirs_mode" -eq 1 ]; then
+        local _d
+        for _d in "${LGZ_PACK_DIRS[@]}"; do
+            _d="${_d#/}"; _d="${_d%/}"  # tolerate leading/trailing slashes
+            [ -z "$_d" ] && continue
+            if [ -d "$ramdisk_root/$_d" ]; then
+                scan_roots+=("$ramdisk_root/$_d")
+            else
+                echo "    [LGZ] dirs: not in ramdisk, skipped: $_d"
+            fi
+        done
+        if [ "${#scan_roots[@]}" -eq 0 ]; then
+            echo "    [LGZ] dirs: no valid dirs — keeping originals"
+            rm -f "$pack_manifest" "$packed_list"
+            return 0
+        fi
+    else
+        scan_roots=("$ramdisk_root")
+    fi
+
+    # Walk the roots: every regular file joins the
     # cluster unless excluded. *.zip goes through transparent ingestion
     # (DFE.zip gets its NEO.config patched BEFORE packing).
-    echo "    [LGZ] Scanning full ramdisk tree..."
+    echo "    [LGZ] Scanning ramdisk tree..."
     while IFS= read -r filepath; do
         local relpath="${filepath#$ramdisk_root/}"
 
         # Skip excluded files (init closure, tooling, generated lists)
-        if lgz_is_excluded "$filepath"; then
+        if lgz_is_excluded "$filepath" "$relpath"; then
             continue
         fi
 
@@ -247,7 +353,7 @@ lgz_compress_ramdisk() {
                 ;;
         esac
         echo "$filepath" >> "$packed_list"
-    done < <(find "$ramdisk_root" -type f | sort)
+    done < <(for _root in "${scan_roots[@]}"; do find "$_root" -type f; done | sort)
 
     local entry_count
     entry_count=$(grep -c -E '^(file|zip) ' "$pack_manifest" 2>/dev/null || echo 0)
