@@ -90,8 +90,8 @@ PRODUCT_BUILD_PROP_OVERRIDES += \
 PRODUCT_SOONG_NAMESPACES += $(LOCAL_PATH)
 
 # Ramdisk snapshot tool (copies ramdisk state before LGZ decompression)
-PRODUCT_PACKAGES += \
-    ramdisk_snapshot
+# PRODUCT_PACKAGES += \
+#     ramdisk_snapshot
 
 # Static PID 1 stub: unpacks the LGZ cluster, then execs the real init.
 # Installed as recovery_init_stub; the build callback swaps it over
