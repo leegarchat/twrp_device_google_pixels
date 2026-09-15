@@ -11,9 +11,21 @@ cc_binary {
     stl: "none",
     recovery: true,
     cflags: [
+        "-Os",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-fno-unwind-tables",
+        "-fno-asynchronous-unwind-tables",
         "-Wall",
         "-Wextra",
         "-Werror",
         "-Wno-unused-parameter",
     ],
+    ldflags: [
+        "-Wl,--gc-sections",
+        "-Wl,--as-needed",
+    ],
+    strip: {
+        all: true,
+    },
 }

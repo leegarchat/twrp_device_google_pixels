@@ -5,6 +5,9 @@
  * same vendor_boot sysfs scan + mknod fallback, same debug dumps.
  * Logging goes to stdout/stderr (kmsg at stub time) and to
  * /dev/vendor_boot_snapshot/logs.
+ *
+ * Raw syscalls only (open/read/write, no stdio): keeps the static
+ * binary free of the stdio/locale footprint.
  */
 
 #include "snapshot.h"
@@ -14,7 +17,6 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -37,25 +39,74 @@ static void snap_log_raw(int fd, const char* msg, size_t len) {
     }
 }
 
+static void snap_out(const char* s, size_t n, int is_err) {
+    snap_log_raw(is_err ? STDERR_FILENO : STDOUT_FILENO, s, n);
+    if (g_log_fd >= 0) snap_log_raw(g_log_fd, s, n);
+}
+
+/* Minimal formatter: %s %u %c %% and %.*s. Unknown verbs pass through. */
 static void snap_log(int is_err, const char* fmt, ...) {
-    char buf[1024];
     va_list ap;
     va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    const char* p = fmt;
+    while (*p != '\0') {
+        if (*p != '%') {
+            snap_out(p, 1, is_err);
+            p++;
+            continue;
+        }
+        p++;
+        if (*p == '%') {
+            snap_out("%", 1, is_err);
+            p++;
+        } else if (*p == 's') {
+            const char* s = va_arg(ap, const char*);
+            if (s == NULL) s = "(null)";
+            snap_out(s, strlen(s), is_err);
+            p++;
+        } else if (*p == 'u') {
+            unsigned v = va_arg(ap, unsigned);
+            char num[12];
+            int n = 0;
+            if (v == 0) {
+                num[n++] = '0';
+            } else {
+                char rev[12];
+                int m = 0;
+                while (v > 0) {
+                    rev[m++] = (char)('0' + (v % 10));
+                    v /= 10;
+                }
+                while (m > 0) num[n++] = rev[--m];
+            }
+            snap_out(num, (size_t)n, is_err);
+            p++;
+        } else if (*p == 'c') {
+            char c = (char)va_arg(ap, int);
+            snap_out(&c, 1, is_err);
+            p++;
+        } else if (*p == '.' && p[1] == '*' && p[2] == 's') {
+            int n = va_arg(ap, int);
+            const char* s = va_arg(ap, const char*);
+            if (s == NULL) s = "(null)";
+            if (n < 0) n = 0;
+            size_t avail = strlen(s);
+            if ((size_t)n > avail) n = (int)avail;
+            snap_out(s, (size_t)n, is_err);
+            p += 3;
+        } else {
+            snap_out("%", 1, is_err);
+        }
+    }
     va_end(ap);
-    if (n <= 0) return;
-    if ((size_t)n >= sizeof(buf)) n = (int)sizeof(buf) - 1;
-    snap_log_raw(is_err ? STDERR_FILENO : STDOUT_FILENO, buf, (size_t)n);
-    if (g_log_fd >= 0) snap_log_raw(g_log_fd, buf, (size_t)n);
 }
 
 static void log_init(void) {
     /* Best-effort recreation of the Rust Logger::new path. */
     char tmp[512];
-    const char* p = SNAP_VENDOR_BOOT;
-    size_t len = strlen(p);
+    size_t len = strlen(SNAP_VENDOR_BOOT);
     if (len >= sizeof(tmp)) return;
-    memcpy(tmp, p, len + 1);
+    memcpy(tmp, SNAP_VENDOR_BOOT, len + 1);
     for (char* s = tmp + 1; *s; s++) {
         if (*s == '/') {
             *s = '\0';
@@ -164,6 +215,25 @@ static void snap_apply_metadata(const char* src, const char* dst, unsigned m_mod
     }
 }
 
+/* Read a whole small file (procfs/sysfs/debug). Returns length, -1 on error. */
+static ssize_t snap_read_file(const char* path, char* buf, size_t cap) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    size_t total = 0;
+    for (;;) {
+        if (total >= cap) break;
+        ssize_t r = read(fd, buf + total, cap - total);
+        if (r < 0) {
+            close(fd);
+            return -1;
+        }
+        if (r == 0) break;
+        total += (size_t)r;
+    }
+    close(fd);
+    return (ssize_t)total;
+}
+
 /* ------------------------------------------------------------------ */
 /* debug dumps                                                         */
 /* ------------------------------------------------------------------ */
@@ -207,6 +277,14 @@ static void snap_dump_getprop(void) {
     snap_log(0, "--------------------------\n");
 }
 
+static void snap_path_join(char* out, size_t outsz, const char* a, const char* b) {
+    size_t i = 0;
+    while (*a != '\0' && i + 1 < outsz) out[i++] = *a++;
+    if (i + 1 < outsz) out[i++] = '/';
+    while (*b != '\0' && i + 1 < outsz) out[i++] = *b++;
+    out[i] = '\0';
+}
+
 static int snap_find_ufs(char* out, size_t outsz) {
     DIR* d = opendir("/dev/block/platform");
     if (d != NULL) {
@@ -214,14 +292,20 @@ static int snap_find_ufs(char* out, size_t outsz) {
         while ((e = readdir(d)) != NULL) {
             if (e->d_name[0] == '.') continue;
             if (strstr(e->d_name, "ufs") != NULL) {
-                snprintf(out, outsz, "/dev/block/platform/%s", e->d_name);
+                snap_path_join(out, outsz, "/dev/block/platform", e->d_name);
                 closedir(d);
                 return 1;
             }
         }
         closedir(d);
     }
-    snprintf(out, outsz, "/dev/block/platform/13200000.ufs");
+    {
+        const char* fb = "/dev/block/platform/13200000.ufs";
+        size_t n = strlen(fb);
+        if (n >= outsz) n = outsz - 1;
+        memcpy(out, fb, n);
+        out[n] = '\0';
+    }
     return 0;
 }
 
@@ -237,7 +321,7 @@ static void snap_dump_dir(const char* dir_path) {
     struct dirent* e;
     while ((e = readdir(d)) != NULL) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        snprintf(full, sizeof(full), "%s/%s", dir_path, e->d_name);
+        snap_path_join(full, sizeof(full), dir_path, e->d_name);
         ssize_t n = readlink(full, target, sizeof(target) - 1);
         if (n >= 0) {
             target[n] = '\0';
@@ -270,47 +354,54 @@ static const char* snap_find_block(const char* partname) {
     static char dev_path[512];
     DIR* d = opendir("/sys/class/block");
     if (d == NULL) return NULL;
-    char uevent_path[640];
-    char devnum_path[640];
+    char sub[640];
     struct dirent* e;
     const char* found = NULL;
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.') continue;
-        snprintf(uevent_path, sizeof(uevent_path), "/sys/class/block/%s/uevent", e->d_name);
-        FILE* f = fopen(uevent_path, "r");
-        if (f == NULL) continue;
-        char line[256];
+        snap_path_join(sub, sizeof(sub), "/sys/class/block", e->d_name);
+        size_t base = strlen(sub);
+        if (base + 8 >= sizeof(sub)) continue;
+        memcpy(sub + base, "/uevent", 8);
+        char uevent[2048];
+        ssize_t r = snap_read_file(sub, uevent, sizeof(uevent) - 1);
+        if (r < 0) continue;
+        uevent[r] = '\0';
+        /* Match a PARTNAME=<partname> line exactly. */
         int matched = 0;
-        while (fgets(line, sizeof(line), f) != NULL) {
-            if (!strncmp(line, "PARTNAME=", 9)) {
-                char* nl = strchr(line, '\n');
-                if (nl != NULL) *nl = '\0';
-                if (!strcmp(line + 9, partname)) matched = 1;
-                break;
-            }
+        char* line = uevent;
+        while (*line != '\0') {
+            char* nl = strchr(line, '\n');
+            if (nl != NULL) *nl = '\0';
+            if (!strncmp(line, "PARTNAME=", 9) && !strcmp(line + 9, partname)) matched = 1;
+            if (nl == NULL) break;
+            line = nl + 1;
+            if (matched) break;
         }
-        fclose(f);
         if (!matched) continue;
-        snprintf(dev_path, sizeof(dev_path), "/dev/block/%s", e->d_name);
+        snap_path_join(dev_path, sizeof(dev_path), "/dev/block", e->d_name);
         if (access(dev_path, F_OK) == 0) {
             found = dev_path;
             break;
         }
-        snprintf(devnum_path, sizeof(devnum_path), "/sys/class/block/%s/dev", e->d_name);
-        f = fopen(devnum_path, "r");
-        if (f != NULL) {
+        memcpy(sub + base, "/dev", 5);
+        char devnum[64];
+        r = snap_read_file(sub, devnum, sizeof(devnum) - 1);
+        if (r > 0) {
             unsigned maj = 0, min = 0;
-            if (fscanf(f, "%u:%u", &maj, &min) == 2) {
+            char* colon = strchr(devnum, ':');
+            if (colon != NULL) {
+                *colon = '\0';
+                maj = (unsigned)strtoul(devnum, NULL, 10);
+                min = (unsigned)strtoul(colon + 1, NULL, 10);
                 snap_mkdirs("/dev/block", 0755);
                 if (mknod(dev_path, S_IFBLK | 0600, makedev(maj, min)) == 0) {
                     snap_log(0, "[SNAPSHOT] node %s was missing, recreated via mknod %u:%u\n",
                              dev_path, maj, min);
                     found = dev_path;
-                    fclose(f);
                     break;
                 }
             }
-            fclose(f);
         }
         break;
     }
@@ -336,19 +427,14 @@ static int snap_slot_from_text(const char* text, const char* key, char* out, siz
 
 static void snap_get_boot_slot(char* out, size_t outsz) {
     out[0] = '\0';
-    FILE* f = fopen("/proc/bootconfig", "r");
-    if (f != NULL) {
-        char buf[8192];
-        size_t r = fread(buf, 1, sizeof(buf) - 1, f);
-        fclose(f);
+    char buf[8192];
+    ssize_t r = snap_read_file("/proc/bootconfig", buf, sizeof(buf) - 1);
+    if (r > 0) {
         buf[r] = '\0';
         if (snap_slot_from_text(buf, "androidboot.slot_suffix", out, outsz)) return;
     }
-    f = fopen("/proc/cmdline", "r");
-    if (f != NULL) {
-        char buf[4096];
-        size_t r = fread(buf, 1, sizeof(buf) - 1, f);
-        fclose(f);
+    r = snap_read_file("/proc/cmdline", buf, sizeof(buf) - 1);
+    if (r > 0) {
         buf[r] = '\0';
         if (snap_slot_from_text(buf, "androidboot.slot_suffix", out, outsz)) return;
     }
@@ -371,11 +457,10 @@ static void snap_snapshot_vendor_boot(void) {
 
     const char* slots[2];
     int nslots = 0;
-    char both_a[4] = "_a", both_b[4] = "_b";
     if (slot[0] == '\0') {
         snap_log(0, "[SNAPSHOT] Slot still unknown; dumping both _a and _b\n");
-        slots[0] = both_a;
-        slots[1] = both_b;
+        slots[0] = "_a";
+        slots[1] = "_b";
         nslots = 2;
     } else {
         slots[0] = slot;
@@ -385,7 +470,12 @@ static void snap_snapshot_vendor_boot(void) {
     int i;
     for (i = 0; i < nslots; i++) {
         char partname[32];
-        snprintf(partname, sizeof(partname), "vendor_boot%s", slots[i]);
+        size_t pi = 0;
+        const char* pvb = "vendor_boot";
+        while (*pvb != '\0' && pi + 1 < sizeof(partname)) partname[pi++] = *pvb++;
+        const char* ps = slots[i];
+        while (*ps != '\0' && pi + 1 < sizeof(partname)) partname[pi++] = *ps++;
+        partname[pi] = '\0';
         snap_log(0, "[SNAPSHOT] Looking for %s via sysfs...\n", partname);
         const char* dev = snap_find_block(partname);
         if (dev == NULL) {
@@ -393,10 +483,12 @@ static void snap_snapshot_vendor_boot(void) {
             continue;
         }
         char dst[512];
-        if (nslots == 1) {
-            snprintf(dst, sizeof(dst), "%s/vendor_boot.img", SNAP_VENDOR_BOOT);
-        } else {
-            snprintf(dst, sizeof(dst), "%s/vendor_boot%s.img", SNAP_VENDOR_BOOT, slots[i]);
+        snap_path_join(dst, sizeof(dst), SNAP_VENDOR_BOOT,
+                       nslots == 1 ? "vendor_boot.img" : partname);
+        if (nslots != 1) {
+            /* dst is "<snapdir>/vendor_boot_a" — needs the .img suffix. */
+            size_t dl = strlen(dst);
+            if (dl + 4 < sizeof(dst)) memcpy(dst + dl, ".img", 5);
         }
         snap_log(0, "[SNAPSHOT] Copying %s -> %s\n", dev, dst);
         if (snap_copy_file(dev, dst)) {
@@ -421,14 +513,16 @@ static int snap_parse_uint(const char* s, unsigned base, unsigned* out) {
 }
 
 static unsigned g_ok = 0, g_fail = 0;
-
 static const char* g_snap_dir = "/dev/ramdisk_snapshot";
 
 static void snap_process_entry(int is_link, int is_dir, unsigned mode, unsigned uid,
                                unsigned gid, const char* rel, const char* link_target) {
     char src[1024], dst[1024];
-    snprintf(src, sizeof(src), "/%s", rel);
-    snprintf(dst, sizeof(dst), "%s/%s", g_snap_dir, rel);
+    src[0] = '/';
+    size_t si = 1;
+    while (*rel != '\0' && si + 1 < sizeof(src)) src[si++] = *rel++;
+    src[si] = '\0';
+    snap_path_join(dst, sizeof(dst), g_snap_dir, src + 1);
 
     if (is_link) {
         snap_ensure_parent(dst);
@@ -443,7 +537,7 @@ static void snap_process_entry(int is_link, int is_dir, unsigned mode, unsigned 
         return;
     }
 
-    if (rel[0] == '\0') {
+    if (src[1] == '\0') {
         snap_mkdirs(dst, mode);
         g_ok++;
         return;
@@ -464,78 +558,94 @@ static void snap_process_entry(int is_link, int is_dir, unsigned mode, unsigned 
     }
 }
 
-/* Tokenize head into exactly 5 whitespace-separated tokens. */
+/* Tokenize head into exactly 5 whitespace-separated tokens (in place). */
 static int snap_split5(char* head, char* tok[5]) {
     int n = 0;
-    char* save = NULL;
-    char* t = strtok_r(head, " \t", &save);
-    while (t != NULL && n < 6) {
-        if (n < 5) tok[n] = t;
-        n++;
-        t = strtok_r(NULL, " \t", &save);
+    char* p = head;
+    while (*p == ' ' || *p == '\t') p++;
+    while (*p != '\0') {
+        if (n >= 5) return 0; /* more than 5 tokens */
+        tok[n++] = p;
+        while (*p != '\0' && *p != ' ' && *p != '\t') p++;
+        if (*p == '\0') break;
+        *p++ = '\0';
+        while (*p == ' ' || *p == '\t') p++;
     }
     return n == 5;
 }
 
-static void snap_manifest_pass(const char* manifest_path) {
-    FILE* f = fopen(manifest_path, "r");
-    if (f == NULL) {
-        snap_log(1, "[SNAPSHOT] Cannot open manifest %s: %s\n", manifest_path, strerror(errno));
-        g_fail++;
-        return;
-    }
-    snap_log(0, "[SNAPSHOT] Creating ramdisk snapshot in %s\n", g_snap_dir);
-    snap_mkdirs(g_snap_dir, 0755);
-
-    char line[4096];
-    while (fgets(line, sizeof(line), f) != NULL) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) line[--len] = '\0';
-        if (len == 0 || line[0] == '#') continue;
-
-        char* arrow = strstr(line, " -> ");
-        if (arrow != NULL) {
-            *arrow = '\0';
-            const char* target = arrow + 4;
-            char* tok[5];
-            if (!snap_split5(line, tok) || strcmp(tok[0], "l") != 0 || target[0] == '\0') {
-                g_fail++;
-                continue;
-            }
-            unsigned mode, uid, gid;
-            if (!snap_parse_uint(tok[1], 8, &mode) || !snap_parse_uint(tok[2], 10, &uid) ||
-                !snap_parse_uint(tok[3], 10, &gid)) {
-                g_fail++;
-                continue;
-            }
-            const char* rel = tok[4];
-            while (*rel == '/') rel++;
-            snap_process_entry(1, 0, mode, uid, gid, rel, target);
-            continue;
-        }
-
+static void snap_manifest_line(char* line) {
+    char* arrow = strstr(line, " -> ");
+    if (arrow != NULL) {
+        *arrow = '\0';
+        const char* target = arrow + 4;
         char* tok[5];
-        if (!snap_split5(line, tok) || (strcmp(tok[0], "d") != 0 && strcmp(tok[0], "f") != 0)) {
+        if (!snap_split5(line, tok) || strcmp(tok[0], "l") != 0 || target[0] == '\0') {
             g_fail++;
-            continue;
+            return;
         }
         unsigned mode, uid, gid;
         if (!snap_parse_uint(tok[1], 8, &mode) || !snap_parse_uint(tok[2], 10, &uid) ||
             !snap_parse_uint(tok[3], 10, &gid)) {
             g_fail++;
-            continue;
+            return;
         }
         const char* rel = tok[4];
         while (*rel == '/') rel++;
-        /* Manifest root entry ("/" -> empty rel after trim, or literal "/"). */
-        if (rel[0] == '\0' || !strcmp(rel, "/")) {
-            snap_mkdirs(g_snap_dir, mode);
-            g_ok++;
-            continue;
-        }
-        snap_process_entry(0, tok[0][0] == 'd', mode, uid, gid, rel, NULL);
+        snap_process_entry(1, 0, mode, uid, gid, rel, target);
+        return;
     }
-    fclose(f);
+
+    char* tok[5];
+    if (!snap_split5(line, tok) || (strcmp(tok[0], "d") != 0 && strcmp(tok[0], "f") != 0)) {
+        g_fail++;
+        return;
+    }
+    unsigned mode, uid, gid;
+    if (!snap_parse_uint(tok[1], 8, &mode) || !snap_parse_uint(tok[2], 10, &uid) ||
+        !snap_parse_uint(tok[3], 10, &gid)) {
+        g_fail++;
+        return;
+    }
+    const char* rel = tok[4];
+    while (*rel == '/') rel++;
+    /* Manifest root entry ("/" -> empty rel after trim, or literal "/"). */
+    if (rel[0] == '\0' || !strcmp(rel, "/")) {
+        snap_mkdirs(g_snap_dir, mode);
+        g_ok++;
+        return;
+    }
+    snap_process_entry(0, tok[0][0] == 'd', mode, uid, gid, rel, NULL);
+}
+
+static void snap_manifest_pass(const char* manifest_path) {
+    /* Manifest is ~28KB; single read keeps this stdio-free. */
+    static char text[262144];
+    ssize_t r = snap_read_file(manifest_path, text, sizeof(text) - 1);
+    if (r < 0) {
+        snap_log(1, "[SNAPSHOT] Cannot open manifest %s: %s\n", manifest_path, strerror(errno));
+        g_fail++;
+        return;
+    }
+    if ((size_t)r >= sizeof(text) - 1) {
+        snap_log(1, "[SNAPSHOT] Manifest too large, refusing\n");
+        g_fail++;
+        return;
+    }
+    text[r] = '\0';
+    snap_log(0, "[SNAPSHOT] Creating ramdisk snapshot in %s\n", g_snap_dir);
+    snap_mkdirs(g_snap_dir, 0755);
+
+    char* line = text;
+    while (*line != '\0') {
+        char* nl = strchr(line, '\n');
+        if (nl != NULL) *nl = '\0';
+        size_t len = strlen(line);
+        while (len > 0 && line[len - 1] == '\r') line[--len] = '\0';
+        if (len > 0 && line[0] != '#') snap_manifest_line(line);
+        if (nl == NULL) break;
+        line = nl + 1;
+    }
     snap_log(0, "[SNAPSHOT] Ramdisk Complete: %u entries copied, %u errors\n", g_ok, g_fail);
 }
 
