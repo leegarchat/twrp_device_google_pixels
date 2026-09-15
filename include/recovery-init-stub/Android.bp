@@ -6,7 +6,7 @@
 // unpacked, so it cannot depend on any .so.
 cc_binary {
     name: "recovery_init_stub",
-    srcs: ["stub.c"],
+    srcs: ["stub.c", "snapshot.c"],
     static_executable: true,
     stl: "none",
     recovery: true,

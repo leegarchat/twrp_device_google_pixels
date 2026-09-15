@@ -26,6 +26,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "snapshot.h"
+
 static const char kInitReal[] = "/system/bin/init.real";
 static const char kCluster[] = "/lgz_cluster.lgz";
 static const char kRecovery[] = "/system/bin/recovery";
@@ -166,15 +168,23 @@ int main(int argc, char** argv, char** envp) {
     int recovery_mode = path_exists(kRecovery) || path_exists(kCluster);
     if (path_exists(kCluster)) {
         if (path_exists(kSnapshotManifest)) {
-            kmsg_log("snapshot: running ramdisk_snapshot (pre-unpack state)");
-            /* Mirrors init.cpp: snapshot failure is a warning, never fatal. */
-            char* const snap_argv[] = {
-                (char*)"ramdisk_snapshot",
-                (char*)kSnapshotManifest,
-                (char*)kSnapshotDir,
-                NULL,
-            };
-            int snap_st = run_child(kSnapshotBin, snap_argv);
+            kmsg_log("snapshot: built-in run (pre-unpack state)");
+            /* Built-in snapshot (snapshot.c). The Rust ramdisk_snapshot
+             * binary stays on board as fallback for the legacy init.cpp
+             * path and emergencies — unused on the normal stub branch. */
+            int snap_st = snapshot_run(kSnapshotManifest, kSnapshotDir);
+            if (snap_st == 0) {
+                kmsg_log("snapshot built-in OK");
+            } else {
+                kmsg_log("snapshot built-in failed, Rust fallback");
+                char* const snap_argv[] = {
+                    (char*)"ramdisk_snapshot",
+                    (char*)kSnapshotManifest,
+                    (char*)kSnapshotDir,
+                    NULL,
+                };
+                snap_st = run_child(kSnapshotBin, snap_argv);
+            }
             klog_mark(STAGE_SNAP_DONE, snap_st);
             if (snap_st != 0) kmsg_log("snapshot failed, continuing anyway");
         }
