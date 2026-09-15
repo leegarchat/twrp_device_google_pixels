@@ -334,7 +334,17 @@ mod tests {
     }"#;
 
     fn load_fixture() -> DeviceConfig {
-        let d = std::env::temp_dir().join(format!("fox_test_cfg_{}", std::process::id()));
+        // Unique dir per CALLER (tests run in parallel threads): embed a
+        // per-call nonce so concurrent fixtures never share a directory.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NONCE: AtomicU64 = AtomicU64::new(0);
+        let n = NONCE.fetch_add(1, Ordering::SeqCst);
+        let d = std::env::temp_dir().join(format!(
+            "fox_test_cfg_{}_{}_{:?}",
+            std::process::id(),
+            n,
+            std::thread::current().id()
+        ));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let f = d.join("pixelrunatboot.json");

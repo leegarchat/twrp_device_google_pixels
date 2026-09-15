@@ -219,19 +219,53 @@ struct TorchHw {
     gpio_off: u32,
 }
 
+/// Discovery cache: bus/addr/chip/offset never change across boots.
+/// First toggle pays the full sysfs walk, later ones validate 4 nodes.
+const HW_CACHE: &str = "/dev/.fox_torch_hw";
+
+fn load_cache() -> Option<TorchHw> {
+    let text = std::fs::read_to_string(HW_CACHE).ok()?;
+    let mut it = text.split_whitespace();
+    let bus: u32 = it.next()?.parse().ok()?;
+    let addr = u16::from_str_radix(it.next()?, 16).ok()?;
+    let chip = PathBuf::from(it.next()?);
+    let gpio_off: u32 = it.next()?.parse().ok()?;
+    if !Path::new(&format!("/dev/i2c-{bus}")).exists() || !chip.exists() {
+        return None;
+    }
+    Some(TorchHw {
+        bus,
+        addr,
+        chip,
+        gpio_off,
+    })
+}
+
+fn store_cache(hw: &TorchHw) {
+    let _ = std::fs::write(
+        HW_CACHE,
+        format!("{} {:x} {} {}\n", hw.bus, hw.addr, hw.chip.display(), hw.gpio_off),
+    );
+}
+
 fn discover(i2c_match: &str, pinctrl_alts: &[String]) -> Result<TorchHw, String> {
+    if let Some(hw) = load_cache() {
+        return Ok(hw);
+    }
     let (bus, addr) = discover_i2c(i2c_match)?;
     let (chip, gpio_off) = discover_gpio(pinctrl_alts)?;
     info(&format!(
         "HW found: I2C bus {bus} addr 0x{addr:02x}, GPIO {} offset {gpio_off}",
         chip.display()
     ));
-    Ok(TorchHw {
+    let hw = TorchHw {
         bus,
         addr,
         chip,
         gpio_off,
-    })
+    };
+    store_cache(&hw);
+    Ok(hw)
 }
 
 fn i2c_do(bus: u32, addr: u16, payload: &[u8]) -> Result<(), String> {
