@@ -110,6 +110,7 @@ LGZ_EXCLUDE_LIST=(
     "libvendorsupport.so"
     "libz.so"
     "lgz_cluster.lgz"
+    "pixelrunatboot.json"
     "ramdisk_snapshot_manifest.txt"
     "recovery_file_list.txt"
     "first_stage_file_list.txt"
@@ -147,6 +148,47 @@ LGZ_PACK_DIRS=(
     # "twres/"                 # whole twres (needs *.png excludes to test)
     # "vendor/"                # whole vendor subtree
 )
+
+# =========================================================================
+# Pixel device config merge (families/*/family.json + devices/*/pixel.json
+# -> /pixelrunatboot.json in the ramdisk root, always open).
+# The Rust engine reads its section by ro.hardware at runtime; per-device
+# vendor data (touch lists, partitions, haptics path, props) never lives
+# in code. Family props merge under device props (device wins).
+# Loud fail on invalid JSON — a half-merged config must never ship.
+# =========================================================================
+merge_pixel_config() {
+    local ramdisk_root="$1"
+    python3 - "$SCRIPT_DIR" "$ramdisk_root/pixelrunatboot.json" <<'PYEOF'
+import json, sys, pathlib
+tree, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+merged = {}
+for famfile in sorted((tree / 'families').glob('*/family.json')):
+    try:
+        fam = json.loads(famfile.read_text())
+    except Exception as e:
+        print(f'    [PIXELCFG] ERROR: bad family JSON {famfile}: {e}')
+        sys.exit(1)
+    merged.setdefault('_families', {})[fam['family']] = fam
+for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
+    dev = pixfile.parent.name
+    if dev in merged:
+        print(f'    [PIXELCFG] ERROR: duplicate device key: {dev}')
+        sys.exit(1)
+    try:
+        pj = json.loads(pixfile.read_text())
+    except Exception as e:
+        print(f'    [PIXELCFG] ERROR: bad device JSON {pixfile}: {e}')
+        sys.exit(1)
+    famprops = merged.get('_families', {}).get(pj['family'], {}).get('props', {})
+    props = dict(famprops)
+    props.update(pj.get('props', {}))
+    pj['props'] = props
+    merged[dev] = pj
+out.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + '\n')
+print(f'    [PIXELCFG] merged {len(merged) - 1} devices -> /pixelrunatboot.json')
+PYEOF
+}
 
 # LGZ helper functions
 # =========================================================================
@@ -581,6 +623,10 @@ case "$CALL_TYPE" in
                 echo "    [PLATFORM]   + disabled C++ keymint start"
             fi
         fi
+
+        # --- Pixel device config: merge per-device JSON for the Rust engine ---
+        echo "    [PIXELCFG] Merging device configs..."
+        merge_pixel_config "$TARGET_DIR" || return 1
 
         # --- LGZ: Compress ramdisk binaries for space savings ---
         echo ""
