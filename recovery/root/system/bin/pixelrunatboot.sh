@@ -110,23 +110,20 @@ _classic_copy() {
 
 case "$1" in
     props-apply)
-        # props-apply <propsdir> <family> <device>
-        _dir="$2"; _fam="$3"; _dev="$4"
+        # props-apply <family> <key=value>...
+        # Pairs come from /pixelrunatboot.json via the Rust engine (already
+        # family-merged at build time); argv carries values with spaces/= intact.
+        _fam="$2"; shift 2
         command -v resetprop >/dev/null 2>&1 \
             || { plog "props-apply" "resetprop missing"; exit 1; }
         setenforce 0 2>>"$LOGF"
         _n=0
-        for _f in "$_dir/${_fam}_common.prop" "$_dir/${_dev}.prop"; do
-            [ "$_fam" = "" ] && case "$_f" in *_common.prop) continue ;; esac
-            [ -f "$_f" ] || continue
-            while IFS= read -r _line; do
-                case "$_line" in \#*|"") continue ;; esac
-                _k="${_line%%=*}"; _v="${_line#*=}"
-                [ -n "$_k" ] || continue
-                if resetprop "$_k" "$_v" 2>>"$LOGF"; then
-                    _n=$((_n + 1))
-                fi
-            done < "$_f"
+        for _pair in "$@"; do
+            _k="${_pair%%=*}"; _v="${_pair#*=}"
+            [ -n "$_k" ] || continue
+            if resetprop "$_k" "$_v" 2>>"$LOGF"; then
+                _n=$((_n + 1))
+            fi
         done
         if [ "$_fam" = "gs201" ] && [ -f /system/etc/twrp_gs201.flags ]; then
             cp -f /system/etc/twrp_gs201.flags /system/etc/twrp.flags 2>>"$LOGF"
@@ -172,12 +169,14 @@ case "$1" in
         ;;
 
     fw-fetch)
-        # fw-fetch <suffix-a|b> <slotnum>: firmware/* -> /vendor/firmware/.
+        # fw-fetch <partbase> <suffix-a|b> <slotnum>: firmware/* -> /vendor/firmware/.
         # Prints copied count. rc=0 if anything was copied.
-        _sfx="$2"; _slot="$3"
+        # (Plain assignments: case branches run at top level where `local`
+        # is not portable; helpers localize their own vars, so no clobber.)
+        _part="$2"; _sfx="$3"; _slot="$4"
         mkdir -p /vendor/firmware 2>/dev/null
-        _img="/dev/stage_vendor_${_sfx}.img"
-        if _siw_stream vendor "$_sfx" "$_slot" "$_img"; then
+        _img="/dev/stage_${_part}_${_sfx}.img"
+        if _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
             _n=0
             for _staged in $(_iw_extract "$_img" '/firmware/' /dev/fw_stage 2>/dev/null); do
                 if cp -f "$_staged" /vendor/firmware/ 2>>"$LOGF"; then
@@ -189,9 +188,9 @@ case "$1" in
             plog "fw-fetch" "iw parse empty, classic fallback"
         fi
         _n=0
-        _node="/dev/block/mapper/vendor_${_sfx}"
+        _node="/dev/block/mapper/${_part}_${_sfx}"
         if [ ! -b "$_node" ]; then
-            "$LPTOOLS" --slot "$_slot" --suffix "_${_sfx}" --map "vendor_${_sfx}" >>"$LOGF" 2>&1
+            "$LPTOOLS" --slot "$_slot" --suffix "_${_sfx}" --map "${_part}_${_sfx}" >>"$LOGF" 2>&1
         fi
         _mnt="/dev/stage_mnt_$$"
         mkdir -p "$_mnt"
@@ -204,9 +203,9 @@ case "$1" in
         fi
         rmdir "$_mnt" 2>/dev/null
         # Last resort: read the by-name node directly (no LP involved).
-        if [ "$_n" -eq 0 ] && [ -b /dev/block/by-name/vendor ]; then
-            if mount -r /dev/block/by-name/vendor "$_mnt" 2>>"$LOGF"; then
-                mkdir -p "$_mnt" 2>/dev/null
+        if [ "$_n" -eq 0 ] && [ -b "/dev/block/by-name/${_part}" ]; then
+            mkdir -p "$_mnt" 2>/dev/null
+            if mount -r "/dev/block/by-name/${_part}" "$_mnt" 2>>"$LOGF"; then
                 for _f in "$_mnt"/firmware/*; do
                     [ -f "$_f" ] || continue
                     cp -f "$_f" /vendor/firmware/ 2>>"$LOGF" && _n=$((_n + 1))

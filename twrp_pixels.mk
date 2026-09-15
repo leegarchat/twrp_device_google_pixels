@@ -12,7 +12,8 @@
 #
 # PRODUCT_DEVICE must match the directory name under device/google/ (pixels)
 # so that the build system finds BoardConfig.mk and device.mk correctly.
-# Runtime device identification is done via ro.hardware in runatinit.sh.
+# Runtime device identification is done via ro.hardware in
+# recovery-pixel-boot (config in /pixelrunatboot.json).
 
 # Inherit from those products. Most specific first.
 $(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
