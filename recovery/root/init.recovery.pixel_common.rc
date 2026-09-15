@@ -125,7 +125,7 @@ service vendor.keymint-trusty /vendor/bin/hw/android.hardware.security.keymint-s
 # recovery-tensor-daemon subcommand.
 # Replaces citadeld + weaver-service.citadel (no A15 vendor dependencies).
 # Provides IWeaver/default binder service for CE FBE key derivation.
-service recovery_weaver /system/bin/recovery-tensor-daemon weaver
+service recovery_weaver /system/bin/sh -c "exec /system/bin/recovery-tensor-daemon weaver >>/tmp/weaver.log 2>&1"
     user root
     group root
     disabled

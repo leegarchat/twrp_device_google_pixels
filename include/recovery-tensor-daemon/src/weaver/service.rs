@@ -169,8 +169,16 @@ impl WeaverHal {
         // Request/response buffers are sized dynamically: no 64/128-byte
         // stack caps, so larger PQC-era keys/values keep working.
         let req = proto::build_read_request(slot_u, key);
+
+        // Titan M3 adaptive buffer: reply sized from the chip geometry
+        // (value_size + protobuf overhead), floored at the proven 128 bytes
+        // of the reference C++ daemon, and capped so arg_len + reply_cap
+        // never exceeds the GSC 4K transfer window (else EINVAL).
+        let max_transfer_reply = MAX_GSA_NOS_CALL_TRANSFER.saturating_sub(req.len());
+        let reply_cap = (geo.value_size + 64).max(128).min(max_transfer_reply);
+
         let (reply, status) =
-            self.gsc.nos_call(APP_ID_WEAVER, CMD_READ, &req, MAX_GSA_NOS_CALL_TRANSFER)?;
+            self.gsc.nos_call(APP_ID_WEAVER, CMD_READ, &req, reply_cap)?;
         Self::check_status(status)?;
         let (error, throttle_ms, value) = proto::parse_read_response(&reply)?;
         let status = match error {
