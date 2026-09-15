@@ -75,7 +75,11 @@
         "log_buf_len=1024K",
         "bootconfig"
       ]},
-      "bootconfig_append": ["androidboot.usbcontroller=11210000.dwc3"],
+      "bootconfig_append": [
+        "androidboot.usbcontroller=11210000.dwc3",
+        "androidboot.boot_devices=13200000.ufs",
+        "androidboot.load_modules_parallel=true"
+      ],
       "prebuilt": {},
       "ko": {}
     },
@@ -107,7 +111,10 @@
         "android_arch_task_struct_size=784",
         "bootconfig"
       ]},
-      "bootconfig_append": [],
+      "bootconfig_append": [
+        "androidboot.boot_devices=13200000.ufs",
+        "androidboot.load_modules_parallel=true"
+      ],
       "prebuilt": {},
       "ko": {}
     }

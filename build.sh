@@ -250,6 +250,11 @@ if [[ -n "$FAMILY" ]]; then
         fi
         if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
             KERNEL_MK="$SCRIPT_DIR/families/$KFAMILY/.gen_kernel.mk"
+            if [[ "$FP_JSON" == "[]" ]]; then
+                # Family without pixel.json devices (e.g. gs101 WIP):
+                # single group straight from the family profile.
+                KERNEL_GROUPS=("$KFAMILY|-")
+            else
             GROUP_LINES=$(FP_JSON="$FP_JSON" python3 -c '
 import json, os
 fps = json.loads(os.environ["FP_JSON"])
@@ -277,6 +282,7 @@ print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))'
                 _gen="${_devs%%,*}"
                 KERNEL_GROUPS+=("$_tag|$_gen")
             done <<< "$GROUP_LINES"
+            fi
             if [[ ${#KERNEL_GROUPS[@]} -eq 0 ]]; then
                 echo "ERROR: no kernel group contains device '${KDEV:-?}'."
                 fox_safe_exit 2
