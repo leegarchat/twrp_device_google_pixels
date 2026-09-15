@@ -11,7 +11,8 @@
 
 ```text
 device/google/pixels/
-├── build.sh                    # точка входа сборки (только руками)
+├── build.sh                    # точка входа сборки (только руками; -f/-k/--force)
+├── gen_kernel_mk.py            # резолв kernel-профилей -> .gen_kernel.mk (см. раздел 11)
 ├── vendorsetup.sh              # lunch-хук: резолв семьи, .build_platform.conf
 ├── device.mk / BoardConfig.mk  # пакеты, оверлеи, Soong
 ├── twrp_pixels.mk
@@ -19,8 +20,8 @@ device/google/pixels/
 │   ├── common/                 # keymint-пребилды, recovery.wipe, vendor.prop
 │   ├── gs101|gs201|zuma|zumapro/
 │   │   ├── family.conf         # FAMILY/UFS_ADDR/EARLYCON_ADDR/KEYMINT (для скриптов)
-│   │   ├── family.json         # то же + общие пропсы (для мёрджа в конфиг)
-│   │   ├── family.mk           # Soong/мake-включения семьи
+│   │   ├── family.json         # то же + общие пропсы + kernels-профили (для мёрджа в конфиг)
+│   │   ├── family.mk           # SoC-фрагмент (без cmdline: он едет из .gen_kernel.mk)
 │   │   ├── fstab/              # пре-рендеренные fstab под vendor_ramdisk
 │   │   ├── recovery.fstab      # fstab рекавери
 │   │   ├── recovery/root/      # family-оверлей рамдиска (rc-стабы)
@@ -34,10 +35,11 @@ device/google/pixels/
 │   ├── init.recovery.pixel_common.rc
 │   ├── init.recovery.usb.rc
 │   └── system/bin/             # Rust-бины, pixelrunatboot.sh, zip-пейлоады, siw/iw
-├── include/                    # исходники Rust-компонентов + пребилды
+├── include/                    # исходники компонентов + пребилды
 │   ├── recovery-pixel-boot/    # движок (init/boot/otg-patch/otg-auto/setup-temp/torch)
+│   ├── recovery-init-stub/     # static PID 1 (stub.c + snapshot.c, см. раздел 12)
 │   ├── recovery-tensor-daemon/ # storageproxy + weaver (FBE)
-│   ├── ramdisk_snapshot/       # снапшот рамдиска для reflash
+│   ├── ramdisk_snapshot/       # Rust-фолбэк снапшота (штатно вшит в стаб)
 │   ├── lgz_compress_*          # хост-паковщик / девайс-распаковщик кластера
 │   └── otg_host_shim/ / susfs_rename_fix/  # исходники .ko
 ├── patches/                    # files/-патч-система (см. раздел 9)
@@ -62,7 +64,12 @@ device/google/pixels/
 ./build.sh -f shiba        # девайс shiba (Pixel 8) -> семья zuma
 ./build.sh -f zuma         # сборка сразу на семью
 ./build.sh -f shiba -l 2   # уровень сжатия кластера 0-3 (дефолт 0)
+./build.sh -f zuma -k 6.12 # kernel-профиль 6.12 (см. раздел 11)
+./build.sh -f zuma -k 6.1 --force  # то же, молча (для скриптов/CI)
 ```
+
+Без `-k` — интерактивный выбор профиля; без `-k` + `--force` — ошибка
+со списком доступных версий (молчаливого дефолта в скриптах нет).
 
 Что происходит:
 
@@ -73,9 +80,11 @@ device/google/pixels/
 2. `vendorsetup.sh` (lunch) пишет `.build_platform.conf` (семья, UFS-адрес,
    keymint-вариант, `LGZ_LEVEL`/`LGZ_POLICY`): env не переживает ninja
    recipe-shell'ы, поэтому параметры едут файлом.
-3. Soong собирает пакеты (`ramdisk_snapshot`, `recovery-tensor-daemon`,
-   `recovery-pixel-boot`, fstabs, keymint) + оверлеи:
-   `TARGET_RECOVERY_DEVICE_DIRS = корень + devices/* + families/<флаг>`.
+3. Soong собирает пакеты (`recovery_init_stub`, `recovery-tensor-daemon`,
+    `recovery-pixel-boot`, fstabs, keymint) + оверлеи:
+    `TARGET_RECOVERY_DEVICE_DIRS = корень + devices/* + families/<флаг>`.
+    `VENDOR_CMDLINE` на этом этапе уже переопределён из `.gen_kernel.mk`
+    (сгенерирован до lunch — `dumpvars` парсит BoardConfig во время lunch).
 4. `--second-call` (`fox_build_callback.sh`, `$TARGET_DIR` = корень рамдиска):
    инжект keymint/VINTF по семье, family-`twrp.flags` поверх дефолта,
    device-оверрайды `<device>.twrp.flags` из `devices/*/twrp.flags`,
@@ -104,8 +113,12 @@ device/google/pixels/
 | `"twres/dir/file.ext"` | точный рамдиск-путь |
 | `"twres/subdir/"` | всё дерево под каталогом |
 
-Правило: всё нужное **до** анпака (init-замыкание, `lgz`,
-`recovery-pixel-boot`, `recovery`, `*.rc`, манифесты) — только в exclude.
+Правило: всё нужное **до** анпака (статический стаб, `lgz`,
+`recovery`, `*.rc`, манифесты) — только в exclude. Init-замыкание
+(linker/libc/...) с появлением стаба едет **внутри** кластера.
+`LGZ_DROP_LIST` в колбэке удаляет мёртвый вес из стейджинга до паковки
+(проверка `readelf NEEDED` + `strings` на dlopen обязательна; CJK-шрифт
+и installer-zip'ы дропать только для тестовых сборок).
 
 ## 4. Конфиг девайсов (`pixel.json`)
 
@@ -113,8 +126,11 @@ device/google/pixels/
 
 - `families/<fam>/family.json`: `family`, `soc_family`, общие `props`.
 - `devices/<codename>/pixel.json`: то же + `touch_modules[]`,
-  `part_touch`/`part_vendor`, `cs40l26_pm`, пути (`thermal_*`, `torch_*`,
+  `part_touch`/`part_vendor`, `part_sysdlkm` + `preload_modules[]`
+  (провайдеры до touch-матрицы, напр. `pwrseq-core` для `lwis` на 6.12),
+  `cs40l26_pm`, пути (`thermal_*`, `torch_*`,
   `vbus_paths[]`, `tcpc_driver`), свои `props`.
+- `families/<fam>/family.json`: + `default_kernel`, `kernels` (раздел 11).
 
 Схема секции (плоская, без вложенности кроме `props`):
 
@@ -125,6 +141,8 @@ device/google/pixels/
   "touch_modules": ["stmvl53l1", "lwis", "...", "fps_touch_handler"],
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",
+  "part_sysdlkm": "system_dlkm",
+  "preload_modules": ["pwrseq-core"],
   "cs40l26_pm": "/sys/devices/.../power/control",
   "thermal_zone_types": ["BIG", "CLUSTER2", "..."],
   "thermal_soc_type": "soc_therm",
@@ -157,7 +175,7 @@ device/google/pixels/
 | Субкоманда | Триггер | Что делает |
 |---|---|---|
 | `init` | `exec` на `early-init` | резолв девайса → пропсы через стадию → повторный резолв → свап `<device>.twrp.flags` → `twrp.flags`-фикс, magiskboot-распаковка через стадию, `servicemanager.ready` |
-| `boot` | `exec` на `on boot` (init ждёт завершения — модули до GUI) | susfs-fix, firmware/модули через стадии + `finit_module`, haptics-PM, magisk-линки + fork-демон, meta-fix через стадию |
+| `boot` | `exec` на `on boot` (init ждёт завершения — модули до GUI) | preload (`part_sysdlkm`/`preload_modules`, best-effort) → susfs-fix, firmware/модули через стадии + `finit_module`, haptics-PM, magisk-линки + fork-демон, meta-fix через стадию |
 | `otg-patch` | сервис `otg_enable` | инжект `otg_host_shim` (скоринг `.ko`), `patch_dwc3=1`, свитч max77759 по I2C |
 | `otg-auto` | триггер `patch_dwc3=1` | VBUS-демон host/device (живёт всегда) |
 | `setup-temp` | `exec` на `on init` + рефреш из `boot` | симлинк `/dev/thermal_cpu`: exact → `soc_therm` → auto → zone0 |
@@ -177,7 +195,7 @@ device/google/pixels/
 |---|---|---|
 | `props-apply <family> k=v...` | `resetprop`, `setenforce` | ro.*-пропсы (bionic API их блокирует), gs201-флаги |
 | `slot-detect` | `bootctl` | суффикс слота в stdout |
-| `ko-fetch <part> <sfx> <slot>` | `siw read` → `iw read` | все `*.ko` в `/dev/ko_stage/`; fallback `lptools+mount` |
+| `ko-fetch <part> <sfx> <slot>` | `siw read` → `iw read` | все `*.ko` в `/dev/ko_stage/`; fallback `lptools+mount`. Depth-guard: только `lib/modules/*.ko` — подкаталоги pagesize (`16k-mode/`) пропускаются (их близнецы с чужими CRC затеняли плоские модули и ломали тач/хаптику на 6.12) |
 | `fw-fetch <part> <sfx> <slot>` | `siw`/`iw`, fallback mount | firmware → `/vendor/firmware/` |
 | `magiskboot-unpack <zip>` | `unzip`, `busybox` | boot/busybox в `/system/bin` |
 | `meta-fix` | `mount` | чистка `/metadata/ota` (с ожиданием блочной ноды) |
@@ -193,9 +211,10 @@ device/google/pixels/
 
 1. Bootloader → ядро + `init_boot` (сток first-stage) + наш `vendor_boot`.
 2. First-stage: `IsRecoveryMode()` (`access /system/bin/recovery`, открыт)
-   → exec нашего `/system/bin/init`.
-3. Наш `init`: `ramdisk_snapshot` (для reflash) → анпак кластера →
-   verify (фейл = `reboot,bootloader`) → property/SELinux/RC.
+   → exec нашего `/system/bin/init` (статический стаб, раздел 12).
+3. Стаб: `ramdisk_snapshot` (для reflash) → анпак кластера →
+   exec настоящего `init.real`. Фейл = `reboot,bootloader`.
+   Legacy-путь в `SecondStageMain` пропускается (handoff по `init.real`).
 4. `early-init exec` → `recovery-pixel-boot init`.
 5. `on init exec` → `setup-temp`; Trusty/keymint/weaver-сервисы.
 6. `on boot`: USB-конфиг → `recovery-pixel-boot boot` (синхронно) →
@@ -217,9 +236,49 @@ device/google/pixels/
 5. Прошивка обоих слотов → `dmesg | grep -iE 'LGZ|OFOX|ko_loader'`,
    `/tmp/recovery.log`, `lsmod`, `/dev/input/`.
 
-Новый SoC: + `families/<fam>/` (`family.conf`, `family.json`,
-`family.mk`, `fstab/`, `recovery/root/`, `recovery.fstab`,
+Новый SoC: + `families/<fam>/` (`family.conf`, `family.json`
+(+ `kernels`/`default_kernel`, раздел 11), `family.mk` (без cmdline),
+`fstab/`, `recovery/root/`, `recovery.fstab`,
 `twrp.flags` с UFS-путями семьи).
+
+## 11. Kernel-профили (`kernels` в JSON + `-k`)
+
+`VENDOR_CMDLINE`/`BOARD_BOOTCONFIG` живут не в `.mk`, а в
+`families/<fam>/family.json` (`kernels`, ключ = версия: `6.1`, `6.12`).
+Схема профиля: `cmdline` — типизированный конверт
+(`str` = одна строка, `arr` = `["k=v", …]`, `list` = `[{k: v}, …]`),
+`bootconfig_append` — список, `prebuilt`/`ko` — резерв под следующие шаги.
+Оверрайд девайса (`devices/<dev>/pixel.json` → `kernels[VER]`) заменяет
+семейный профиль **целиком**. Девайсы с одинаковым эффективным профилем
+(сравнение пофлагово, порядок не важен) собираются в **один** образ
+(`zuma.img`); разошедшийся — в свой (`zuma_husky.img`, подгруппа —
+`zuma_husky-akita.img`).
+
+Механика: `build.sh -k` → `gen_kernel_mk.py --fingerprint` (группы) →
+`.gen_kernel.mk` в `families/<fam>/` (gitignore; `VENDOR_CMDLINE`,
+`BOARD_BOOTCONFIG += …`, `FOX_KERNEL_VER`) → `-include` в конце
+`BoardConfig.mk`. Пре-генерация — до lunch (`dumpvars` парсит BoardConfig
+во время lunch); между группами — обязательная чистка `PRODUCT_OUT`;
+после сборки файл удаляется. Пустой `VENDOR_CMDLINE` = громкий
+`$(error)` вместо незагружаемого образа.
+
+```bash
+./gen_kernel_mk.py --list zuma            # версии + (default: …)
+./gen_kernel_mk.py --fingerprint zuma 6.12  # группы: device/hash/source
+```
+
+## 12. Init-стаб (`recovery-init-stub`)
+
+Статический (C, `static_executable`, без логов) PID 1 на месте
+`/system/bin/init`; настоящий init едет внутри кластера как `init.real`
+(`init` в exclude, `init.real` — нет; свап в колбэке до паковки и
+манифестов). Первое invocation (`init.real` отсутствует): встроенный
+снапшот (`snapshot.c`, порт Rust-версии; Rust-бинарь оставлен фолбэком) →
+`lgz decompress` → exec `init.real`; неуспех в recovery-режиме —
+`reboot bootloader`. Последующие (`second_stage`, `init.real` на месте) —
+мгновенный passthrough с сохранением argv/env. Распаковка на
+`selinux_setup` обязательна: `init.real` и sepolicy/пропсы должны быть
+на месте до `SetupSelinux`/`PropertyInit`.
 
 ## 9. Патч-система (кратко)
 
