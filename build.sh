@@ -288,6 +288,16 @@ print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))'
                 fox_safe_exit 2
             fi
             export FOX_KERNEL_VER
+            # Pre-generate for the FIRST group BEFORE lunch: dumpvars parses
+            # BoardConfig.mk during lunch and would hit the empty-cmdline
+            # guard otherwise. The per-group loop regenerates before each
+            # mka (make re-reads BoardConfig every invocation).
+            if [[ "$SAFE_EXIT_REQUESTED" == false && ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
+                _pre_gen="${KERNEL_GROUPS[0]#*|}"
+                python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate \
+                    "$KFAMILY" "${_pre_gen:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
+                    || fox_safe_exit 2
+            fi
         fi
     fi
 fi
