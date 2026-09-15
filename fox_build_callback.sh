@@ -114,6 +114,7 @@ LGZ_EXCLUDE_LIST=(
     "ramdisk_snapshot_manifest.txt"
     "recovery_file_list.txt"
     "first_stage_file_list.txt"
+    "nboot.lz4"
 )
 
 # Pack policy: dirs (default, V9-verified set) or all (legacy experimental).
