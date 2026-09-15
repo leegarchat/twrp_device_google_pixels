@@ -420,7 +420,11 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         echo "[build] Clean done."
     fi
     if [[ -n "$GROUP_TAG" ]]; then
-        echo "[build] === Group $GROUP_TAG (kernel $FOX_KERNEL_VER, profile of $GROUP_GEN) ==="
+        if [[ "$GROUP_TAG" == "$KFAMILY" ]]; then
+            echo "[build] === Group $GROUP_TAG (kernel $FOX_KERNEL_VER, shared family profile) ==="
+        else
+            echo "[build] === Group $GROUP_TAG (kernel $FOX_KERNEL_VER, profile of $GROUP_GEN) ==="
+        fi
     fi
 
     mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
