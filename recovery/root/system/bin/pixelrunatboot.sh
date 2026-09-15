@@ -254,7 +254,12 @@ case "$1" in
             _tries=$((_tries + 1))
         done
         if ! mountpoint -q /metadata 2>/dev/null; then
-            if ! mount /metadata 2>>"$LOGF"; then
+            # Explicit device+fstype: recovery has no /etc/fstab, so a bare
+            # `mount /metadata` always fails with "bad /etc/fstab".
+            # /metadata is f2fs on all families (see families/*/recovery.fstab).
+            mkdir -p /metadata 2>/dev/null
+            if ! mount -t f2fs /dev/block/by-name/metadata /metadata 2>>"$LOGF" \
+                && ! mount -t ext4 /dev/block/by-name/metadata /metadata 2>>"$LOGF"; then
                 plog "meta-fix" "mount failed after wait"
                 exit 1
             fi

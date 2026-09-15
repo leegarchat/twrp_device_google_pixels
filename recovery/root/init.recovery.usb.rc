@@ -239,7 +239,10 @@ on property:sys.usb.ffs.ready=1
     mkdir /config/usb_gadget/g1/configs/b.1
     mkdir /config/usb_gadget/g1/configs/b.1/strings/0x409 0770
     write /config/usb_gadget/g1/configs/b.1/MaxPower 900
-    symlink /config/usb_gadget/g1/configs/b.1 /config/usb_gadget/g1/os_desc/b.1
+    # NOTE: no os_desc/b.1 symlink here on purpose. It is created once in
+    # early-boot above; this trigger refires on every setprop of
+    # sys.usb.ffs.ready (e.g. fastbootd transport resets), and the duplicate
+    # symlink only spams dmesg with "File exists" while racing stock init.rc.
 
 # ADB-only mode: standard init.rc trigger (bootable/recovery/etc/init.rc) does
 # the heavy lifting (UDC, f1 symlink, state). We only override PID to Pixel's.
