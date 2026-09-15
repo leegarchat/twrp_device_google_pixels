@@ -167,6 +167,18 @@ fn try_slot(part: &str, sfx: &str, slotnum: &str, modules: &[String]) -> bool {
 fn modules_touch_install(cfg: &DeviceConfig, suffix: &str, unsuffix: &str, slot: &str, unslot: &str) {
     let sfx = suffix.trim_start_matches('_');
     let usfx = unsuffix.trim_start_matches('_');
+    // Provider preload (dependency order): e.g. pwrseq-core from system_dlkm
+    // before lwis on 6.12. Best-effort — a missing partition/module (6.1
+    // needs nothing) only warns via try_slot.
+    if !cfg.preload_modules.is_empty() && !cfg.part_sysdlkm.is_empty() {
+        info(&format!("modules: preloading providers from {}", cfg.part_sysdlkm));
+        if !sfx.is_empty() {
+            try_slot(&cfg.part_sysdlkm, sfx, slot, &cfg.preload_modules);
+        }
+        if !usfx.is_empty() {
+            try_slot(&cfg.part_sysdlkm, usfx, unslot, &cfg.preload_modules);
+        }
+    }
     info(&format!("modules: trying current slot {suffix}"));
     let mut ok = if !sfx.is_empty() {
         try_slot(&cfg.part_touch, sfx, slot, &cfg.touch_modules)

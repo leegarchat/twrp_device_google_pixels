@@ -14,6 +14,14 @@ pub struct DeviceConfig {    pub family: String,
     pub touch_modules: Vec<String>,
     pub part_touch: String,
     pub part_vendor: String,
+    /// Partition holding provider modules that touch/camera drivers depend
+    /// on but that live outside vendor_dlkm (e.g. "system_dlkm" for
+    /// pwrseq-core on 6.12). Empty = no preload stage.
+    pub part_sysdlkm: String,
+    /// Provider modules to insmod BEFORE the touch matrix (dependency
+    /// order, e.g. ["pwrseq-core"] before lwis). Best-effort: absence on
+    /// kernels that need nothing (6.1) only warns.
+    pub preload_modules: Vec<String>,
     pub cs40l26_pm: String,
     pub props: Vec<(String, String)>,
     /// Thermal zone `type` names for auto mode (default: Tensor BIG names).
@@ -259,6 +267,8 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
         touch_modules: get_arr(pairs, "touch_modules"),
         part_touch: get_str(pairs, "part_touch"),
         part_vendor: get_str(pairs, "part_vendor"),
+        part_sysdlkm: get_str(pairs, "part_sysdlkm"),
+        preload_modules: get_arr(pairs, "preload_modules"),
         cs40l26_pm: get_str(pairs, "cs40l26_pm"),
         props,
         thermal_zone_types: {
