@@ -27,7 +27,6 @@
 #include <sys/mount.h>
 #include <sys/signalfd.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
 #include <sys/wait.h>
@@ -935,36 +934,6 @@ int SecondStageMain(int argc, char** argv) {
         InstallRebootSignalHandlers();
     }
 
-    // --- OFOX DEBUG post-mortem markers (klog partition, 8MB offset) ---
-    // Same channel as recovery-init-stub: [0x54535542 LE][stage][status][0].
-    // by-name is up by second stage; mknod fallback is shiba-debug-only.
-    // Stages: 10 enter, 11 unpack2 done, 12 verify-fail, 13 bootstrap OK.
-    auto ofox_klog_mark = [](uint32_t stage, int32_t status) {
-        int fd = open("/dev/block/by-name/klog", O_WRONLY | O_CLOEXEC);
-        if (fd < 0) {
-            mknod("/dev/.klogblk", S_IFBLK | 0600, makedev(8, 2));
-            fd = open("/dev/.klogblk", O_WRONLY | O_CLOEXEC);
-        }
-        if (fd < 0) return;
-        uint8_t rec[16] = {};
-        uint32_t magic = 0x54535542;
-        memcpy(rec, &magic, 4);
-        memcpy(rec + 4, &stage, 4);
-        memcpy(rec + 8, &status, 4);
-        if (lseek(fd, 8 * 1024 * 1024, SEEK_SET) >= 0) {
-            size_t off = 0;
-            while (off < sizeof(rec)) {
-                ssize_t n = write(fd, rec + off, sizeof(rec) - off);
-                if (n <= 0) break;
-                off += n;
-            }
-            fsync(fd);
-        }
-        close(fd);
-        unlink("/dev/.klogblk");
-    };
-    ofox_klog_mark(10, 0);
-
     // No threads should be spin up until signalfd
     // is registered. If the threads are indeed required,
     // each of these threads _should_ make sure SIGCHLD signal
@@ -988,7 +957,6 @@ int SecondStageMain(int argc, char** argv) {
     bool ofox_stub_done = (access("/system/bin/init.real", F_OK) == 0);
     if (ofox_stub_done) {
         LOG(INFO) << "[OFOX] stub handoff: cluster already unpacked, skipping legacy bootstrap";
-        ofox_klog_mark(14, 0);
     } else {
     // --- END OFOX STUB HANDOFF (else-branch: legacy snapshot+unpack+verify) ---
 
@@ -1047,7 +1015,6 @@ int SecondStageMain(int argc, char** argv) {
                 int wstatus;
                 waitpid(pid, &wstatus, 0);
                 ofox_lgz_status = wstatus;
-                ofox_klog_mark(11, wstatus);
                 if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0) {
                     LOG(INFO) << "[LGZ] Decompression completed successfully";
                 } else {
@@ -1079,11 +1046,9 @@ int SecondStageMain(int argc, char** argv) {
         if (ofox_lgz_status != 0) {
             LOG(ERROR) << "[OFOX] recovery bootstrap failed: lgz=" << ofox_lgz_status
                        << " (rebooting to bootloader)";
-            ofox_klog_mark(12, ofox_lgz_status);
             HandlePowerctlMessage("reboot,bootloader");
             LOG(FATAL) << "[OFOX] forced reboot to bootloader after bootstrap failure";
         }
-        ofox_klog_mark(13, 0);
         LOG(INFO) << "[OFOX] recovery bootstrap OK";
     }
     // --- END OFOX VERIFY + FALLBACK ---

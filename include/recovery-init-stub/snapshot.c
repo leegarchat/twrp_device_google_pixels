@@ -2,12 +2,11 @@
  *
  * C port of include/ramdisk_snapshot/src/main.rs. Same manifest format,
  * same metadata policy (live lstat wins, manifest values on fallback),
- * same vendor_boot sysfs scan + mknod fallback, same debug dumps.
- * Logging goes to stdout/stderr (kmsg at stub time) and to
- * /dev/vendor_boot_snapshot/logs.
+ * same vendor_boot sysfs scan + mknod fallback.
  *
- * Raw syscalls only (open/read/write, no stdio): keeps the static
- * binary free of the stdio/locale footprint.
+ * Raw syscalls only (open/read/write, no stdio): keeps the static binary
+ * free of the stdio/locale footprint. Silent by design (no logging):
+ * failures surface as the return code only.
  */
 
 #include "snapshot.h"
@@ -15,113 +14,21 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
-#include <sys/system_properties.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #define SNAP_VENDOR_BOOT "/dev/vendor_boot_snapshot"
-#define SNAP_LOG_FILE "/dev/vendor_boot_snapshot/logs"
 
-static int g_log_fd = -1;
-
-static void snap_log_raw(int fd, const char* msg, size_t len) {
-    size_t off = 0;
-    while (off < len) {
-        ssize_t n = write(fd, msg + off, len - off);
-        if (n <= 0) break;
-        off += (size_t)n;
-    }
-}
-
-static void snap_out(const char* s, size_t n, int is_err) {
-    snap_log_raw(is_err ? STDERR_FILENO : STDOUT_FILENO, s, n);
-    if (g_log_fd >= 0) snap_log_raw(g_log_fd, s, n);
-}
-
-/* Minimal formatter: %s %u %c %% and %.*s. Unknown verbs pass through. */
-static void snap_log(int is_err, const char* fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    const char* p = fmt;
-    while (*p != '\0') {
-        if (*p != '%') {
-            snap_out(p, 1, is_err);
-            p++;
-            continue;
-        }
-        p++;
-        if (*p == '%') {
-            snap_out("%", 1, is_err);
-            p++;
-        } else if (*p == 's') {
-            const char* s = va_arg(ap, const char*);
-            if (s == NULL) s = "(null)";
-            snap_out(s, strlen(s), is_err);
-            p++;
-        } else if (*p == 'u') {
-            unsigned v = va_arg(ap, unsigned);
-            char num[12];
-            int n = 0;
-            if (v == 0) {
-                num[n++] = '0';
-            } else {
-                char rev[12];
-                int m = 0;
-                while (v > 0) {
-                    rev[m++] = (char)('0' + (v % 10));
-                    v /= 10;
-                }
-                while (m > 0) num[n++] = rev[--m];
-            }
-            snap_out(num, (size_t)n, is_err);
-            p++;
-        } else if (*p == 'c') {
-            char c = (char)va_arg(ap, int);
-            snap_out(&c, 1, is_err);
-            p++;
-        } else if (*p == '.' && p[1] == '*' && p[2] == 's') {
-            int n = va_arg(ap, int);
-            const char* s = va_arg(ap, const char*);
-            if (s == NULL) s = "(null)";
-            if (n < 0) n = 0;
-            size_t avail = strlen(s);
-            if ((size_t)n > avail) n = (int)avail;
-            snap_out(s, (size_t)n, is_err);
-            p += 3;
-        } else {
-            snap_out("%", 1, is_err);
-        }
-    }
-    va_end(ap);
-}
-
-static void log_init(void) {
-    /* Best-effort recreation of the Rust Logger::new path. */
-    char tmp[512];
-    size_t len = strlen(SNAP_VENDOR_BOOT);
-    if (len >= sizeof(tmp)) return;
-    memcpy(tmp, SNAP_VENDOR_BOOT, len + 1);
-    for (char* s = tmp + 1; *s; s++) {
-        if (*s == '/') {
-            *s = '\0';
-            mkdir(tmp, 0755);
-            *s = '/';
-        }
-    }
-    mkdir(tmp, 0755);
-    g_log_fd = open(SNAP_LOG_FILE, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-    if (g_log_fd >= 0) {
-        const char* banner =
-            "\n=========================================\n--- Starting ramdisk_snapshot ---\n=========================================\n";
-        snap_log_raw(g_log_fd, banner, strlen(banner));
-    }
-}
+/* Silent build: all diagnostic logging compiles out. Failures surface
+ * as the snapshot_run return code only. */
+#define snap_log(...) \
+    do {              \
+    } while (0)
 
 /* mkdir -p with per-level chmod (mirrors Rust mkdirs). */
 static void snap_mkdirs(const char* path, unsigned mode) {
@@ -235,47 +142,8 @@ static ssize_t snap_read_file(const char* path, char* buf, size_t cap) {
 }
 
 /* ------------------------------------------------------------------ */
-/* debug dumps                                                         */
+/* debug dumps: compiled out (silent build)                              */
 /* ------------------------------------------------------------------ */
-
-static void snap_dump_file(const char* title, const char* path) {
-    snap_log(0, "\n--- DUMPING %s ---\n", title);
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) {
-        snap_log(1, "[SNAPSHOT] cannot open %s\n", path);
-        return;
-    }
-    char buf[4096];
-    int ended_nl = 1;
-    for (;;) {
-        ssize_t r = read(fd, buf, sizeof(buf));
-        if (r <= 0) break;
-        snap_log(0, "%.*s", (int)r, buf);
-        ended_nl = (buf[r - 1] == '\n');
-    }
-    close(fd);
-    if (!ended_nl) snap_log(0, "\n");
-}
-
-static void snap_prop_read_cb(void* cookie, const char* name, const char* value, uint32_t serial) {
-    (void)cookie;
-    (void)serial;
-    snap_log(0, "[%s]: [%s]\n", name, value);
-}
-
-static void snap_prop_foreach_cb(const prop_info* pi, void* cookie) {
-    __system_property_read_callback(pi, snap_prop_read_cb, cookie);
-}
-
-static void snap_dump_getprop(void) {
-    snap_log(0, "\n--- DUMPING PROPERTIES (Native Bionic) ---\n");
-    /* Returns -1 when the property area is not mapped yet (stub phase):
-     * best-effort, never fatal. */
-    if (__system_property_foreach(snap_prop_foreach_cb, NULL) != 0) {
-        snap_log(1, "[SNAPSHOT] cannot read properties (service not up yet?)\n");
-    }
-    snap_log(0, "--------------------------\n");
-}
 
 static void snap_path_join(char* out, size_t outsz, const char* a, const char* b) {
     size_t i = 0;
@@ -283,67 +151,6 @@ static void snap_path_join(char* out, size_t outsz, const char* a, const char* b
     if (i + 1 < outsz) out[i++] = '/';
     while (*b != '\0' && i + 1 < outsz) out[i++] = *b++;
     out[i] = '\0';
-}
-
-static int snap_find_ufs(char* out, size_t outsz) {
-    DIR* d = opendir("/dev/block/platform");
-    if (d != NULL) {
-        struct dirent* e;
-        while ((e = readdir(d)) != NULL) {
-            if (e->d_name[0] == '.') continue;
-            if (strstr(e->d_name, "ufs") != NULL) {
-                snap_path_join(out, outsz, "/dev/block/platform", e->d_name);
-                closedir(d);
-                return 1;
-            }
-        }
-        closedir(d);
-    }
-    {
-        const char* fb = "/dev/block/platform/13200000.ufs";
-        size_t n = strlen(fb);
-        if (n >= outsz) n = outsz - 1;
-        memcpy(out, fb, n);
-        out[n] = '\0';
-    }
-    return 0;
-}
-
-static void snap_dump_dir(const char* dir_path) {
-    snap_log(0, "[SNAPSHOT] Contents of %s:\n", dir_path);
-    DIR* d = opendir(dir_path);
-    if (d == NULL) {
-        snap_log(0, "  (cannot open directory: %s)\n", strerror(errno));
-        return;
-    }
-    char full[1024];
-    char target[1024];
-    struct dirent* e;
-    while ((e = readdir(d)) != NULL) {
-        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
-        snap_path_join(full, sizeof(full), dir_path, e->d_name);
-        ssize_t n = readlink(full, target, sizeof(target) - 1);
-        if (n >= 0) {
-            target[n] = '\0';
-            snap_log(0, "  - %s -> %s\n", e->d_name, target);
-        } else {
-            snap_log(0, "  - %s\n", e->d_name);
-        }
-    }
-    closedir(d);
-}
-
-static void snap_dump_debug_info(void) {
-    snap_dump_file("/proc/cmdline", "/proc/cmdline");
-    snap_dump_file("/proc/bootconfig", "/proc/bootconfig");
-    snap_dump_getprop();
-    snap_log(0, "\n--- DUMPING TARGET DIRECTORIES ---\n");
-    char ufs[256];
-    if (!snap_find_ufs(ufs, sizeof(ufs))) {
-        snap_log(0, "[SNAPSHOT] Warning: UFS not found, using fallback %s\n", ufs);
-    }
-    snap_dump_dir(ufs);
-    snap_log(0, "----------------------------------\n\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -655,11 +462,7 @@ int snapshot_run(const char* manifest_path, const char* snap_dir) {
     g_ok = 0;
     g_fail = 0;
     g_snap_dir = snap_dir;
-    log_init();
-    snap_dump_debug_info();
     snap_manifest_pass(manifest_path);
     snap_snapshot_vendor_boot();
-    if (g_log_fd >= 0) close(g_log_fd);
-    g_log_fd = -1;
     return g_fail > 0 ? 1 : 0;
 }
