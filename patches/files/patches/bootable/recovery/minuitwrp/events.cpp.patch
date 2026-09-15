@@ -1,6 +1,17 @@
 --- a/bootable/recovery/minuitwrp/events.cpp
 +++ b/bootable/recovery/minuitwrp/events.cpp
-@@ -134,19 +134,109 @@
+@@ -126,7 +126,9 @@
+ static struct ev evs[MAX_DEVICES];
+ static unsigned ev_count = 0;
+ static struct timeval lastInputStat;
+-static time_t lastInputMTime;
++// Full-resolution mtime: second-granular time_t misses input nodes created
++// in the same second as ev_init (late-probing touch on 6.12 never rescanned).
++static struct timespec lastInputMTime;
+ static int has_mouse = 0;
+ 
+ static inline int ABS(int x) {
+@@ -134,19 +136,109 @@
  }
  
  int write_to_file(const std::string& fn, const std::string& line) {
@@ -119,7 +130,7 @@
  int vibrate(int timeout_ms)
  {
      if (timeout_ms > 10000) timeout_ms = 1000;
-@@ -185,8 +275,11 @@
+@@ -185,8 +277,11 @@
      if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good()) {
          write_to_file(LEDS_HAPTICS_DURATION_FILE, tout);
          write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "1");
@@ -132,3 +143,29 @@
  #endif
      return 0;
  }
+@@ -405,7 +500,7 @@
+ 
+     struct stat st;
+     if(stat("/dev/input", &st) >= 0)
+-        lastInputMTime = st.st_mtime;
++        lastInputMTime = st.st_mtim;
+     gettimeofday(&lastInputStat, NULL);
+ 
+     return 0;
+@@ -819,12 +914,14 @@
+     {
+         struct stat st;
+         stat("/dev/input", &st);
+-        if (st.st_mtime > lastInputMTime)
++        if (st.st_mtim.tv_sec > lastInputMTime.tv_sec ||
++            (st.st_mtim.tv_sec == lastInputMTime.tv_sec &&
++             st.st_mtim.tv_nsec > lastInputMTime.tv_nsec))
+         {
+             LOGI("Reloading input devices\n");
+             ev_exit();
+             ev_init();
+-            lastInputMTime = st.st_mtime;
++            lastInputMTime = st.st_mtim;
+         }
+         lastInputStat = curr;
+     }
