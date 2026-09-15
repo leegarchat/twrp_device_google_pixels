@@ -5,6 +5,7 @@
 //! Called as `recovery-pixel-boot boot` from an `on boot` exec (and, during
 //! transition, from the runatboot.sh delegation wrapper).
 
+use crate::config::{load_device_config, DeviceConfig};
 use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg, ko_try_load, score_candidate, detect_kernel_env};
 use crate::props::get_prop;
 use crate::stage::{is_mounted, run_stage};
@@ -24,45 +25,15 @@ fn error(msg: &str) {
     log_msg(TAG, "ERROR", msg);
 }
 
-/// Touch/haptics module set per ro.hardware (1:1 with the old shell table).
-pub fn touch_modules_for_device(code: &str) -> &'static [&'static str] {
-    match code {
-        "panther" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "focal_touch", "fps_touch_handler",
-        ],
-        "cheetah" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "syna_touch", "fps_touch_handler",
-        ],
-        "lynx" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "goodix_brl_touch", "focal_touch",
-            "fps_touch_handler",
-        ],
-        "shiba" | "husky" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "sec_touch", "ftm5", "goodix_brl_touch",
-            "fps_touch_handler",
-        ],
-        "akita" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "goodix_brl_touch", "fps_touch_handler",
-        ],
-        "tokay" | "komodo" | "caiman" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "qbt_handler", "heatmap", "goog_touch_interface", "sec_touch", "syna_touch",
-            "fps_touch_handler",
-        ],
-        "tegu" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "syna_touch", "fps_touch_handler",
-        ],
-        "stallion" => &[
-            "stmvl53l1", "lwis", "cl_dsp-core", "cs40l26-core", "cs40l26-i2c", "goodixfp",
-            "heatmap", "goog_touch_interface", "focal_touch", "fps_touch_handler",
-        ],
-        _ => &[],
+/// Load the device section; unknown codename -> empty (skip like the old
+/// `*` branch), never fatal.
+fn device_config(code: &str) -> DeviceConfig {
+    match load_device_config(code) {
+        Ok(c) => c,
+        Err(e) => {
+            warn(&format!("no config section for {code}: {e}"));
+            DeviceConfig::default()
+        }
     }
 }
 
@@ -106,7 +77,7 @@ fn collect_ko(dir: &Path, module: &str, out: &mut Vec<PathBuf>) {
 
 /// Load wanted modules from an explicit staged-file list (best score first).
 /// Returns the subset of `modules` still missing afterwards.
-fn load_staged(staged: &[PathBuf], modules: &[&str]) -> Vec<String> {
+fn load_staged(staged: &[PathBuf], modules: &[String]) -> Vec<String> {
     let env = detect_kernel_env().ok();
     let mut missing = Vec::new();
     for module in modules {
@@ -150,7 +121,7 @@ fn load_staged(staged: &[PathBuf], modules: &[&str]) -> Vec<String> {
     missing
 }
 
-fn check_modules_loaded(modules: &[&str]) -> bool {
+fn check_modules_loaded(modules: &[String]) -> bool {
     let mut missing = Vec::new();
     for module in modules {
         let name = module.replace('-', "_");
@@ -169,7 +140,7 @@ fn check_modules_loaded(modules: &[&str]) -> bool {
 
 /// Fetch .ko staging for one slot via siw|iw (shell stage), load wanted ones.
 /// Returns true when nothing is missing afterwards.
-fn try_slot(part: &str, sfx: &str, slotnum: &str, modules: &[&str]) -> bool {
+fn try_slot(part: &str, sfx: &str, slotnum: &str, modules: &[String]) -> bool {
     let staged: Vec<PathBuf> = match run_stage("ko-fetch", &[part, sfx, slotnum]) {
         Ok(out) => out
             .lines()
@@ -193,28 +164,28 @@ fn try_slot(part: &str, sfx: &str, slotnum: &str, modules: &[&str]) -> bool {
     false
 }
 
-fn modules_touch_install(suffix: &str, unsuffix: &str, slot: &str, unslot: &str, modules: &[&str]) {
+fn modules_touch_install(cfg: &DeviceConfig, suffix: &str, unsuffix: &str, slot: &str, unslot: &str) {
     let sfx = suffix.trim_start_matches('_');
     let usfx = unsuffix.trim_start_matches('_');
     info(&format!("modules: trying current slot {suffix}"));
     let mut ok = if !sfx.is_empty() {
-        try_slot("vendor_dlkm", sfx, slot, modules)
+        try_slot(&cfg.part_touch, sfx, slot, &cfg.touch_modules)
     } else {
         false
     };
     if !ok && !usfx.is_empty() {
         info(&format!("modules: trying opposite slot {unsuffix}"));
-        ok = try_slot("vendor_dlkm", usfx, unslot, modules);
+        ok = try_slot(&cfg.part_touch, usfx, unslot, &cfg.touch_modules);
     }
     if !ok {
         info("modules: trying fallback /system/modules_touch");
         let mut staged = Vec::new();
-        for m in modules {
+        for m in &cfg.touch_modules {
             collect_ko(Path::new("/system/modules_touch"), m, &mut staged);
         }
-        let _ = load_staged(&staged, modules);
+        let _ = load_staged(&staged, &cfg.touch_modules);
     }
-    if !check_modules_loaded(modules) {
+    if !check_modules_loaded(&cfg.touch_modules) {
         error("modules: final failure, still missing");
     }
     let _ = ok;
@@ -304,14 +275,18 @@ pub fn run_boot() -> Result<(), String> {
         warn("susfs_fix: no usable susfs_rename_fix.ko for this kernel");
     }
 
-    let modules = touch_modules_for_device(&device_code);
-    if !modules.is_empty() {
+    let cfg = device_config(&device_code);
+    info(&format!(
+        "device {device_code} family={} soc={}",
+        cfg.family, cfg.soc_family
+    ));
+    if !cfg.touch_modules.is_empty() {
         // Haptics firmware via siw|iw stages (no mounts in Rust).
         let sfx = suffix.trim_start_matches('_');
         let usfx = unsuffix.trim_start_matches('_');
         let mut fw_ok = false;
         if !sfx.is_empty() {
-            fw_ok = run_stage("fw-fetch", &[sfx, &slot])
+            fw_ok = run_stage("fw-fetch", &[&cfg.part_vendor, sfx, &slot])
                 .map(|o| {
                     info(&format!("vendor_fw: staged files: {o}"));
                     true
@@ -319,20 +294,16 @@ pub fn run_boot() -> Result<(), String> {
                 .unwrap_or(false);
         }
         if !fw_ok && !usfx.is_empty() {
-            fw_ok = run_stage("fw-fetch", &[usfx, &unslot]).is_ok();
+            fw_ok = run_stage("fw-fetch", &[&cfg.part_vendor, usfx, &unslot]).is_ok();
         }
         if !fw_ok {
             warn("vendor_fw: firmware fetch failed on all slots");
         }
 
-        modules_touch_install(&suffix, &unsuffix, &slot, &unslot, modules);
+        modules_touch_install(&cfg, &suffix, &unsuffix, &slot, &unslot);
 
-        let soc = get_prop("ro.recovery.soc_family");
-        let pm = match soc.as_str() {
-            "gs201" => "/sys/devices/platform/10d50000.hsi2c/i2c-0/0-0043/power/control",
-            _ => "/sys/devices/platform/10c80000.hsi2c/i2c-0/0-0043/power/control",
-        };
-        if Path::new(pm).exists() {
+        let pm = cfg.cs40l26_pm.as_str();
+        if !pm.is_empty() && Path::new(pm).exists() {
             let _ = std::fs::write(pm, b"on\n");
             info("haptics: CS40L26 runtime PM set to 'on'");
         }
@@ -361,17 +332,21 @@ mod tests {
 
     #[test]
     fn touch_matrix_spot_check() {
-        assert!(touch_modules_for_device("shiba").contains(&"sec_touch"));
-        assert!(touch_modules_for_device("shiba").contains(&"ftm5"));
-        assert!(touch_modules_for_device("akita").contains(&"goodix_brl_touch"));
-        assert!(!touch_modules_for_device("akita").contains(&"sec_touch"));
-        assert!(touch_modules_for_device("tokay").contains(&"qbt_handler"));
-        assert!(touch_modules_for_device("tegu").contains(&"syna_touch"));
-        assert!(!touch_modules_for_device("tegu").contains(&"sec_touch"));
-        assert!(touch_modules_for_device("stallion").contains(&"focal_touch"));
-        assert!(touch_modules_for_device("panther").contains(&"focal_touch"));
-        assert!(touch_modules_for_device("cheetah").contains(&"syna_touch"));
-        assert!(touch_modules_for_device("unknown").is_empty());
+        // Module lists now come from /pixelrunatboot.json, not code.
+        // Contract check: a shiba-shaped section loads with the right set.
+        let d = std::env::temp_dir().join(format!("fox_test_matrix_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"shiba": {"touch_modules": ["sec_touch", "ftm5", "fps_touch_handler"]}}"#,
+        )
+        .unwrap();
+        let c = crate::config::load_device_config_from(&f, "shiba").unwrap();
+        assert!(c.touch_modules.contains(&"sec_touch".to_string()));
+        assert!(!c.touch_modules.contains(&"syna_touch".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

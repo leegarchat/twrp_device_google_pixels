@@ -4,6 +4,7 @@
 //! data.cpp: family/device props, twrp.flags fix, LGZ zip payload restore,
 //! magiskboot extraction. Called as `recovery-pixel-boot init`.
 
+use crate::config::load_device_config;
 use crate::props::{get_prop, set_prop};
 use crate::stage::run_stage;
 use std::io::Write;
@@ -11,22 +12,11 @@ use std::path::{Path, PathBuf};
 
 const TAG: &str = "runatinit";
 const DBGLOG: &str = "/dev/logs/runatinit.log";
-const PROPS_DIR: &str = "/system/etc/device_props";
 const FLAGS_FILE: &str = "/system/etc/twrp.flags";
 
 fn dlog(log: &mut Option<std::fs::File>, msg: &str) {
     if let Some(f) = log.as_mut() {
         let _ = writeln!(f, "{msg}");
-    }
-}
-
-/// ro.hardware -> SoC family (1:1 with the shell case table).
-pub fn family_for_device(code: &str) -> &'static str {
-    match code {
-        "panther" | "cheetah" | "lynx" | "gs201" => "gs201",
-        "shiba" | "husky" | "akita" | "zuma" => "zuma",
-        "tokay" | "komodo" | "caiman" | "tegu" | "stallion" | "zumapro" => "zumapro",
-        _ => "",
     }
 }
 
@@ -214,18 +204,18 @@ pub fn run_init() -> Result<(), String> {
     );
 
     let device_code = get_prop("ro.hardware");
-    let family = family_for_device(&device_code);
-    dlog(&mut log, &format!("detected family={family}"));
+    let cfg = load_device_config(&device_code).unwrap_or_default();
+    dlog(&mut log, &format!("detected family={}", cfg.family));
     let _ = TAG;
 
     // Props + setenforce + gs201 flags copy (resetprop lives in the stage).
-    match run_stage("props-apply", &[PROPS_DIR, family, &device_code]) {
+    // Pairs come from /pixelrunatboot.json (family-merged at build time).
+    let mut args: Vec<String> = vec![cfg.family.clone()];
+    args.extend(cfg.props.iter().map(|(k, v)| format!("{k}={v}")));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match run_stage("props-apply", &arg_refs) {
         Ok(o) => dlog(&mut log, &format!("props-apply: {o} props")),
         Err(e) => dlog(&mut log, &format!("props-apply FAILED: {e}")),
-    }
-
-    if family == "gs201" && Path::new("/system/etc/twrp_gs201.flags").exists() {
-        let _ = std::fs::copy("/system/etc/twrp_gs201.flags", "/system/etc/twrp.flags");
     }
 
     fix_twrp_flags(&mut log);
@@ -266,14 +256,16 @@ mod tests {
 
     #[test]
     fn family_mapping() {
-        assert_eq!(family_for_device("shiba"), "zuma");
-        assert_eq!(family_for_device("husky"), "zuma");
-        assert_eq!(family_for_device("akita"), "zuma");
-        assert_eq!(family_for_device("zuma"), "zuma");
-        assert_eq!(family_for_device("panther"), "gs201");
-        assert_eq!(family_for_device("tokay"), "zumapro");
-        assert_eq!(family_for_device("stallion"), "zumapro");
-        assert_eq!(family_for_device("unknown"), "");
+        // Family now comes from /pixelrunatboot.json, not code.
+        // Spot-check the contract via the config loader fixture shape.
+        let d = std::env::temp_dir().join(format!("fox_test_fam_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(&f, r#"{"shiba": {"family": "zuma"}}"#).unwrap();
+        let c = crate::config::load_device_config_from(&f, "shiba").unwrap();
+        assert_eq!(c.family, "zuma");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

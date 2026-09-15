@@ -10,6 +10,7 @@
 //! Only std + libc. Exit 0 ok / skip (monolithic kernel), 1 fatal.
 
 mod boot;
+mod config;
 mod i2c;
 mod init;
 mod ko_picker;
