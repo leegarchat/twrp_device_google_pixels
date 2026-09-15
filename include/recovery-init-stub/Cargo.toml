@@ -1,0 +1,20 @@
+[package]
+name = "recovery-init-stub"
+version = "1.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Static PID 1 stub: unpack LGZ cluster, then exec the real AOSP init"
+
+[[bin]]
+name = "recovery_init_stub"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

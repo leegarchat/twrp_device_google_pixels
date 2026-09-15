@@ -93,6 +93,12 @@ PRODUCT_SOONG_NAMESPACES += $(LOCAL_PATH)
 PRODUCT_PACKAGES += \
     ramdisk_snapshot
 
+# Static PID 1 stub: unpacks the LGZ cluster, then execs the real init.
+# Installed as recovery_init_stub; the build callback swaps it over
+# /system/bin/init (real init rides inside the cluster as init.real).
+PRODUCT_PACKAGES += \
+    recovery_init_stub
+
 # Unified Tensor daemon (Rust multicall): Trusty storage proxy (RPMB/UFS)
 # + Titan Mx Weaver HAL proxy. Replaces the former C daemons
 # recovery_storageproxyd and recovery_weaver.
