@@ -143,6 +143,9 @@ LGZ_PACK_DIRS=(
     "system/lib64"
     "twres/fonts"
     "vendor/bin/hw"
+    "system/etc/terminfo"
+    "system/etc/nano"
+    "FFiles"
     # --- experiment examples (uncomment to test) ---
     # "system/lib64/modules"   # hierarchical otg/susfs .ko -> cluster
     # "twres/"                 # whole twres (needs *.png excludes to test)
@@ -158,10 +161,10 @@ LGZ_PACK_DIRS=(
 # Loud fail on invalid JSON — a half-merged config must never ship.
 # =========================================================================
 merge_pixel_config() {
-    local ramdisk_root="$1"
-    python3 - "$SCRIPT_DIR" "$ramdisk_root/pixelrunatboot.json" <<'PYEOF'
+    local ramdisk_root="$1" platform="$2"
+    python3 - "$SCRIPT_DIR" "$ramdisk_root/pixelrunatboot.json" "$platform" <<'PYEOF'
 import json, sys, pathlib
-tree, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+tree, out, platform = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 merged = {}
 for famfile in sorted((tree / 'families').glob('*/family.json')):
     try:
@@ -170,6 +173,7 @@ for famfile in sorted((tree / 'families').glob('*/family.json')):
         print(f'    [PIXELCFG] ERROR: bad family JSON {famfile}: {e}')
         sys.exit(1)
     merged.setdefault('_families', {})[fam['family']] = fam
+n = 0
 for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     dev = pixfile.parent.name
     if dev in merged:
@@ -180,13 +184,17 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     except Exception as e:
         print(f'    [PIXELCFG] ERROR: bad device JSON {pixfile}: {e}')
         sys.exit(1)
+    # Family-scoped image: only this platform's devices ship.
+    if pj.get('family') != platform:
+        continue
     famprops = merged.get('_families', {}).get(pj['family'], {}).get('props', {})
     props = dict(famprops)
     props.update(pj.get('props', {}))
     pj['props'] = props
     merged[dev] = pj
+    n += 1
 out.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + '\n')
-print(f'    [PIXELCFG] merged {len(merged) - 1} devices -> /pixelrunatboot.json')
+print(f'    [PIXELCFG] merged {n} devices (family {platform}) -> /pixelrunatboot.json')
 PYEOF
 }
 
@@ -635,7 +643,7 @@ case "$CALL_TYPE" in
 
         # --- Pixel device config: merge per-device JSON for the Rust engine ---
         echo "    [PIXELCFG] Merging device configs..."
-        merge_pixel_config "$TARGET_DIR" || return 1
+        merge_pixel_config "$TARGET_DIR" "$PLATFORM" || return 1
 
         # --- LGZ: Compress ramdisk binaries for space savings ---
         echo ""

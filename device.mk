@@ -20,17 +20,22 @@ PRODUCT_TARGET_VNDK_VERSION := 34
 # Dynamic Partitions
 PRODUCT_USE_DYNAMIC_PARTITIONS := true
 
-# Recovery ramdisk overlays: the common root/ FIRST, then every per-device
-# overlay. Per-device init stubs live in devices/<codename>/recovery/root/
-# and are picked up here automatically — adding a device needs no mk edit.
-# Family stubs moved to families/<fam>/recovery/root/ (were devices/<fam>/);
-# build.sh exports DEVICE_BUILD_FLAG, so append exactly one family overlay.
+# Recovery ramdisk overlays: the common root/ FIRST, then per-device
+# overlays SCOPED TO THE CURRENT FAMILY (a zuma build must not ship
+# akita/tokay rc files). Per-device init stubs live in
+# devices/<codename>/recovery/root/; family comes from each
+# devices/<codename>/device.conf, so adding a device needs no mk edit.
+# Family stubs live in families/<fam>/recovery/root/; build.sh exports
+# DEVICE_BUILD_FLAG, so append exactly one family overlay.
 # NOTE: keep $(LOCAL_PATH) first: build/make uses TARGET_RECOVERY_DEVICE_DIRS
 # *instead of* (not in addition to) TARGET_DEVICE_DIR/recovery/root.
-TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH) $(wildcard $(LOCAL_PATH)/devices/*)
+_pixel_dev_family = $(shell . $(LOCAL_PATH)/devices/$(1)/device.conf 2>/dev/null; printf '%s' "$$FAMILY")
+TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH)
 ifeq ($(DEVICE_BUILD_FLAG),)
-$(warning pixels: DEVICE_BUILD_FLAG empty, family recovery overlay skipped)
+$(warning pixels: DEVICE_BUILD_FLAG empty, family scoping off - all device overlays included)
+TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/devices/*)
 else
+TARGET_RECOVERY_DEVICE_DIRS += $(foreach d,$(notdir $(wildcard $(LOCAL_PATH)/devices/*)),$(if $(filter $(DEVICE_BUILD_FLAG),$(call _pixel_dev_family,$(d))),$(LOCAL_PATH)/devices/$(d)))
 TARGET_RECOVERY_DEVICE_DIRS += $(LOCAL_PATH)/families/$(DEVICE_BUILD_FLAG)
 endif
 

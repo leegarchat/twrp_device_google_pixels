@@ -50,6 +50,9 @@ device/google/pixels/
 - `families/` — всё общее для SoC (включая family-оверлей
   `families/<fam>/recovery/`). `devices/` — только коденеймы: конфиг,
   device.conf и per-device оверлей того, что отличается у девайса.
+- В образ едут оверлеи **только своей семьи** (`device.mk` фильтрует
+  `devices/*` по `device.conf`, мердж конфига — по полю `family`).
+  Чужих `init.recovery.*.rc` и секций в образе нет.
 - Добавление девайса не требует правок mk: `devices/*` подхватываются
   wildcard'ами (`TARGET_RECOVERY_DEVICE_DIRS`, мердж конфига).
 
