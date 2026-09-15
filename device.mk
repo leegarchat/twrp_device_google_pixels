@@ -21,12 +21,18 @@ PRODUCT_TARGET_VNDK_VERSION := 34
 PRODUCT_USE_DYNAMIC_PARTITIONS := true
 
 # Recovery ramdisk overlays: the common root/ FIRST, then every per-device
-# overlay. Per-device init stubs and props live in
-# devices/<codename>/recovery/root/ and are picked up here automatically —
-# adding a device needs no mk edit.
+# overlay. Per-device init stubs live in devices/<codename>/recovery/root/
+# and are picked up here automatically — adding a device needs no mk edit.
+# Family stubs moved to families/<fam>/recovery/root/ (were devices/<fam>/);
+# build.sh exports DEVICE_BUILD_FLAG, so append exactly one family overlay.
 # NOTE: keep $(LOCAL_PATH) first: build/make uses TARGET_RECOVERY_DEVICE_DIRS
 # *instead of* (not in addition to) TARGET_DEVICE_DIR/recovery/root.
 TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH) $(wildcard $(LOCAL_PATH)/devices/*)
+ifeq ($(DEVICE_BUILD_FLAG),)
+$(warning pixels: DEVICE_BUILD_FLAG empty, family recovery overlay skipped)
+else
+TARGET_RECOVERY_DEVICE_DIRS += $(LOCAL_PATH)/families/$(DEVICE_BUILD_FLAG)
+endif
 
 # Boot control HAL (Pixel-specific implementation)
 PRODUCT_PACKAGES += \
