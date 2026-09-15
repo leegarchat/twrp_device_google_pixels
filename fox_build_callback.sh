@@ -71,6 +71,7 @@ echo "    [CONFIG] LGZ_LEVEL=$LGZ_LEVEL"
 LGZ_EXCLUDE_LIST=(
     "init"
     "lgz"
+    "fox_fbe_kdf"
     # "ramdisk_snapshot"
     # "recovery-pixel-boot"
     # "libstd.dylib.so"

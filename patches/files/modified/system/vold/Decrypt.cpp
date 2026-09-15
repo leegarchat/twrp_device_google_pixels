@@ -20,12 +20,15 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #include <keyutils.h>
 #include "cutils/properties.h"
@@ -471,6 +474,7 @@ namespace keystore {
 #define SYNTHETIC_PASSWORD_VERSION_V1 1
 #define SYNTHETIC_PASSWORD_VERSION_V2 2
 #define SYNTHETIC_PASSWORD_VERSION_V3 3
+#define SYNTHETIC_PASSWORD_VERSION_V4 4
 #define SYNTHETIC_PASSWORD_PASSWORD_BASED 0
 #define SYNTHETIC_PASSWORD_KEY_PREFIX "USRSKEY_synthetic_password_"
 #define USR_PRIVATE_KEY_PREFIX "USRPKEY_synthetic_password_"
@@ -523,7 +527,8 @@ namespace keystore {
 			return disk_decryption_secret_key;
 		unsigned char* byteptr = (unsigned char*)spblob_data.data();
 		if (*byteptr != SYNTHETIC_PASSWORD_VERSION_V2 && *byteptr != SYNTHETIC_PASSWORD_VERSION_V1
-				&& *byteptr != SYNTHETIC_PASSWORD_VERSION_V3) {
+				&& *byteptr != SYNTHETIC_PASSWORD_VERSION_V3
+				&& *byteptr != SYNTHETIC_PASSWORD_VERSION_V4) {
 			printf("Unsupported synthetic password version %i\n", *byteptr);
 			return disk_decryption_secret_key;
 		}
@@ -535,8 +540,12 @@ namespace keystore {
 		}
 		byteptr++; // Now we're pointing to the blob data itself
 		if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V2
-				|| *synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3) {
-			printf("spblob v2 / v3\n");
+				|| *synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3
+				|| *synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V4) {
+			if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V4)
+				printf("spblob v4 (diagnostic: running v2/v3 pipeline)\n");
+			else
+				printf("spblob v2 / v3\n");
 			/* Version 2 / 3 of the spblob is basically the same as version 1, but the order of getting the intermediate key and disk decryption key have been flip-flopped
 			* as seen in https://android.googlesource.com/platform/frameworks/base/+/5025791ac6d1538224e19189397de8d71dcb1a12
 			*/
@@ -604,6 +613,7 @@ namespace keystore {
 			}
 
 			size_t keystore_result_size = optPlaintext->size();
+			printf("v4diag: keystore layer OK, intermediate size=%zu\n", keystore_result_size);
 			unsigned char* keystore_result = (unsigned char*)malloc(keystore_result_size);
 			if (!keystore_result) {
 				printf("malloc on keystore_result\n");
@@ -637,15 +647,366 @@ namespace keystore {
 			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, cipher_size);
 			unsigned char tag[AES_BLOCK_SIZE];
 			EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16, tag);
-			EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
+			int gcm_ok = EVP_DecryptFinal_ex(d_ctx, secret_key + actual_size, &final_size);
+			printf("v4diag: openssl Final rc=%d (1=tag verified)\n", gcm_ok);
+			if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V4) {
+				// Honest GCM check: tag = trailing bytes of the keystore
+				// plaintext, verified against the same key. The main flow
+				// above passes stack garbage as expected tag (always fails).
+				auto try_split = [&](int tag_len) -> int {
+					if (cipher_size <= tag_len) return -9;
+					int csize = cipher_size - tag_len;
+					EVP_CIPHER_CTX* t = EVP_CIPHER_CTX_new();
+					unsigned char* out = (unsigned char*)malloc(csize + 16);
+					if (!out) { EVP_CIPHER_CTX_free(t); return -8; }
+					int o1 = 0, o2 = 0;
+					EVP_DecryptInit(t, EVP_aes_256_gcm(), key,
+							intermediate_iv);
+					EVP_DecryptUpdate(t, out, &o1, intermediate_cipher_text, csize);
+					EVP_CIPHER_CTX_ctrl(t, EVP_CTRL_GCM_SET_TAG, tag_len,
+							(void*)(intermediate_cipher_text + csize));
+					int rc = EVP_DecryptFinal_ex(t, out + o1, &o2);
+					EVP_CIPHER_CTX_free(t);
+					free(out);
+					return rc;
+				};
+				printf("v4diag: honest split16 rc=%d split12 rc=%d (cipher_size=%d)\n",
+						try_split(16), try_split(12), cipher_size);
+			}
 			EVP_CIPHER_CTX_free(d_ctx);
 			free(personalized_application_id);
 			free(keystore_result);
 			int secret_key_real_size = actual_size - 16;
+			printf("v4diag: openssl layer OK, secret size=%d (version=%d)\n",
+					secret_key_real_size, *synthetic_password_version);
 			// printf("secret key:  "); output_hex((const unsigned char*)secret_key, secret_key_real_size); printf("\n");
 			// The payload data from the keystore update is further personalized at https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#153
 			// We now have the disk decryption key!
-			if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3) {
+			if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V4) {
+				// V4 diagnostic: layers 1-2 match V3 (proven by GCM tag),
+				// but no KDF over the 64B secret unlocks. Round 3:
+				// (a) SP800 KDF with HMAC-SHA512 PRF instead of SHA256;
+				// (b) a third GCM layer: S[0:48] ct + S[48:64] tag under
+				// the same key, with KDF candidates over the inner 48B.
+				auto hex_of = [](const unsigned char* b, int n) {
+					std::string h;
+					char tmp[3];
+					for (int i = 0; i < n; i++) {
+						snprintf(tmp, sizeof(tmp), "%02x", b[i]);
+						h += tmp;
+					}
+					return h;
+				};
+				// SHA256 personalization mirror (see HashPassword.cpp).
+				auto sha256_ph = [&](const unsigned char* k, int n) {
+					unsigned char h[SHA256_DIGEST_LENGTH];
+					SHA256_CTX ctx;
+					SHA256_Init(&ctx);
+					const size_t kPad = 128;
+					size_t total = kPad + (size_t)n;
+					unsigned char* buf = (unsigned char*)calloc(1, total);
+					if (!buf) return std::string();
+					memcpy(buf, PERSONALIZATION_FBE_KEY,
+							strlen(PERSONALIZATION_FBE_KEY));
+					memcpy(buf + kPad, k, (size_t)n);
+					SHA256_Update(&ctx, buf, total);
+					SHA256_Final(h, &ctx);
+					free(buf);
+					return hex_of(h, SHA256_DIGEST_LENGTH);
+				};
+				auto try_key = [&](const char* nm, const std::string& k) -> bool {
+					if (k.empty()) return false;
+					printf("v4try: candidate %s (len=%zu)\n", nm, k.size());
+					if (fscrypt_unlock_ce_storage(user_id, k)) {
+						printf("v4try: candidate %s UNLOCKED\n", nm);
+						disk_decryption_secret_key = k;
+						return true;
+					}
+					printf("v4try: candidate %s failed\n", nm);
+					return false;
+				};
+				// (a) SP800-108 counter mode, HMAC-SHA512 PRF, L=256.
+				{
+					HMAC_CTX ctx;
+					HMAC_CTX_init(&ctx);
+					HMAC_Init_ex(&ctx, secret_key, secret_key_real_size,
+							EVP_sha512(), NULL);
+					unsigned int counter = 1;
+					endianswap(&counter);
+					HMAC_Update(&ctx, (const unsigned char*)&counter, 4);
+					HMAC_Update(&ctx, (const unsigned char*)PERSONALIZATION_FBE_KEY,
+							strlen(PERSONALIZATION_FBE_KEY));
+					const unsigned char divider = 0;
+					HMAC_Update(&ctx, &divider, 1);
+					HMAC_Update(&ctx, (const unsigned char*)PERSONALISATION_CONTEXT,
+							strlen(PERSONALISATION_CONTEXT));
+					unsigned int ctxdis = strlen(PERSONALISATION_CONTEXT) * 8;
+					endianswap(&ctxdis);
+					HMAC_Update(&ctx, (const unsigned char*)&ctxdis, 4);
+					unsigned int finalValue = 256;
+					endianswap(&finalValue);
+					HMAC_Update(&ctx, (const unsigned char*)&finalValue, 4);
+					unsigned char out64[SHA512_DIGEST_LENGTH];
+					unsigned int out_size = 0;
+					HMAC_Final(&ctx, out64, &out_size);
+					unsigned char first32[32];
+					memcpy(first32, out64, 32);
+					if (try_key("SP800-SHA512", hex_of(first32, 32))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+				}
+				// (b) inner GCM layer probe.
+				int inner_rc = -99;
+				unsigned char inner[64];
+				int inner_len = 0;
+				if (secret_key_real_size == 64) {
+					EVP_CIPHER_CTX* t = EVP_CIPHER_CTX_new();
+					int o1 = 0, o2 = 0;
+					EVP_DecryptInit(t, EVP_aes_256_gcm(), key, intermediate_iv);
+					EVP_DecryptUpdate(t, inner, &o1, secret_key, 48);
+					EVP_CIPHER_CTX_ctrl(t, EVP_CTRL_GCM_SET_TAG, 16,
+							(void*)(secret_key + 48));
+					inner_rc = EVP_DecryptFinal_ex(t, inner + o1, &o2);
+					EVP_CIPHER_CTX_free(t);
+					inner_len = o1;
+				}
+				printf("v4diag: inner GCM rc=%d inner_len=%d\n", inner_rc, inner_len);
+				if (inner_rc == 1 && inner_len > 0) {
+					int ihalf = inner_len / 2;
+					if (try_key("IN-SP800", PersonalizedHashSP800(PERSONALIZATION_FBE_KEY,
+							PERSONALISATION_CONTEXT, (const char*)inner, inner_len))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("IN-PH", PersonalizedHash(PERSONALIZATION_FBE_KEY,
+							(const char*)inner, inner_len))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("IN-hex", hex_of(inner, inner_len))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("IN-SP800-half", PersonalizedHashSP800(PERSONALIZATION_FBE_KEY,
+							PERSONALISATION_CONTEXT, (const char*)inner, ihalf))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("IN-hex-half", hex_of(inner, ihalf))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("IN-PH-SHA256", sha256_ph(inner, inner_len))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+				}
+				// Original 8 candidates (kept for completeness).
+				// Round 4: treat the 64B secret as ASCII hex (V3 stores the
+				// SP hex-encoded) -> decode to 32B, then KDF; plus KDF
+				// compositions and half-XOR. All computed locally, secrets
+				// never logged.
+				auto unhex = [&](const unsigned char* b, int n,
+						unsigned char* out) -> int {
+					if (n <= 0 || (n & 1)) return -1;
+					for (int i = 0; i < n; i += 2) {
+						auto hv = [](unsigned char c) -> int {
+							if (c >= '0' && c <= '9') return c - '0';
+							if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+							if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+							return -1;
+						};
+						int hi = hv(b[i]), lo = hv(b[i + 1]);
+						if (hi < 0 || lo < 0) return -1;
+						out[i / 2] = (unsigned char)((hi << 4) | lo);
+					}
+					return n / 2;
+				};
+				unsigned char decoded[64];
+				int declen = unhex(secret_key, secret_key_real_size, decoded);
+				printf("v4diag: secret unhex %s (%d bytes)\n",
+						declen > 0 ? "OK" : "not-hex", declen);
+				if (declen > 0) {
+					if (try_key("UNHEX-SP800", PersonalizedHashSP800(PERSONALIZATION_FBE_KEY,
+							PERSONALISATION_CONTEXT, (const char*)decoded, declen))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("UNHEX-PH", PersonalizedHash(PERSONALIZATION_FBE_KEY,
+							(const char*)decoded, declen))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("UNHEX-hex", hex_of(decoded, declen))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("UNHEX-SHA256", sha256_ph(decoded, declen))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+				}
+				{
+					// SP800 over PH-output and vice versa (nested KDF).
+					std::string ph = PersonalizedHash(PERSONALIZATION_FBE_KEY,
+							(const char*)secret_key, secret_key_real_size);
+					if (!ph.empty() && try_key("SP800-over-PH", PersonalizedHashSP800(
+							PERSONALIZATION_FBE_KEY, PERSONALISATION_CONTEXT,
+							ph.c_str(), ph.size()))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					std::string sp = PersonalizedHashSP800(PERSONALIZATION_FBE_KEY,
+							PERSONALISATION_CONTEXT, (const char*)secret_key,
+							secret_key_real_size);
+					if (!sp.empty() && try_key("PH-over-SP800", PersonalizedHash(
+							PERSONALIZATION_FBE_KEY, sp.c_str(), sp.size()))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+				}
+				if (secret_key_real_size == 64) {
+					// XOR halves -> 32B, then KDFs.
+					unsigned char x[32];
+					for (int i = 0; i < 32; i++) x[i] = secret_key[i] ^ secret_key[i + 32];
+					if (try_key("XOR-hex", hex_of(x, 32))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("XOR-SP800", PersonalizedHashSP800(PERSONALIZATION_FBE_KEY,
+							PERSONALISATION_CONTEXT, (const char*)x, 32))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					if (try_key("XOR-PH", PersonalizedHash(PERSONALIZATION_FBE_KEY,
+							(const char*)x, 32))) {
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+				}
+				std::string cands[4];
+				cands[0] = PersonalizedHash(PERSONALIZATION_FBE_KEY,
+						(const char*)secret_key, secret_key_real_size);
+				cands[1] = hex_of(secret_key, secret_key_real_size);
+				int half = secret_key_real_size / 2;
+				cands[2] = PersonalizedHashSP800(PERSONALIZATION_FBE_KEY, PERSONALISATION_CONTEXT,
+						(const char*)secret_key, half);
+				cands[3] = PersonalizedHash(PERSONALIZATION_FBE_KEY,
+						(const char*)secret_key, half);
+				const char* names[4] = {"PH-SHA512", "hex-raw", "SP800-half", "PH-half"};
+				std::string cands2[4];
+				cands2[0] = hex_of(secret_key, half);
+				cands2[1] = hex_of(secret_key + half,
+						secret_key_real_size - half);
+				cands2[2] = sha256_ph(secret_key, secret_key_real_size);
+				cands2[3] = sha256_ph(secret_key, half);
+				const char* names2[4] = {"hex-first-half", "hex-second-half",
+						"PH-SHA256", "PH-SHA256-half"};
+				for (int i = 0; i < 4; i++) {
+					if (cands[i].empty()) continue;
+					printf("v4try: candidate %s (len=%zu)\n", names[i], cands[i].size());
+					if (fscrypt_unlock_ce_storage(user_id, cands[i])) {
+						printf("v4try: candidate %s UNLOCKED\n", names[i]);
+						disk_decryption_secret_key = cands[i];
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					printf("v4try: candidate %s failed\n", names[i]);
+				}
+				for (int i = 0; i < 4; i++) {
+					if (cands2[i].empty()) continue;
+					printf("v4try: candidate %s (len=%zu)\n", names2[i], cands2[i].size());
+					if (fscrypt_unlock_ce_storage(user_id, cands2[i])) {
+						printf("v4try: candidate %s UNLOCKED\n", names2[i]);
+						disk_decryption_secret_key = cands2[i];
+						free(secret_key);
+						return disk_decryption_secret_key;
+					}
+					printf("v4try: candidate %s failed\n", names2[i]);
+				}
+				// KDF playground: external helper driven by a text config.
+				// /tmp/fox_kdf.conf wins (adb-pushable, zero rebuilds),
+				// then /system/etc/fox_kdf.conf. Each line = one pipeline
+				// for fox_fbe_kdf <secret-hex> "<pipeline>".
+				{
+					auto run_kdf = [&](const char* expr,
+							const std::string& shex) -> std::string {
+						int fds[2];
+						if (pipe(fds) != 0) return std::string();
+						pid_t pid = fork();
+						if (pid < 0) {
+							close(fds[0]);
+							close(fds[1]);
+							return std::string();
+						}
+						if (pid == 0) {
+							dup2(fds[1], STDOUT_FILENO);
+							close(fds[0]);
+							close(fds[1]);
+							execl("/system/bin/fox_fbe_kdf", "fox_fbe_kdf",
+									shex.c_str(), expr, nullptr);
+							_exit(127);
+						}
+						close(fds[1]);
+						std::string out;
+						char buf[256];
+						ssize_t r;
+						while ((r = read(fds[0], buf, sizeof(buf))) > 0)
+							out.append(buf, (size_t)r);
+						close(fds[0]);
+						int st = 0;
+						waitpid(pid, &st, 0);
+						if (!WIFEXITED(st) || WEXITSTATUS(st) != 0)
+							return std::string();
+						while (!out.empty() && (out.back() == '\n' || out.back() == '\r'
+								|| out.back() == ' ' || out.back() == '\t'))
+							out.pop_back();
+						if (out.size() < 2 || (out.size() & 1)) return std::string();
+						for (char c : out) {
+							if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+									|| (c >= 'A' && c <= 'F')))
+								return std::string();
+						}
+						return out;
+					};
+					std::string shex = hex_of(secret_key, secret_key_real_size);
+					std::vector<std::string> exprs;
+					const char* confs[2] = {"/tmp/fox_kdf.conf", "/system/etc/fox_kdf.conf"};
+					for (int ci = 0; ci < 2 && exprs.empty(); ci++) {
+						FILE* f = fopen(confs[ci], "r");
+						if (!f) continue;
+						char line[512];
+						while (fgets(line, sizeof(line), f)) {
+							std::string e = line;
+							while (!e.empty() && (e.back() == '\n' || e.back() == '\r'
+									|| e.back() == ' ' || e.back() == '\t'))
+								e.pop_back();
+							size_t s = 0;
+							while (s < e.size() && (e[s] == ' ' || e[s] == '\t')) s++;
+							e = e.substr(s);
+							if (e.empty() || e[0] == '#') continue;
+							if (exprs.size() >= 32) break;
+							exprs.push_back(e);
+						}
+						fclose(f);
+						if (!exprs.empty())
+							printf("v4try: playground %s (%zu exprs)\n", confs[ci], exprs.size());
+					}
+					for (auto& e : exprs) {
+						std::string cand = run_kdf(e.c_str(), shex);
+						if (cand.empty()) {
+							printf("v4try: helper failed for: %s\n", e.c_str());
+							continue;
+						}
+						if (try_key(e.c_str(), cand)) {
+							free(secret_key);
+							return disk_decryption_secret_key;
+						}
+					}
+				}
+				printf("v4try: all candidates failed\n");
+			} else if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3) {
 				// V3 uses SP800 instead of SHA512
 				disk_decryption_secret_key = PersonalizedHashSP800(PERSONALIZATION_FBE_KEY, PERSONALISATION_CONTEXT, (const char*)secret_key, secret_key_real_size);
 			} else {

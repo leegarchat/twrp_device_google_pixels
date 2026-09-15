@@ -99,6 +99,12 @@ PRODUCT_SOONG_NAMESPACES += $(LOCAL_PATH)
 PRODUCT_PACKAGES += \
     recovery_init_stub
 
+# FBE KDF playground: external helper for V4 synthetic-password research.
+# Called by vold Decrypt with pipelines from fox_kdf.conf; static so it
+# also runs standalone via adb for fast iteration without rebuilds.
+PRODUCT_PACKAGES += \
+    fox_fbe_kdf
+
 # Unified Tensor daemon (Rust multicall): Trusty storage proxy (RPMB/UFS)
 # + Titan Mx Weaver HAL proxy. Replaces the former C daemons
 # recovery_storageproxyd and recovery_weaver.

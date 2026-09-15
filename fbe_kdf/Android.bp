@@ -1,0 +1,15 @@
+// Soong build for the FBE KDF playground binary (recovery only).
+cc_binary {
+    name: "fox_fbe_kdf",
+    srcs: ["fox_fbe_kdf.c"],
+    recovery: true,
+    static_executable: true,
+    stl: "none",
+    static_libs: ["libcrypto_static"],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wno-unused-parameter",
+    ],
+}
