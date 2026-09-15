@@ -1,4 +1,4 @@
-# twrp.flags — Tensor G3/G4 (zuma / zumapro) | UFS @ 13200000
+# twrp.flags — Tensor G4 (zumapro) | UFS @ 13200000
 # Verified against Pixel 8 (shiba) live partition table, 2026-03-19.
 #
 # mount point         fstype  device                                                             flags

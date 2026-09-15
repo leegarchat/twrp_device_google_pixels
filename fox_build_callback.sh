@@ -553,22 +553,29 @@ case "$CALL_TYPE" in
         echo "=== [zuma] fox_build_callback: --second-call ==="
         echo "    Ramdisk: $TARGET_DIR (final, pre-cpio)"
 
-        # --- Per-platform twrp.flags injection ---
-        # GS201 uses UFS controller at 14700000 (vs 13200000 for zuma/zumapro).
-        # The default twrp.flags uses 13200000.ufs paths; the gs201 variant
-        # lives in families/gs201/ (not in the shared overlay) and is copied
-        # over the default only for gs201 builds.
+        # --- Per-family twrp.flags injection ---
+        # Every family ships its own families/<fam>/twrp.flags (UFS paths
+        # differ per SoC); the ramdisk default is replaced unconditionally.
         platform="$PLATFORM"
-        if [ "$platform" = "gs201" ]; then
-            gs201_flags="$SCRIPT_DIR/families/gs201/twrp_gs201.flags"
-            default_flags="$TARGET_DIR/system/etc/twrp.flags"
-            if [ -f "$gs201_flags" ]; then
-                echo "    [PLATFORM] Injecting twrp.flags for gs201 (UFS 14700000)"
-                cp -f "$gs201_flags" "$default_flags"
-            else
-                echo "    [PLATFORM] ERROR: gs201 flags missing: $gs201_flags"
-            fi
+        fam_flags="$SCRIPT_DIR/families/$platform/twrp.flags"
+        default_flags="$TARGET_DIR/system/etc/twrp.flags"
+        if [ -f "$fam_flags" ]; then
+            echo "    [PLATFORM] Injecting twrp.flags for $platform"
+            cp -f "$fam_flags" "$default_flags"
+        else
+            echo "    [PLATFORM] ERROR: family flags missing: $fam_flags"
         fi
+
+        # --- Per-device twrp.flags overrides ---
+        # A device may ship devices/<codename>/twrp.flags; the builder
+        # stores it as /system/etc/<device>.twrp.flags and the Rust init
+        # swaps it over the default once ro.hardware is known.
+        for dev_flags in "$SCRIPT_DIR"/devices/*/twrp.flags; do
+            [ -f "$dev_flags" ] || continue
+            dev=$(basename "$(dirname "$dev_flags")")
+            cp -f "$dev_flags" "$TARGET_DIR/system/etc/${dev}.twrp.flags"
+            echo "    [PLATFORM]   + device override: ${dev}.twrp.flags"
+        done
 
         # --- Per-platform keymint binary injection ---
         # Zuma/Zumapro use the shared prebuilt Rust keymint from

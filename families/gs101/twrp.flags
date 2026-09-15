@@ -1,4 +1,4 @@
-# twrp_gs201.flags — Tensor G2 (gs201 / Pixel 7 family) + G1 (gs101 / Pixel 6 family) | UFS @ 14700000
+# twrp.flags — Tensor G1 (gs101) | UFS @ 14700000
 # Structure identical to twrp.flags, only UFS controller address differs: 14700000 vs 13200000.
 #
 # mount point         fstype  device                                                             flags

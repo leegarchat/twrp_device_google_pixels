@@ -59,6 +59,24 @@ pub fn patch_otg_line(line: &str, next: char) -> String {
     out
 }
 
+/// Device override: /system/etc/<device>.twrp.flags (placed by the builder
+/// from devices/<codename>/twrp.flags) wins over the family default.
+/// Must run after props reveal ro.hardware, before fix_twrp_flags.
+/// Returns true when an override was applied.
+pub fn swap_device_flags(etc_dir: &Path, device: &str) -> bool {
+    if device.is_empty() {
+        return false;
+    }
+    let src = etc_dir.join(format!("{device}.twrp.flags"));
+    if !src.is_file() {
+        return false;
+    }
+    if std::fs::copy(&src, etc_dir.join("twrp.flags")).is_ok() {
+        crate::ko_picker::log_msg("boot", "INFO", &format!("twrp.flags: device override {device}"));
+        return true;
+    }
+    false
+}
 /// Decide whether a twrp.flags line survives the by-name prune.
 /// `exists` checks a partition base name against /dev/block by-name.
 pub fn keep_flags_line(line: &str, exists: &dyn Fn(&str) -> bool) -> bool {
@@ -218,6 +236,13 @@ pub fn run_init() -> Result<(), String> {
         Err(e) => dlog(&mut log, &format!("props-apply FAILED: {e}")),
     }
 
+    // Device override (<device>.twrp.flags from devices/<codename>/) wins
+    // over the family default; runs after props reveal ro.hardware and
+    // before fix_twrp_flags patches/prunes the file.
+    if swap_device_flags(Path::new("/system/etc"), &device_code) {
+        dlog(&mut log, &format!("device flags override: {device_code}"));
+    }
+
     fix_twrp_flags(&mut log);
     // NOTE: no lgz_decompress_zips step. The solid UCOMP02 cluster ingests
     // *.zip transparently at build time and `lgz decompress` (init.cpp)
@@ -290,6 +315,20 @@ mod tests {
         // Letter with no partition number still rewrites.
         let no_num = "/usb_otg vfat /dev/block/sdc flags";
         assert_eq!(patch_otg_line(no_num, 'd'), "/usb_otg vfat /dev/block/sdd1 flags");
+    }
+
+    #[test]
+    fn device_override_swap() {
+        let d = std::env::temp_dir().join(format!("fox_test_swap_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("twrp.flags"), b"FAMILY").unwrap();
+        std::fs::write(d.join("shiba.twrp.flags"), b"DEVICE").unwrap();
+        assert!(swap_device_flags(&d, "shiba"));
+        assert_eq!(std::fs::read(&d.join("twrp.flags")).unwrap(), b"DEVICE");
+        assert!(!swap_device_flags(&d, "husky"));
+        assert!(!swap_device_flags(&d, ""));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
