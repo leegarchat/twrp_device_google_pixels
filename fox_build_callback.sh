@@ -141,11 +141,12 @@ LGZ_PACK_DIRS=(
     "sbin"
     "system/bin"
     "system/lib64"
-    "twres/fonts"
+    # "twres/fonts"
     "vendor/bin/hw"
     "system/etc/terminfo"
     "system/etc/nano"
     "FFiles"
+    "twres"
     # --- experiment examples (uncomment to test) ---
     # "system/lib64/modules"   # hierarchical otg/susfs .ko -> cluster
     # "twres/"                 # whole twres (needs *.png excludes to test)
@@ -378,10 +379,41 @@ lgz_compress_ramdisk() {
         scan_roots=("$ramdisk_root")
     fi
 
+    # Normalize roots: drop exact duplicates and roots nested under another
+    # listed root (e.g. PACK_DIRS=("twres/fonts" "twres") would scan the
+    # fonts twice and the pack tool fails on the duplicate manifest path).
+    if [ "$dirs_mode" -eq 1 ] && [ "${#scan_roots[@]}" -gt 0 ]; then
+        local _clean=() _r _s _skip
+        for _r in "${scan_roots[@]}"; do
+            _skip=0
+            for _s in "${scan_roots[@]}"; do
+                if [ "$_r" != "$_s" ] && [[ "$_r/" == "$_s/"* ]]; then
+                    echo "    [LGZ] dirs: covered by parent root, skipped: ${_r#$ramdisk_root/}"
+                    _skip=1
+                    break
+                fi
+            done
+            if [ "$_skip" -eq 0 ]; then
+                for _s in "${_clean[@]}"; do
+                    if [ "$_r" = "$_s" ]; then _skip=1; break; fi
+                done
+                [ "$_skip" -eq 1 ] && echo "    [LGZ] dirs: duplicate root skipped: ${_r#$ramdisk_root/}"
+            fi
+            [ "$_skip" -eq 0 ] && _clean+=("$_r")
+        done
+        scan_roots=("${_clean[@]}")
+        if [ "${#scan_roots[@]}" -eq 0 ]; then
+            echo "    [LGZ] dirs: no valid dirs after dedup — keeping originals"
+            rm -f "$pack_manifest" "$packed_list"
+            return 0
+        fi
+    fi
+
     # Walk the roots: every regular file joins the
     # cluster unless excluded. *.zip goes through transparent ingestion
     # (DFE.zip gets its NEO.config patched BEFORE packing).
     echo "    [LGZ] Scanning ramdisk tree..."
+    declare -A LGZ_SEEN=()
     while IFS= read -r filepath; do
         local relpath="${filepath#$ramdisk_root/}"
 
@@ -389,6 +421,14 @@ lgz_compress_ramdisk() {
         if lgz_is_excluded "$filepath" "$relpath"; then
             continue
         fi
+
+        # Belt and suspenders: never emit one relpath twice (overlapping
+        # roots, symlink loops) — the pack tool hard-fails on duplicates.
+        if [[ -n "${LGZ_SEEN[$relpath]+x}" ]]; then
+            echo "    [LGZ] WARNING: duplicate path skipped: $relpath"
+            continue
+        fi
+        LGZ_SEEN["$relpath"]=1
 
         case "$filepath" in
             *.zip)
