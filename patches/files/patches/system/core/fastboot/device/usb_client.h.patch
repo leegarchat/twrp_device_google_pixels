@@ -1,0 +1,14 @@
+--- a/system/core/fastboot/device/usb_client.h
++++ b/system/core/fastboot/device/usb_client.h
+@@ -34,5 +34,11 @@
+   private:
+     std::unique_ptr<usb_handle> handle_;
+ 
++    // Set when a write proves the host is gone (error or 10s stall). While
++    // set, writes fail fast instead of parking the daemon in io_getevents
++    // once per swallowed response; cleared by the next completed read, which
++    // proves a live host is polling again.
++    bool write_broken_ = false;
++
+     DISALLOW_COPY_AND_ASSIGN(ClientUsbTransport);
+ };

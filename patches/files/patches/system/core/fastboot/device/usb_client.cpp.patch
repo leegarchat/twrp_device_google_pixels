@@ -1,0 +1,77 @@
+--- a/system/core/fastboot/device/usb_client.cpp
++++ b/system/core/fastboot/device/usb_client.cpp
+@@ -271,6 +271,10 @@
+             break;
+         }
+     }
++    if (bytes_read_total > 0) {
++        // A completed read proves a live host: lift any write fail-fast state.
++        write_broken_ = false;
++    }
+     return bytes_read_total;
+ }
+ 
+@@ -278,12 +282,24 @@
+     if (handle_ == nullptr || len > SSIZE_MAX) {
+         return -1;
+     }
++    if (write_broken_) {
++        // A previous write already proved the host is gone; fail fast so the
++        // daemon returns to Read (where a new host's command un-wedges it)
++        // instead of stalling once per swallowed response.
++        return -1;
++    }
+     const char* char_data = reinterpret_cast<const char*>(data);
+     size_t bytes_written_total = 0;
+     while (bytes_written_total < len) {
+         auto bytes_to_write = std::min(len - bytes_written_total, kFbFfsNumBufs * kFbFfsBufSize);
+         auto bytes_written_now = handle_->write(handle_.get(), char_data, bytes_to_write);
+         if (bytes_written_now < 0) {
++            // Write failures are swallowed by most command handlers (e.g. the
++            // per-variable WriteInfo calls of "getvar all"), so the transport
++            // must recover here: otherwise the daemon parks in the next Read
++            // on wedged endpoints and never answers again.
++            Reset();
++            write_broken_ = true;
+             return bytes_written_total == 0 ? -1 : bytes_written_total;
+         }
+         bytes_written_total += bytes_written_now;
+@@ -304,5 +320,36 @@
+ }
+ 
+ int ClientUsbTransport::Reset() {
++    if (handle_ == nullptr) {
++        return -1;
++    }
++    if (handle_->aio_type == AIOType::IO_URING) {
++        // The io_uring ring references the old fds; reopening them here would
++        // silently break it. Fall through to the legacy reconstruct path.
++        LOG(ERROR) << "ClientUsbTransport: no kick support for io_uring transport";
++        return -1;
++    }
++    LOG(WARNING) << "ClientUsbTransport: kicking wedged USB transport";
++    ClearEndpointHalt(handle_.get());
++    // Drop the fds first so any stuck kernel requests are cancelled, then
++    // rebuild the aio contexts so stale completions never leak into the next
++    // io_getevents batch.
++    handle_->bulk_out.reset();
++    handle_->bulk_in.reset();
++    ReinitAioBlocks(handle_.get());
++    // Reopen bulk endpoints (same as the InitFunctionFs reopen branch above;
++    // control fd stays open, no descriptor rewrite, host never re-enumerates).
++    handle_->bulk_out.reset(open(kUsbFfsFastbootOut, O_RDONLY));
++    if (handle_->bulk_out < 0) {
++        PLOG(ERROR) << "cannot reopen bulk-out endpoint " << kUsbFfsFastbootOut;
++        return -1;
++    }
++    handle_->bulk_in.reset(open(kUsbFfsFastbootIn, O_WRONLY));
++    if (handle_->bulk_in < 0) {
++        PLOG(ERROR) << "cannot reopen bulk-in endpoint " << kUsbFfsFastbootIn;
++        return -1;
++    }
++    handle_->read_aiob.fd = handle_->bulk_out.get();
++    handle_->write_aiob.fd = handle_->bulk_in.get();
+     return 0;
+-}
+\ No newline at end of file
++}

@@ -218,8 +218,16 @@ void FastbootDevice::ExecuteCommands() {
     for (;;) {
         auto bytes_read = transport_->Read(command, FB_RESPONSE_SZ);
         if (bytes_read == -1) {
-            PLOG(ERROR) << "Couldn't read command";
-            return;
+            // A dead read usually means the host went away mid-transfer and
+            // left the endpoints wedged. Kick the transport and keep serving
+            // instead of reconstructing the whole device (which re-sets
+            // sys.usb.ffs.ready and restorms init triggers).
+            PLOG(ERROR) << "Couldn't read command; resetting transport";
+            if (transport_->Reset() != 0) {
+                PLOG(ERROR) << "Transport reset failed; leaving command loop";
+                return;
+            }
+            continue;
         }
         if (std::count_if(command, command + bytes_read, iscntrl) != 0) {
             WriteStatus(FastbootResult::FAIL,

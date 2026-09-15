@@ -1,0 +1,14 @@
+--- a/system/core/fastboot/device/usb.h
++++ b/system/core/fastboot/device/usb.h
+@@ -65,4 +65,11 @@
+     AIOType aio_type;
+ };
+ 
++// Recovery helpers for a wedged FunctionFS transport (see usb.cpp).
++// ClearEndpointHalt issues FUNCTIONFS_CLEAR_HALT on both bulk endpoints.
++// ReinitAioBlocks tears down and rebuilds both aio contexts (AIO type only)
++// so stale completions never leak into the next io_getevents batch.
++void ClearEndpointHalt(usb_handle* h);
++void ReinitAioBlocks(usb_handle* h);
++
+ std::unique_ptr<usb_handle> create_usb_handle(unsigned num_bufs, unsigned io_size);

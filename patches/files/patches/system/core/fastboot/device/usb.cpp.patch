@@ -1,0 +1,77 @@
+--- a/system/core/fastboot/device/usb.cpp
++++ b/system/core/fastboot/device/usb.cpp
+@@ -25,6 +25,7 @@
+ #include <sys/ioctl.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <time.h>
+ #include <unistd.h>
+ 
+ #include <linux/usb/ch9.h>
+@@ -153,9 +154,25 @@
+             PLOG(ERROR) << "aio: got error submitting " << (read ? "read" : "write");
+             return -1;
+         }
+-        if (TEMP_FAILURE_RETRY(io_getevents(aiob->ctx, num_bufs, num_bufs, aiob->events.data(),
+-                                            nullptr)) < num_bufs) {
+-            PLOG(ERROR) << "aio: got error waiting " << (read ? "read" : "write");
++        // Bound the write wait: a bulk-IN transfer only completes while the
++        // host keeps polling, so 10s with zero completions means the host is
++        // gone (killed client, dropped cable). Without this, a dead host
++        // parks the daemon in io_getevents forever. Reads stay unbounded:
++        // idling for hours waiting for the next command is normal.
++        struct timespec timeout_ts {};
++        struct timespec* timeout_ptr = nullptr;
++        if (!read) {
++            timeout_ts.tv_sec = 10;
++            timeout_ptr = &timeout_ts;
++        }
++        int got_events = TEMP_FAILURE_RETRY(io_getevents(aiob->ctx, num_bufs, num_bufs,
++                                                          aiob->events.data(), timeout_ptr));
++        if (got_events < num_bufs) {
++            if (!read && got_events == 0) {
++                LOG(ERROR) << "aio: write stalled, host appears gone";
++            } else {
++                PLOG(ERROR) << "aio: got error waiting " << (read ? "read" : "write");
++            }
+             return -1;
+         }
+         if (num_bufs == 1 && aiob->events[0].res == -EINTR) {
+@@ -209,6 +226,37 @@
+     }
+ }
+ 
++// Kick a wedged FunctionFS transport back to life (mirrors the kick in
++// adb/daemon/usb_legacy.cpp). A host-side abort mid-transfer (killed fastboot
++// client, dropped cable, SIGPIPE) can leave the bulk endpoints in a state
++// where no further read/write ever completes: the daemon stays alive and USB
++// stays enumerated, but it never answers again. Recovery clears any endpoint
++// halt; the caller (ClientUsbTransport::Reset) then drops and reopens both
++// bulk fds and rebuilds the aio contexts. The control fd is deliberately left
++// open, so no descriptor rewrite (EBUSY while bound) is needed and the host
++// never re-enumerates.
++void ClearEndpointHalt(usb_handle* h) {
++    if (h->bulk_in.get() >= 0) {
++        if (ioctl(h->bulk_in.get(), FUNCTIONFS_CLEAR_HALT) < 0) {
++            PLOG(WARNING) << "failed to clear halt on bulk-in endpoint";
++        }
++    }
++    if (h->bulk_out.get() >= 0) {
++        if (ioctl(h->bulk_out.get(), FUNCTIONFS_CLEAR_HALT) < 0) {
++            PLOG(WARNING) << "failed to clear halt on bulk-out endpoint";
++        }
++    }
++}
++
++void ReinitAioBlocks(usb_handle* h) {
++    if (h->aio_type != AIOType::AIO) {
++        return;
++    }
++    TEMP_FAILURE_RETRY(io_destroy(h->read_aiob.ctx));
++    TEMP_FAILURE_RETRY(io_destroy(h->write_aiob.ctx));
++    aio_block_init(&h->read_aiob, h->read_aiob.iocbs.size());
++    aio_block_init(&h->write_aiob, h->write_aiob.iocbs.size());
++}
+ 
+ bool DoesKernelSupportIouring() {
+     struct utsname uts {};
