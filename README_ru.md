@@ -2,8 +2,10 @@
 
 Мульти-девайсное древо рекавери для Pixel на Tensor SoC (Pixel 6–10:
 `gs101`/`gs201`/`zuma`/`zumapro`). Один код — один образ на всё семейство:
-конкретный девайс определяется в рантайме по `ro.hardware`, вендор-специфика
-подтягивается из JSON-конфига, собираемого на этапе сборки.
+девайс определяется в рантайме (`ro.product.device` → `ro.product.name` →
+`ro.hardware`, первое с секцией в конфиге; после применения пропсов код
+перепроверяется), вендор-специфика подтягивается из JSON-конфига,
+собираемого на этапе сборки.
 
 ## 1. Структура дерева
 
@@ -72,7 +74,8 @@ device/google/pixels/
    `recovery-pixel-boot`, fstabs, keymint) + оверлеи:
    `TARGET_RECOVERY_DEVICE_DIRS = корень + devices/* + families/<флаг>`.
 4. `--second-call` (`fox_build_callback.sh`, `$TARGET_DIR` = корень рамдиска):
-   инжект keymint/VINTF по семье, twrp.flags под UFS-контроллер,
+   инжект keymint/VINTF по семье, family-`twrp.flags` поверх дефолта,
+   device-оверрайды `<device>.twrp.flags` из `devices/*/twrp.flags`,
    **мердж конфига** (`[PIXELCFG]`), **LGZ-пакование** (`[LGZ]`), генерация
    снапшот-манифеста и списков файлов для `reflash_twrp.sh`.
 
@@ -150,7 +153,7 @@ device/google/pixels/
 
 | Субкоманда | Триггер | Что делает |
 |---|---|---|
-| `init` | `exec` на `early-init` | пропсы через стадию, `twrp.flags`-фикс, magiskboot-распаковка через стадию, `servicemanager.ready` |
+| `init` | `exec` на `early-init` | резолв девайса → пропсы через стадию → повторный резолв → свап `<device>.twrp.flags` → `twrp.flags`-фикс, magiskboot-распаковка через стадию, `servicemanager.ready` |
 | `boot` | `exec` на `on boot` (init ждёт завершения — модули до GUI) | susfs-fix, firmware/модули через стадии + `finit_module`, haptics-PM, magisk-линки + fork-демон, meta-fix через стадию |
 | `otg-patch` | сервис `otg_enable` | инжект `otg_host_shim` (скоринг `.ko`), `patch_dwc3=1`, свитч max77759 по I2C |
 | `otg-auto` | триггер `patch_dwc3=1` | VBUS-демон host/device (живёт всегда) |
@@ -203,13 +206,17 @@ device/google/pixels/
    `touch_modules` — проверить в стоковом `vendor_dlkm` девайса).
 3. `devices/<codename>/recovery/root/init.recovery.<codename>.rc`
    (обычно один `import` общего rc).
+4. Опционально `devices/<codename>/twrp.flags` — переопределение поверх
+   family-файла (сборщик положит как `<device>.twrp.flags`, рантайм
+   подменит после определения девайса).
 4. `build.sh -f <codename>` → в логе `[PIXELCFG] merged N devices`,
    `Entries packed`.
 5. Прошивка обоих слотов → `dmesg | grep -iE 'LGZ|OFOX|ko_loader'`,
    `/tmp/recovery.log`, `lsmod`, `/dev/input/`.
 
 Новый SoC: + `families/<fam>/` (`family.conf`, `family.json`,
-`family.mk`, `fstab/`, `recovery/root/`, `recovery.fstab`).
+`family.mk`, `fstab/`, `recovery/root/`, `recovery.fstab`,
+`twrp.flags` с UFS-путями семьи).
 
 ## 9. Патч-система (кратко)
 

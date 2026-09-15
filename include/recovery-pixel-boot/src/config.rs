@@ -317,6 +317,47 @@ pub fn load_device_config(code: &str) -> Result<DeviceConfig, String> {
     load_device_config_from(Path::new(CONFIG_PATH), code)
 }
 
+/// Top-level device keys (skips `_families` bookkeeping).
+pub fn list_devices() -> Vec<String> {
+    let text = match std::fs::read_to_string(CONFIG_PATH) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let mut p = Parser {
+        b: text.as_bytes(),
+        i: 0,
+    };
+    p.ws();
+    match p.object() {
+        Ok(top) => top
+            .into_iter()
+            .map(|(k, _)| k)
+            .filter(|k| !k.starts_with('_'))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+pub fn device_section_exists(code: &str) -> bool {
+    !code.is_empty() && list_devices().iter().any(|k| k == code)
+}
+
+/// Authoritative device identity for flags/modules/tables.
+///
+/// `ro.hardware` comes from the bootloader/first-stage and may be
+/// family-level; product-level props (set by our own props-apply or stock)
+/// name the exact codename. First non-empty value with a config section
+/// wins; otherwise the raw hardware value (callers treat unknown as skip).
+pub fn resolve_device_code() -> String {
+    for key in ["ro.product.device", "ro.product.name", "ro.hardware"] {
+        let v = crate::props::get_prop(key);
+        if !v.is_empty() && device_section_exists(&v) {
+            return v;
+        }
+    }
+    crate::props::get_prop("ro.hardware")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +425,14 @@ mod tests {
         std::fs::write(&f, FIXTURE).unwrap();
         assert!(load_device_config_from(&f, "nope").is_err());
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn resolve_with_empty_props_falls_back() {
+        // Host bionic stubs return "" for every prop: resolve returns the
+        // raw (empty) hardware value without panicking; callers skip.
+        assert_eq!(resolve_device_code(), "");
+        assert!(!device_section_exists(""));
     }
 
     #[test]

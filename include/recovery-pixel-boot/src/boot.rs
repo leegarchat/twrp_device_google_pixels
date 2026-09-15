@@ -272,7 +272,7 @@ pub fn run_boot() -> Result<(), String> {
         }
     }
 
-    let device_code = get_prop("ro.hardware");
+    let device_code = crate::config::resolve_device_code();
     let (suffix, unsuffix, slot, unslot) = detect_slots();
 
     if ko_try_load("susfs_rename_fix", Some("/proc/susfs_rename_fix"), "susfs_fix") {

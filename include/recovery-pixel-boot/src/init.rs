@@ -221,7 +221,7 @@ pub fn run_init() -> Result<(), String> {
         ),
     );
 
-    let device_code = get_prop("ro.hardware");
+    let device_code = crate::config::resolve_device_code();
     let cfg = load_device_config(&device_code).unwrap_or_default();
     dlog(&mut log, &format!("detected family={}", cfg.family));
     let _ = TAG;
@@ -236,11 +236,23 @@ pub fn run_init() -> Result<(), String> {
         Err(e) => dlog(&mut log, &format!("props-apply FAILED: {e}")),
     }
 
+    // Re-resolve: applied props may have corrected ro.product.device
+    // (ro.hardware from the bootloader can be family-level). Only the
+    // flags swap below needs the corrected code; props/family already ran.
+    let mut final_code = device_code.clone();
+    {
+        let c2 = crate::config::resolve_device_code();
+        if c2 != device_code && crate::config::device_section_exists(&c2) {
+            dlog(&mut log, &format!("device corrected: {device_code} -> {c2}"));
+            final_code = c2;
+        }
+    }
+
     // Device override (<device>.twrp.flags from devices/<codename>/) wins
     // over the family default; runs after props reveal ro.hardware and
     // before fix_twrp_flags patches/prunes the file.
-    if swap_device_flags(Path::new("/system/etc"), &device_code) {
-        dlog(&mut log, &format!("device flags override: {device_code}"));
+    if swap_device_flags(Path::new("/system/etc"), &final_code) {
+        dlog(&mut log, &format!("device flags override: {final_code}"));
     }
 
     fix_twrp_flags(&mut log);
