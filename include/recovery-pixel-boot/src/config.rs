@@ -9,17 +9,51 @@
 use std::path::Path;
 
 #[derive(Debug, Clone, Default)]
-pub struct DeviceConfig {
-    pub family: String,
+pub struct DeviceConfig {    pub family: String,
     pub soc_family: String,
     pub touch_modules: Vec<String>,
     pub part_touch: String,
     pub part_vendor: String,
     pub cs40l26_pm: String,
     pub props: Vec<(String, String)>,
+    /// Thermal zone `type` names for auto mode (default: Tensor BIG names).
+    pub thermal_zone_types: Vec<String>,
+    /// Representative (non-hotspot) sensor type, preferred over the auto
+    /// list (default "soc_therm", like the Android HAL selection).
+    pub thermal_soc_type: String,
+    /// Exact temp node; empty = auto discovery.
+    pub thermal_temp_path: String,
+    /// LM3644 I2C devname suffix (default "-0063").
+    pub torch_i2c_match: String,
+    /// '|' separated devicetree path matches (default "flash|torch").
+    pub torch_pinctrl_match: String,
+    /// VBUS sysfs candidates for otg-auto (default: 3 known paths).
+    pub vbus_paths: Vec<String>,
+    /// TCPC driver dir name for otg-patch (default "max77759tcpc").
+    pub tcpc_driver: String,
 }
 
 pub const CONFIG_PATH: &str = "/pixelrunatboot.json";
+
+/// Compiled defaults for path-ish keys: used when the JSON omits them,
+/// so old configs keep working and new devices only override deltas.
+pub fn default_thermal_zone_types() -> Vec<String> {
+    ["BIG", "CLUSTER2", "CLUSTER_BIG", "cpu_big", "CPU-Big", "prime", "PRIME"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+pub fn default_vbus_paths() -> Vec<String> {
+    [
+        "/sys/class/power_supply/usb/online",
+        "/sys/class/power_supply/usb/present",
+        "/sys/class/power_supply/usb-charger/online",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
 
 #[derive(Debug)]
 struct Parser<'a> {
@@ -227,6 +261,55 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
         part_vendor: get_str(pairs, "part_vendor"),
         cs40l26_pm: get_str(pairs, "cs40l26_pm"),
         props,
+        thermal_zone_types: {
+            let v = get_arr(pairs, "thermal_zone_types");
+            if v.is_empty() {
+                default_thermal_zone_types()
+            } else {
+                v
+            }
+        },
+        thermal_soc_type: {
+            let v = get_str(pairs, "thermal_soc_type");
+            if v.is_empty() {
+                "soc_therm".to_string()
+            } else {
+                v
+            }
+        },
+        thermal_temp_path: get_str(pairs, "thermal_temp_path"),
+        torch_i2c_match: {
+            let v = get_str(pairs, "torch_i2c_match");
+            if v.is_empty() {
+                "-0063".to_string()
+            } else {
+                v
+            }
+        },
+        torch_pinctrl_match: {
+            let v = get_str(pairs, "torch_pinctrl_match");
+            if v.is_empty() {
+                "flash|torch".to_string()
+            } else {
+                v
+            }
+        },
+        vbus_paths: {
+            let v = get_arr(pairs, "vbus_paths");
+            if v.is_empty() {
+                default_vbus_paths()
+            } else {
+                v
+            }
+        },
+        tcpc_driver: {
+            let v = get_str(pairs, "tcpc_driver");
+            if v.is_empty() {
+                "max77759tcpc".to_string()
+            } else {
+                v
+            }
+        },
     })
 }
 

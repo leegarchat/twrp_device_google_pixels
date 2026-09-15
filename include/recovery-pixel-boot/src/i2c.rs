@@ -51,10 +51,11 @@ pub fn find_tcpc_dev(sysfs_dir: &Path) -> Option<(u32, u16)> {
     None
 }
 
-pub fn patch_max77759_i2c() -> Result<(), String> {
-    let tcpc_sysfs = Path::new("/sys/bus/i2c/drivers/max77759tcpc");
-    let (bus, addr) =
-        find_tcpc_dev(tcpc_sysfs).ok_or_else(|| "max77759 TCPC not found in sysfs".to_string())?;
+pub fn patch_max77759_i2c_with_driver(driver: &str) -> Result<(), String> {
+    let tcpc_dir = format!("/sys/bus/i2c/drivers/{driver}");
+    let tcpc_sysfs = Path::new(&tcpc_dir);
+    let (bus, addr) = find_tcpc_dev(tcpc_sysfs)
+        .ok_or_else(|| format!("{driver} TCPC not found in sysfs"))?;
 
     let dev_node = format!("/dev/i2c-{bus}");
     let dev_path = Path::new(&dev_node);
@@ -75,12 +76,7 @@ pub fn patch_max77759_i2c() -> Result<(), String> {
         }
     }
 
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_CLOEXEC)
-        .open(dev_path)
-        .map_err(|e| format!("cannot open {dev_node}: {e}"))?;
+    let file = open_i2c_dev(bus)?;
     let fd = file.as_raw_fd();
 
     // SAFETY: fd is our own open /dev/i2c-N, request is I2C_SLAVE_FORCE with
@@ -92,9 +88,56 @@ pub fn patch_max77759_i2c() -> Result<(), String> {
         ));
     }
 
-    let payload: [u8; 2] = [USBSW_CTRL_REG, USBSW_CONNECT];
-    // SAFETY: payload is a live 2-byte stack array, fd is ours; partial
-    // writes are treated as failure by the length check below.
+    i2c_write(fd, &[USBSW_CTRL_REG, USBSW_CONNECT])
+}
+
+/// Open /dev/i2c-<bus> (mknod fallback if ueventd hasn't created it).
+/// Returns the open File; the fd stays valid while it is alive.
+pub fn open_i2c_dev(bus: u32) -> Result<std::fs::File, String> {
+    let dev_node = format!("/dev/i2c-{bus}");
+    let dev_path = Path::new(&dev_node);
+
+    // ueventd normally creates the node; mknod is a fallback only.
+    if !dev_path.exists() {
+        let dev_id = make_dev(I2C_MAJOR, bus);
+        let c_node = CString::new(dev_node.clone()).map_err(|_| "CString error".to_string())?;
+        let mode = (libc::S_IFCHR | 0o660) as libc::mode_t;
+        // SAFETY: node path is a valid NUL-terminated C string, mode/dev
+        // describe a character device; mknod has no thread-safety concerns.
+        let res = unsafe { libc::mknod(c_node.as_ptr(), mode, dev_id) };
+        if res != 0 {
+            return Err(format!(
+                "mknod failed for {dev_node}: {}",
+                Error::last_os_error()
+            ));
+        }
+    }
+
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open(dev_path)
+        .map_err(|e| format!("cannot open {dev_node}: {e}"))
+}
+
+/// Grab an I2C slave address on an open i2c-dev fd and write payload bytes.
+pub fn i2c_transact(fd: std::os::unix::io::RawFd, addr: u16, payload: &[u8]) -> Result<(), String> {
+    // SAFETY: fd is our own open /dev/i2c-N, request is I2C_SLAVE_FORCE with
+    // a u16 slave address: the standard i2c-dev ioctl contract.
+    if unsafe { libc::ioctl(fd, I2C_SLAVE_FORCE, addr as libc::c_ulong) } < 0 {
+        return Err(format!(
+            "ioctl I2C_SLAVE_FORCE (0x{addr:02x}) failed: {}",
+            Error::last_os_error()
+        ));
+    }
+    i2c_write(fd, payload)
+}
+
+/// Write raw bytes to an already-addressed i2c-dev fd.
+pub fn i2c_write(fd: std::os::unix::io::RawFd, payload: &[u8]) -> Result<(), String> {
+    // SAFETY: payload points to a live slice, fd is ours; partial writes
+    // are treated as failure by the length check below.
     let written =
         unsafe { libc::write(fd, payload.as_ptr() as *const libc::c_void, payload.len()) };
     if written != payload.len() as isize {

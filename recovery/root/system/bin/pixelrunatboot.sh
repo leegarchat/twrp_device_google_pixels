@@ -171,22 +171,13 @@ case "$1" in
     fw-fetch)
         # fw-fetch <partbase> <suffix-a|b> <slotnum>: firmware/* -> /vendor/firmware/.
         # Prints copied count. rc=0 if anything was copied.
+        # Order is deliberate: read-only mount first (instant, no bulk copy;
+        # vendor is ~1GB — streaming it to tmpfs cost 86s once), siw|iw
+        # stream second, by-name mount last.
         # (Plain assignments: case branches run at top level where `local`
         # is not portable; helpers localize their own vars, so no clobber.)
         _part="$2"; _sfx="$3"; _slot="$4"
         mkdir -p /vendor/firmware 2>/dev/null
-        _img="/dev/stage_${_part}_${_sfx}.img"
-        if _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
-            _n=0
-            for _staged in $(_iw_extract "$_img" '/firmware/' /dev/fw_stage 2>/dev/null); do
-                if cp -f "$_staged" /vendor/firmware/ 2>>"$LOGF"; then
-                    _n=$((_n + 1))
-                fi
-            done
-            rm -rf /dev/fw_stage "$_img"
-            if [ "$_n" -gt 0 ]; then echo "$_n"; exit 0; fi
-            plog "fw-fetch" "iw parse empty, classic fallback"
-        fi
         _n=0
         _node="/dev/block/mapper/${_part}_${_sfx}"
         if [ ! -b "$_node" ]; then
@@ -202,6 +193,26 @@ case "$1" in
             umount "$_mnt" 2>/dev/null
         fi
         rmdir "$_mnt" 2>/dev/null
+        if [ "$_n" -gt 0 ]; then echo "$_n"; exit 0; fi
+        plog "fw-fetch" "mount path empty, siw|iw stream fallback"
+        _img="/dev/stage_${_part}_${_sfx}.img"
+        if _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
+            for _staged in $(_iw_extract "$_img" '/firmware/' /dev/fw_stage 2>/dev/null); do
+                # Top-level firmware/* only (mirror the mount+glob semantics):
+                # deeper hits are payload stores from elsewhere in the image.
+                _rel="${_staged#/dev/fw_stage/}"
+                case "$_rel" in
+                    */*) continue ;;
+                esac
+                if cp -f "$_staged" /vendor/firmware/ 2>>"$LOGF"; then
+                    _n=$((_n + 1))
+                fi
+            done
+            rm -rf /dev/fw_stage "$_img"
+            if [ "$_n" -gt 0 ]; then echo "$_n"; exit 0; fi
+            plog "fw-fetch" "iw parse empty, by-name fallback"
+        fi
+        _n=0
         # Last resort: read the by-name node directly (no LP involved).
         if [ "$_n" -eq 0 ] && [ -b "/dev/block/by-name/${_part}" ]; then
             mkdir -p "$_mnt" 2>/dev/null

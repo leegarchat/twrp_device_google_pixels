@@ -1,11 +1,13 @@
 //! recovery-pixel-boot — static Rust replacement for the Pixel recovery
-//! shell scripts (runatinit.sh / runatboot.sh / otg_patch.sh / otg_auto_v3.sh).
+//! shell scripts.
 //!
 //! Multicall binary (same pattern as recovery-tensor-daemon):
-//!   recovery-pixel-boot init       # early-init device identity (was runatinit.sh)
-//!   recovery-pixel-boot boot       # post-GUI boot setup (was runatboot.sh, via twrp.cpp)
-//!   recovery-pixel-boot otg-patch  # OTG shim inject (was otg_patch.sh, service otg_enable)
-//!   recovery-pixel-boot otg-auto   # VBUS auto-switch daemon (was otg_auto_v3.sh, service otg_auto)
+//!   recovery-pixel-boot init        # early-init device identity
+//!   recovery-pixel-boot boot        # vendor boot stage (touch, fw, magisk)
+//!   recovery-pixel-boot otg-patch   # OTG shim inject (service otg_enable)
+//!   recovery-pixel-boot otg-auto    # VBUS auto-switch daemon (service otg_auto)
+//!   recovery-pixel-boot setup-temp  # thermal zone symlink (on init exec)
+//!   recovery-pixel-boot torch on|off# LM3644 flashlight (Fox OF_FL_PATH hook)
 //!
 //! Only std + libc. Exit 0 ok / skip (monolithic kernel), 1 fatal.
 
@@ -17,8 +19,20 @@ mod ko_picker;
 mod otg;
 mod props;
 mod stage;
+mod temp;
+mod torch;
 
 use std::process::ExitCode;
+
+fn run_simple(res: Result<(), String>, name: &str) -> ExitCode {
+    match res {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("recovery-pixel-boot {name}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
 
 fn usage() -> ! {
     eprintln!(
@@ -26,7 +40,9 @@ fn usage() -> ! {
          \x20 recovery-pixel-boot init\n\
          \x20 recovery-pixel-boot boot\n\
          \x20 recovery-pixel-boot otg-patch\n\
-         \x20 recovery-pixel-boot otg-auto\n"
+         \x20 recovery-pixel-boot otg-auto\n\
+         \x20 recovery-pixel-boot setup-temp\n\
+         \x20 recovery-pixel-boot torch on|off\n"
     );
     std::process::exit(1);
 }
@@ -37,27 +53,16 @@ fn main() -> ExitCode {
         usage();
     }
     match args[1].as_str() {
-        "init" => match init::run_init() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("recovery-pixel-boot init: {e}");
-                ExitCode::FAILURE
+        "init" => run_simple(init::run_init(), "init"),
+        "boot" => run_simple(boot::run_boot(), "boot"),
+        "otg-patch" => run_simple(otg::run_otg_patch(), "otg-patch"),
+        "setup-temp" => run_simple(temp::run_setup_temp(), "setup-temp"),
+        "torch" => {
+            if args.len() < 3 {
+                usage();
             }
-        },
-        "boot" => match boot::run_boot() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("recovery-pixel-boot boot: {e}");
-                ExitCode::FAILURE
-            }
-        },
-        "otg-patch" => match otg::run_otg_patch() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("recovery-pixel-boot otg-patch: {e}");
-                ExitCode::FAILURE
-            }
-        },
+            run_simple(torch::run_torch(&args[2]), "torch")
+        }
         "otg-auto" => {
             // Diverges under normal operation; the `!` coerces to ExitCode.
             otg::run_otg_auto()

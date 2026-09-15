@@ -197,7 +197,7 @@ export OF_RECOVERY_AB_FULL_REFLASH_RAMDISK=1
 export OF_USE_DMCTL=1
 
 # --- Flashlight (Pixel 8: LM3644 torch via I2C, controlled by script) ---
-export OF_FL_PATH1="cmd:/system/bin/torch_ctl.sh"
+export OF_FL_PATH1="cmd:/system/bin/recovery-pixel-boot torch"
 
 # --- Encryption (FBE metadata decryption via Trusty TEE KeyMint) ---
 # Do not force legacy Keymaster on Tensor 3. Recovery must use AIDL KeyMint.

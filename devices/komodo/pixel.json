@@ -51,5 +51,24 @@
     "ro.product.device": "komodo",
     "ro.product.name": "komodo",
     "ro.product.model": "Pixel 9 Pro XL"
-  }
+  },
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "max77759tcpc",
+  "thermal_soc_type": "soc_therm"
 }

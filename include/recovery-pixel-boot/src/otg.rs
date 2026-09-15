@@ -7,7 +7,8 @@
 //! - otg-auto does NOT touch sys.usb.patch_dwc3 (was reset to 0 at startup).
 //! - switch_to_device sets sys.usb.ffs.ready exactly once (was duplicated).
 
-use crate::i2c::patch_max77759_i2c;
+use crate::config::load_device_config;
+use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{ko_try_load, log_msg};
 use crate::props::{get_prop, set_prop};
 use std::path::Path;
@@ -86,7 +87,7 @@ pub fn run_otg_patch() -> Result<(), String> {
         return Err("proc interfaces missing after injection".into());
     }
 
-    match patch_max77759_i2c() {
+    match patch_max77759_i2c_with_driver(&tcpc_driver()) {
         Ok(()) => info("USB data path switches connected"),
         Err(e) => err(&format!("TCPC switch not configured: {e}")),
     }
@@ -101,14 +102,31 @@ const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_
 const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
 const UDC_NAME: &str = "11210000.dwc3";
-const VBUS_PATHS: &[&str] = &[
-    "/sys/class/power_supply/usb/online",
-    "/sys/class/power_supply/usb/present",
-    "/sys/class/power_supply/usb-charger/online",
-];
 
-fn find_vbus_path() -> Option<String> {
-    VBUS_PATHS
+fn device_cfg() -> crate::config::DeviceConfig {
+    load_device_config(&get_prop("ro.hardware")).unwrap_or_default()
+}
+
+fn tcpc_driver() -> String {
+    let d = device_cfg().tcpc_driver;
+    if d.is_empty() {
+        "max77759tcpc".to_string()
+    } else {
+        d
+    }
+}
+
+fn vbus_candidates() -> Vec<String> {
+    let v = device_cfg().vbus_paths;
+    if v.is_empty() {
+        crate::config::default_vbus_paths()
+    } else {
+        v
+    }
+}
+
+fn find_vbus_path(cands: &[String]) -> Option<String> {
+    cands
         .iter()
         .find(|p| Path::new(p).exists())
         .map(|s| s.to_string())
@@ -156,7 +174,7 @@ pub fn run_otg_auto() -> ! {
     info("starting (VBUS detection, default HOST)");
     // NOTE: intentionally no `set_prop(patch_dwc3, 0)` here — the flag belongs
     // to otg-patch and gates our own `on property` trigger.
-    let vbus_file = find_vbus_path();
+    let vbus_file = find_vbus_path(&vbus_candidates());
     match &vbus_file {
         Some(p) => info(&format!("using VBUS path: {p}")),
         None => err("no VBUS sysfs path found, assuming 0"),

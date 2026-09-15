@@ -231,7 +231,7 @@ on boot
     write /sys/module/block/parameters/events_dfl_poll_msecs 2000
     start otg_enable
 
-# Start automatic OTG daemon once otg_patch.sh has set patch_dwc3=1
+# Start automatic OTG daemon once otg-patch has set patch_dwc3=1
 on property:sys.usb.patch_dwc3=1
     start otg_auto
 

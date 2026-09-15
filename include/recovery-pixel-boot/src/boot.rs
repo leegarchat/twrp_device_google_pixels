@@ -188,6 +188,12 @@ fn modules_touch_install(cfg: &DeviceConfig, suffix: &str, unsuffix: &str, slot:
     if !check_modules_loaded(&cfg.touch_modules) {
         error("modules: final failure, still missing");
     }
+    // Re-resolve the thermal symlink: zone topology may have changed now
+    // that vendor_dlkm drivers are loaded (early on-init scan predates them).
+    // Idempotent (rm + symlink), best-effort.
+    if let Err(e) = crate::temp::run_setup_temp() {
+        warn(&format!("thermal refresh failed: {e}"));
+    }
     let _ = ok;
 }
 
