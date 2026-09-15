@@ -125,9 +125,6 @@ case "$1" in
                 _n=$((_n + 1))
             fi
         done
-        if [ "$_fam" = "gs201" ] && [ -f /system/etc/twrp_gs201.flags ]; then
-            cp -f /system/etc/twrp_gs201.flags /system/etc/twrp.flags 2>>"$LOGF"
-        fi
         echo "$_n"
         ;;
 
