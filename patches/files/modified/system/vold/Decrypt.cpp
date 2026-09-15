@@ -36,6 +36,7 @@
 #include <openssl/sha.h>
 #include <openssl/aes.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/rand.h>
 
 #include <dirent.h>

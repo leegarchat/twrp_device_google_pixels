@@ -26,6 +26,7 @@
 #include <string.h>
 
 #include <openssl/hmac.h>
+#include <openssl/evp.h>
 #include <openssl/sha.h>
 
 #define MAXBUF 256
