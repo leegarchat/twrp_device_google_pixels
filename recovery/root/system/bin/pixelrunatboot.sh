@@ -58,6 +58,14 @@ _iw_extract() {
     "$IW" read "$_img" -f 2>>"$LOGF" | grep -F "$_filt" 2>/dev/null | grep '/' 2>/dev/null | while IFS= read -r _hit; do
         _hit=$(printf '%s' "$_hit" | tr -d '[:space:]')
         [ -n "$_hit" ] || continue
+        # Depth guard (mirrors fw-fetch top-level rule): vendor images carry
+        # page-size subdirs (16k-mode/) whose same-basename modules shadow
+        # the flat 4K ones with incompatible symbol CRCs (goodix 16K over
+        # 4K broke touch on 6.12). Take lib/modules/*.ko only.
+        _rel="${_hit#/}"
+        case "$_rel" in
+            */*/*/*) continue ;;
+        esac
         _base=$(basename "$_hit")
         if "$IW" read "$_img" -c "$_hit" > "$_outdir/$_base" 2>>"$LOGF"; then
             :
@@ -96,7 +104,9 @@ _classic_copy() {
     fi
     mkdir -p "$_outdir" 2>/dev/null
     _n=0
-    for _f in $(find "$_mnt/$_subdir" -type f -name "$_fname" 2>/dev/null); do
+    # maxdepth 3 = <mnt>/lib/modules/*.ko only: page-size subdirs
+    # (16k-mode/) must not shadow the flat modules (see _iw_extract).
+    for _f in $(find "$_mnt/$_subdir" -maxdepth 3 -type f -name "$_fname" 2>/dev/null); do
         _base=$(basename "$_f")
         if cp -f "$_f" "$_outdir/$_base" 2>>"$LOGF"; then
             echo "$_outdir/$_base"
