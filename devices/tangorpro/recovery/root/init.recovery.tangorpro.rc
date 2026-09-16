@@ -1,0 +1,6 @@
+# init.recovery.tangorpro.rc — Pixel Tablet (tangorpro) stub.
+# Loaded by init when ro.hardware=tangorpro. Portrait 1080-wide letterbox
+# canvas on the landscape panel comes from pixel.json via
+# recovery-pixel-boot init; all actual init code is in
+# init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

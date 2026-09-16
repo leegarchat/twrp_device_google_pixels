@@ -1,0 +1,5 @@
+# init.recovery.comet.rc — Pixel 9 Pro Fold (comet) stub.
+# Loaded by init when ro.hardware=comet. Fold display geometry (cover/inner)
+# comes from pixel.json (is_fold=1) via recovery-pixel-boot init; all actual
+# init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc
