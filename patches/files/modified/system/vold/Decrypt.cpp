@@ -440,9 +440,14 @@ bool Get_Weaver_Data(const std::string& spblob_path, const std::string& handle_s
 		const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
 		wd->version = *byteptr;
 		// printf("weaver version %i\n", wd->version);
-		const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
-		wd->slot = *intptr;
-		//endianswap(&wd->slot); not needed
+		if (weaver_data.size() == 5) {
+			// packed layout (newer Android): version(1) + slot(4, big-endian)
+			wd->slot = ((int)byteptr[1] << 24) | ((int)byteptr[2] << 16) |
+			           ((int)byteptr[3] << 8) | (int)byteptr[4];
+		} else {
+			const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
+			wd->slot = *intptr;
+		}
 		// printf("weaver slot %i\n", wd->slot);
 	}
 	return found_file;

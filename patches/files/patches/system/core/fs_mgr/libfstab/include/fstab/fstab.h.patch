@@ -1,0 +1,11 @@
+--- a/system/core/fs_mgr/libfstab/include/fstab/fstab.h
++++ b/system/core/fs_mgr/libfstab/include/fstab/fstab.h
+@@ -33,6 +33,8 @@
+ struct FstabEntry {
+     std::string blk_device;
+     std::string zoned_device;
++    // F2FS expansion devices (device=exp:/device=exp_alias: inline flags).
++    std::vector<std::string> user_devices;
+     std::string logical_partition_name;
+     std::string mount_point;
+     std::string fs_type;

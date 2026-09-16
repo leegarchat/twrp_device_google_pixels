@@ -118,9 +118,13 @@ bool Weaver::GetKeySize(uint32_t* keySize) {
 		return false;
 	if (mAidlDevice != nullptr) {
 		*keySize = aidlConfig.keySize;
-		return true;
+	} else {
+		*keySize = config.keySize;
 	}
-	*keySize = config.keySize;
+	// Titan M3 reports keySize 0 in recovery: fall back to the standard
+	// Android weaver key size so the escrow read is correctly sized.
+	if (*keySize == 0)
+		*keySize = 16;
 	return true;
 }
 

@@ -44,7 +44,7 @@
  // Crappy functions for debugging, please ignore unless you need to debug
  // void output_hex(const std::string& in) {
  // 	const char *buf = in.data();
-@@ -401,21 +409,43 @@
+@@ -401,21 +409,48 @@
   * https://android.googlesource.com/platform/frameworks/base/+/android-8.0.0_r23/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java#768 */
  bool Get_Weaver_Data(const std::string& spblob_path, const std::string& handle_str, weaver_data_struct *wd) {
  	printf("Get_Weaver_Data\n");
@@ -92,16 +92,21 @@
 +		const unsigned char* byteptr = (const unsigned char*)weaver_data.data();
 +		wd->version = *byteptr;
 +		// printf("weaver version %i\n", wd->version);
-+		const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
-+		wd->slot = *intptr;
-+		//endianswap(&wd->slot); not needed
++		if (weaver_data.size() == 5) {
++			// packed layout (newer Android): version(1) + slot(4, big-endian)
++			wd->slot = ((int)byteptr[1] << 24) | ((int)byteptr[2] << 16) |
++			           ((int)byteptr[3] << 8) | (int)byteptr[4];
++		} else {
++			const int* intptr = (const int*)weaver_data.data() + sizeof(unsigned char);
++			wd->slot = *intptr;
++		}
 +		// printf("weaver slot %i\n", wd->slot);
 +	}
 +	return found_file;
  }
  
  namespace android {
-@@ -445,6 +475,7 @@
+@@ -445,6 +480,7 @@
  #define SYNTHETIC_PASSWORD_VERSION_V1 1
  #define SYNTHETIC_PASSWORD_VERSION_V2 2
  #define SYNTHETIC_PASSWORD_VERSION_V3 3
@@ -109,7 +114,7 @@
  #define SYNTHETIC_PASSWORD_PASSWORD_BASED 0
  #define SYNTHETIC_PASSWORD_KEY_PREFIX "USRSKEY_synthetic_password_"
  #define USR_PRIVATE_KEY_PREFIX "USRPKEY_synthetic_password_"
-@@ -497,7 +528,8 @@
+@@ -497,7 +533,8 @@
  			return disk_decryption_secret_key;
  		unsigned char* byteptr = (unsigned char*)spblob_data.data();
  		if (*byteptr != SYNTHETIC_PASSWORD_VERSION_V2 && *byteptr != SYNTHETIC_PASSWORD_VERSION_V1
@@ -119,7 +124,7 @@
  			printf("Unsupported synthetic password version %i\n", *byteptr);
  			return disk_decryption_secret_key;
  		}
-@@ -509,8 +541,12 @@
+@@ -509,8 +546,12 @@
  		}
  		byteptr++; // Now we're pointing to the blob data itself
  		if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V2
@@ -134,7 +139,7 @@
  			/* Version 2 / 3 of the spblob is basically the same as version 1, but the order of getting the intermediate key and disk decryption key have been flip-flopped
  			* as seen in https://android.googlesource.com/platform/frameworks/base/+/5025791ac6d1538224e19189397de8d71dcb1a12
  			*/
-@@ -611,15 +647,143 @@
+@@ -611,15 +652,143 @@
  			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, cipher_size);
  			unsigned char tag[AES_BLOCK_SIZE];
  			EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16, tag);
@@ -283,7 +288,7 @@
  				// V3 uses SP800 instead of SHA512
  				disk_decryption_secret_key = PersonalizedHashSP800(PERSONALIZATION_FBE_KEY, PERSONALISATION_CONTEXT, (const char*)secret_key, secret_key_real_size);
  			} else {
-@@ -648,10 +812,18 @@
+@@ -648,10 +817,18 @@
  
  bool Is_Weaver(const std::string& spblob_path, const std::string& handle_str) {
  	printf("Is_Weaver\n");

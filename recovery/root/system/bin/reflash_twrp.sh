@@ -134,39 +134,16 @@ _log "empty.img size=$(stat -c %s "$FOLDER/empty.img" 2>/dev/null) bytes"
 # Unpack the header (-h): exposes `header` (name=/cmdline=) and `bootconfig`
 # for substitution. NOTE: magiskboot exits nonzero on padded/stock images
 # even when extraction succeeds, so success = files exist, not rc.
-# NOTE 2: unpacking also extracts the stub vendor_ramdisk fragments, so it
-# runs in a scratch dir — our fresh cpios are (re)created AFTER this step.
-# NOTE 3 (dtb parity): the base (nboot.lz4) must carry the same dtb as the
-# live slot, otherwise reflash would inject a foreign device tree (e.g. a
-# zuma dtb into a malibu image whose stock header has none). The live slot
-# is unpacked the same way and presence+size must match, else loud refusal.
+# NOTE 2: this also extracts the stub vendor_ramdisk fragments, so our
+# fresh cpios MUST be (re)created AFTER this step.
+# NOTE 3: a vendor_boot must never carry a dtb (stale OFox builder anomaly) —
+# strip it so repack produces DTB_SZ 0 like stock (malibu stock has none).
 echo "- Unpacking base header for cmdline/bootconfig substitution..."
-mkdir -p "$FOLDER/basedump" "$FOLDER/livedump" \
-    || _die "Cannot create unpack scratch dirs"
-cp "$FOLDER/empty.img" "$FOLDER/basedump/empty.img" \
-    || _die "Cannot stage base image"
-(cd "$FOLDER/basedump" && magiskboot_29 unpack -h empty.img >>"$LOGF" 2>&1 || true)
-[ -f "$FOLDER/basedump/header" ] || _die "header missing after unpack -h (see $LOGF)"
-[ -f "$FOLDER/basedump/bootconfig" ] || _die "bootconfig missing after unpack -h (see $LOGF)"
-LIVE_SLOT=$(getprop ro.boot.slot_suffix 2>/dev/null)
-[ -n "$LIVE_SLOT" ] || LIVE_SLOT="_a"
-(cd "$FOLDER/livedump" && magiskboot_29 unpack -h "/dev/block/by-name/vendor_boot$LIVE_SLOT" >>"$LOGF" 2>&1 || true)
-[ -f "$FOLDER/basedump/dtb" ] \
-    && BASE_DTB="present size=$(stat -c %s "$FOLDER/basedump/dtb" 2>/dev/null)" \
-    || BASE_DTB="absent"
-[ -f "$FOLDER/livedump/dtb" ] \
-    && LIVE_DTB="present size=$(stat -c %s "$FOLDER/livedump/dtb" 2>/dev/null)" \
-    || LIVE_DTB="absent"
-_log "dtb parity: base=[$BASE_DTB] live($LIVE_SLOT)=[$LIVE_DTB]"
-[ "$BASE_DTB" = "$LIVE_DTB" ] \
-    || _die "DTB mismatch: base nboot [$BASE_DTB] vs live slot [$LIVE_DTB] — reflash refused (would inject a foreign device tree)"
-echo "- DTB parity OK ($BASE_DTB)"
-cp "$FOLDER/basedump/header" "$FOLDER/header" \
-    || _die "Cannot stage header"
-cp "$FOLDER/basedump/bootconfig" "$FOLDER/bootconfig" \
-    || _die "Cannot stage bootconfig"
+magiskboot_29 unpack -h empty.img >>"$LOGF" 2>&1 || true
+[ -f "$FOLDER/header" ] || _die "header missing after unpack -h (see $LOGF)"
+[ -f "$FOLDER/bootconfig" ] || _die "bootconfig missing after unpack -h (see $LOGF)"
 rm -f "$FOLDER/dtb"
-[ -f "$FOLDER/basedump/dtb" ] && cp "$FOLDER/basedump/dtb" "$FOLDER/dtb"
+_log "dtb stripped (vendor_boot ships dtb-free)"
 
 echo "- Stamping build kernel cmdline ($K_VER) into header..."
 if [ "$STAMP_BOOTCFG" = "1" ]; then

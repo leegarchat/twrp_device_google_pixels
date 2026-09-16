@@ -768,7 +768,7 @@ void TWPartitionManager::Decrypt_Data() {
 				Decrypt_Data->Mount_Point,
 				Decrypt_Data->Current_File_System,
 				TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
-				30)) {
+				120)) {
 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
 				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
 				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());

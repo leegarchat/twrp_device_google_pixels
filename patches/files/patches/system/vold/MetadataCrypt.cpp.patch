@@ -1,0 +1,68 @@
+--- a/system/vold/MetadataCrypt.cpp
++++ b/system/vold/MetadataCrypt.cpp
+@@ -63,7 +63,7 @@
+ };
+ 
+ static const std::string kDmNameUserdata = "userdata";
+-static const std::string kDmNameUserdataZoned = "userdata_zoned";
++static const std::string kDmNameUserdataZoned = "zoned_device";
+ 
+ // The first entry in this table is the default crypto type.
+ constexpr CryptoType supported_crypto_types[] = {aes_256_xts, adiantum};
+@@ -311,8 +311,13 @@
+         return false;
+     }
+ 
++    // TWRP passes an empty zoned_device: recover it (and the expansion
++    // devices) from the fstab entry that libfstab now parses (malibu
++    // multi-device userdata). Key subdir and dm name are the device
++    // basename, which is the path F2FS reads from the superblock.
++    const std::string& zoned_dev = zoned_device.empty() ? data_rec->zoned_device : zoned_device;
+     auto default_metadata_key_dir = data_rec->metadata_key_dir;
+-    if (!zoned_device.empty()) {
++    if (!zoned_dev.empty()) {
+         default_metadata_key_dir = default_metadata_key_dir + "/default";
+     }
+     auto gen = needs_encrypt ? makeGen(options) : neverGen();
+@@ -332,17 +337,36 @@
+ 
+     // create dm-default-key for zoned device
+     std::string crypto_zoned_blkdev;
+-    if (!zoned_device.empty()) {
+-        auto zoned_metadata_key_dir = data_rec->metadata_key_dir + "/zoned";
++    if (!zoned_dev.empty()) {
++        auto zoned_metadata_key_dir =
++            data_rec->metadata_key_dir + "/" + zoned_dev.substr(zoned_dev.rfind('/') + 1);
+ 
+         if (!read_key(zoned_metadata_key_dir, gen, false, &key)) {
+-            LOG(ERROR) << "read_key failed with zoned device: " << zoned_device;
++            LOG(ERROR) << "read_key failed with zoned device: " << zoned_dev;
+             return false;
+         }
+-        if (!create_crypto_blk_dev(kDmNameUserdataZoned, zoned_device, key, options,
++        if (!create_crypto_blk_dev(kDmNameUserdataZoned, zoned_dev, key, options,
+                                    &crypto_zoned_blkdev, &nr_sec)) {
+             LOG(ERROR) << "fscrypt_mount_metadata_encrypted: failed with zoned device: "
+-                       << zoned_device;
++                       << zoned_dev;
++            return false;
++        }
++    }
++
++    // create dm-default-key for each F2FS expansion device (device=exp:/device=exp_alias:).
++    // The dm device name must be the basename so it appears at /dev/block/mapper/<basename>,
++    // which is the path F2FS reads from the superblock.
++    for (const auto& exp_dev : data_rec->user_devices) {
++        const auto exp_name = exp_dev.substr(exp_dev.rfind('/') + 1);
++        KeyBuffer exp_key;
++        if (!read_key(data_rec->metadata_key_dir + "/" + exp_name, gen, false, &exp_key)) {
++            LOG(ERROR) << "read_key failed for expansion device: " << exp_dev;
++            return false;
++        }
++        std::string exp_blkdev;
++        uint64_t exp_nr_sec;
++        if (!create_crypto_blk_dev(exp_name, exp_dev, exp_key, options, &exp_nr_sec)) {
++            LOG(ERROR) << "create_crypto_blk_dev failed for expansion device: " << exp_dev;
+             return false;
+         }
+     }

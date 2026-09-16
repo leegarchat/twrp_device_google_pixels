@@ -1,8 +1,9 @@
-<!--
-    Input:
-        system/core/trusty/keymint/android.hardware.security.keymint-service.rust.trusty.xml
--->
-<manifest version="9.0" type="device">
+<!-- Malibu (Tensor G6) Trusty KeyMint HAL manifest, KeyMint AIDL v5.
+     Extracted from grizzly stock vendor; schema dropped 9.0 -> 2.0:
+     OFRP recovery ships libvintf 8.0 which rejects 9.0, and one
+     unparseable manifest makes servicemanager drop the entire device
+     manifest (KeyMint AND weaver fail to register, decrypt is skipped). -->
+<manifest version="2.0" type="device">
     <hal format="aidl">
         <name>android.hardware.security.keymint</name>
         <version>5</version>
