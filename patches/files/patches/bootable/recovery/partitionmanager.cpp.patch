@@ -203,3 +203,58 @@
  
  			return 0;
  		} else {
+@@ -4840,6 +4982,29 @@
+ 	}
+ }
+ 
++// OFOX: destroy a logical partition tolerantly. The stock single-shot
++// DestroyLogicalPartition fails with EBUSY when the node is still mounted
++// (our own fw/ko staging mounts, vold/ueventd probes) or transiently open,
++// which used to fail the whole format with "Unable to unmap dynamic
++// partitions" until a manual retry. Unmount (lazy fallback) + retries.
++static bool DestroyLogicalPartition_Retry(const std::string& name) {
++	std::string path = "/dev/block/mapper/" + name;
++	umount2(path.c_str(), 0);
++	umount2(path.c_str(), MNT_DETACH);
++	for (int i = 0; i < 5; i++) {
++		if (DestroyLogicalPartition(name)) {
++			if (i > 0)
++				LOGINFO("destroyed logical partition %s on attempt %d\n", name.c_str(), i + 1);
++			return true;
++		}
++		LOGINFO("destroy logical partition %s failed (attempt %d), retrying\n", name.c_str(), i + 1);
++		sleep(1);
++		umount2(path.c_str(), MNT_DETACH);
++	}
++	LOGERR("destroy logical partition %s failed after retries: %s\n", name.c_str(), strerror(errno));
++	return false;
++}
++
+ bool TWPartitionManager::Unmap_Super_Devices() {
+ 	bool destroyed = false;
+ #ifndef TW_EXCLUDE_APEX
+@@ -4857,13 +5022,13 @@
+ 				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
+ 			(*iter)->UnMount(false);
+ 			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
+-			destroyed = DestroyLogicalPartition(blk_device_partition);
++			destroyed = DestroyLogicalPartition_Retry(blk_device_partition);
+ 			std::string cow_partition = blk_device_partition + "-cow";
+ 			std::string cow_partition_path = "/dev/block/mapper/" + cow_partition;
+ 			struct stat st;
+ 			if (lstat(cow_partition_path.c_str(), &st) == 0) {
+ 				LOGINFO("removing cow partition: %s\n", cow_partition.c_str());
+-				destroyed = DestroyLogicalPartition(cow_partition);
++				destroyed = DestroyLogicalPartition_Retry(cow_partition);
+ 			}
+ 			iter = Partitions.erase(iter);
+ 			delete part;
+@@ -4884,7 +5049,7 @@
+ 				std::string partition = de->d_name;
+ 				if (strcmp(partition.c_str(),"userdata") != 0){
+ 					LOGINFO("removing dynamic partition: %s\n", partition.c_str());
+-					destroyed = DestroyLogicalPartition(partition);
++					destroyed = DestroyLogicalPartition_Retry(partition);
+ 					if (!destroyed) {
+ 						closedir(d);
+ 						return false;
