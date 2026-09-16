@@ -104,12 +104,25 @@ pub fn run_otg_patch() -> Result<(), String> {
     if Path::new(PROC_SHIM).exists() {
         info("module already loaded (/proc/otg_host_shim exists)");
     } else if use_native_otg() {
-        info("6.12+ kernel: skipping shim, native host path");
-        match native_activate() {
-            Ok(()) => native_done = true,
-            Err(e) => {
-                let _ = set_prop("sys.usb.patch_dwc3", "0");
-                return Err(e);
+        // 6.12+ branch: no shim by design. Mirror the otg-auto rule:
+        // host force ONLY when no PC is present (VBUS=0). Unconditional
+        // forcing kills adb (role flips to host with the PC attached)
+        // and the daemon then flaps against a failing UDC bind.
+        let vbus_file = find_vbus_path(&vbus_candidates());
+        let initial = read_vbus(&vbus_file);
+        info(&format!("initial VBUS: {initial}"));
+        if initial == "1" {
+            info("PC detected at boot, staying in DEVICE mode (no host force)");
+            // Resolved without forcing: daemon still starts and manages roles.
+            native_done = true;
+        } else {
+            info("no PC at boot, native host path");
+            match native_activate() {
+                Ok(()) => native_done = true,
+                Err(e) => {
+                    let _ = set_prop("sys.usb.patch_dwc3", "0");
+                    return Err(e);
+                }
             }
         }
     } else {
