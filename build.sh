@@ -424,6 +424,22 @@ if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101"
     echo "[build] ${DEVICE_BUILD_FLAG}: adding keymint-service.trusty to build targets"
 fi
 
+# Zuma keymint TEST flags need their module built explicitly: vendorbootimage
+# does not pull vendor/bin/hw binaries on its own. Without this the module
+# has ninja graph entries but its intermediates are never compiled, the
+# vendor output is missing, and the callback falls back to nothing (this is
+# why the C++ test booted with no keymint at all, and why the rust-src test
+# shipped the prebuilt path with an empty hw dir).
+if [[ "${DEVICE_BUILD_FLAG:-}" == "zuma" ]]; then
+    if [[ "${FOX_ZUMA_CPP_KEYMINT:-0}" == "1" ]]; then
+        BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.trusty"
+        echo "[build] zuma: adding keymint-service.trusty (C++ TEST) to build targets"
+    elif [[ "${FOX_ZUMA_RUST_SRC_KEYMINT:-0}" == "1" ]]; then
+        BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.rust.trusty"
+        echo "[build] zuma: adding keymint-service.rust.trusty (Rust-src TEST) to build targets"
+    fi
+fi
+
 echo "=============================================="
 echo "  Build targets: $BUILD_TARGETS"
 echo "  Parallelism:   -j$JOBS"
@@ -469,6 +485,19 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         fi
     fi
 
+    mka_keymint_first=""
+    for _t in $BUILD_TARGETS; do
+        case "$_t" in
+            *keymint-service*) mka_keymint_first="$_t" ;;
+        esac
+    done
+    if [[ -n "$mka_keymint_first" ]]; then
+        echo "[build] Building keymint HAL first ($mka_keymint_first) — the recovery callback copies it during vendorbootimage assembly, parallel ninja gives no ordering guarantee"
+        mka "$mka_keymint_first" -j"$JOBS" || fox_safe_exit $?
+        if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+            break
+        fi
+    fi
     mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
     if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
         break
