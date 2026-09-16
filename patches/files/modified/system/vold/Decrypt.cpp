@@ -658,7 +658,6 @@ namespace keystore {
 				// then openssl AES-GCM under the personalized application-id),
 				// but the final KDF is SP800-108 with HMAC-SHA512 PRF
 				// instead of HMAC-SHA256.
-				printf("spblob v4\n");
 				auto hex_of = [](const unsigned char* b, int n) {
 					std::string h;
 					char tmp[3];

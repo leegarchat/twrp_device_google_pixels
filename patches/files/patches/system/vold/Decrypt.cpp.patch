@@ -134,7 +134,7 @@
  			/* Version 2 / 3 of the spblob is basically the same as version 1, but the order of getting the intermediate key and disk decryption key have been flip-flopped
  			* as seen in https://android.googlesource.com/platform/frameworks/base/+/5025791ac6d1538224e19189397de8d71dcb1a12
  			*/
-@@ -611,15 +647,144 @@
+@@ -611,15 +647,143 @@
  			EVP_DecryptUpdate(d_ctx, secret_key, &actual_size, intermediate_cipher_text, cipher_size);
  			unsigned char tag[AES_BLOCK_SIZE];
  			EVP_CIPHER_CTX_ctrl(d_ctx, EVP_CTRL_GCM_SET_TAG, 16, tag);
@@ -154,7 +154,6 @@
 +				// then openssl AES-GCM under the personalized application-id),
 +				// but the final KDF is SP800-108 with HMAC-SHA512 PRF
 +				// instead of HMAC-SHA256.
-+				printf("spblob v4\n");
 +				auto hex_of = [](const unsigned char* b, int n) {
 +					std::string h;
 +					char tmp[3];
@@ -284,7 +283,7 @@
  				// V3 uses SP800 instead of SHA512
  				disk_decryption_secret_key = PersonalizedHashSP800(PERSONALIZATION_FBE_KEY, PERSONALISATION_CONTEXT, (const char*)secret_key, secret_key_real_size);
  			} else {
-@@ -648,10 +813,18 @@
+@@ -648,10 +812,18 @@
  
  bool Is_Weaver(const std::string& spblob_path, const std::string& handle_str) {
  	printf("Is_Weaver\n");
