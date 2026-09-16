@@ -1,6 +1,45 @@
 --- a/bootable/recovery/gui/gui.cpp
 +++ b/bootable/recovery/gui/gui.cpp
-@@ -444,7 +444,8 @@
+@@ -211,10 +211,20 @@
+ 
+ 	case EV_KEY:
+ 		if((ev.code == KEY_MENU || ev.code == KEY_HOME || ev.code == KEY_BACK) && DataManager::GetIntValue("tw_enable_keys") != 0) {
++		    // On the startup decrypt pages the slideout menu is never open
++		    // (tw_menu_key==""), so HW Back/Home would fall through to the
++		    // overlay no-op and the password screen would be inescapable
++		    // without touch. Forward them to the page anyway: its touch-key
++		    // actions route out via decrypt_redirect (USB keyboard Esc,
++		    // HW keys, OTG mouse side buttons).
++		    std::string cur_page = PageManager::GetCurrentPage();
++		    bool on_decrypt_page = (cur_page == "decrypt" || cur_page == "decrypt_pin"
++		                            || cur_page == "decrypt_pattern");
++		    bool pass_keys = DataManager::GetStrValue("tw_menu_key") != "" || on_decrypt_page;
+ 		    if(ev.value != 0){
+-		         if(ev.code == KEY_HOME && DataManager::GetStrValue("tw_menu_key") != "")
++		         if(ev.code == KEY_HOME && pass_keys)
+ 	                       PageManager::NotifyKey(KEY_HOMEPAGE, true);
+-		         if(ev.code == KEY_BACK && DataManager::GetStrValue("tw_menu_key") != "")
++		         if(ev.code == KEY_BACK && pass_keys)
+ 	                       PageManager::NotifyKey(KEY_BACK, true);
+ 		         DataManager::Vibrate("tw_button_vibrate");
+ 		    }else{
+@@ -225,13 +235,13 @@
+ 								PageManager::ChangeOverlay("console");
+ 		                  break;
+ 	                  case KEY_HOME:
+-							if(DataManager::GetStrValue("tw_menu_key") != "")
++							if(pass_keys)
+ 								PageManager::NotifyKey(KEY_HOMEPAGE, false);
+ 							else
+ 								gui_changeOverlay("");
+ 		                  break;
+ 	                  case KEY_BACK:
+-							if(DataManager::GetStrValue("tw_menu_key") != "")
++							if(pass_keys)
+ 								PageManager::NotifyKey(KEY_BACK, false);
+ 							else
+ 								gui_changeOverlay("");
+@@ -444,7 +454,8 @@
  				blankTimer.toggleBlank();
  			}
  		} else {

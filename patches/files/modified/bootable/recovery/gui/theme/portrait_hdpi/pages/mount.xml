@@ -251,7 +251,23 @@
 					<action function="set">of_show_pass=0</action>
 					<action function="page">decrypt_pin</action>
 				</listitem>
+				<listitem name="Skip">
+					<action function="set">tw_page_done=1</action>
+					<action function="page">decrypt_redirect</action>
+				</listitem>
 			</listbox>
+
+			<action>
+				<touch key="home"/>
+				<action function="set">tw_page_done=1</action>
+				<action function="page">decrypt_redirect</action>
+			</action>
+
+			<action>
+				<touch key="back"/>
+				<action function="set">tw_page_done=1</action>
+				<action function="page">decrypt_redirect</action>
+			</action>
 		</page>
 
 		<page name="decrypt_pin">
@@ -273,6 +289,29 @@
 					<action function="page">decrypt</action>
 				</listitem>
 			</listbox>
+
+			<!-- Always-visible escape: no-touch users (HW keys, USB
+			     keyboard/mouse) can leave the password screen for the
+			     main menu without decrypting (see decrypt_redirect). -->
+			<listbox style="group_list">
+				<placement x="0" y="%row4_1_y%" w="%screen_w%" h="%bl_h1%"/>
+				<listitem name="Skip">
+					<action function="set">tw_page_done=1</action>
+					<action function="page">decrypt_redirect</action>
+				</listitem>
+			</listbox>
+
+			<action>
+				<touch key="home"/>
+				<action function="set">tw_page_done=1</action>
+				<action function="page">decrypt_redirect</action>
+			</action>
+
+			<action>
+				<touch key="back"/>
+				<action function="set">tw_page_done=1</action>
+				<action function="page">decrypt_redirect</action>
+			</action>
 		</page>
 
 		<page name="decrypt_pattern">
@@ -401,6 +440,14 @@
 			<action>
 				<condition var1="of_decrypt_from_menu" var2="2"/>
 				<action function="page">decrypt_users</action>
+			</action>
+			<!-- Startup (of_decrypt_from_menu unset): back/home/skip leaves
+			     the password screen for the main menu without decrypting.
+			     This is the only escape when touch is dead (HW keys, ADB). -->
+			<action>
+				<condition var1="of_decrypt_from_menu" op="!=" var2="1"/>
+				<condition var1="of_decrypt_from_menu" op="!=" var2="2"/>
+				<action function="page">main</action>
 			</action>
 		</page>
 

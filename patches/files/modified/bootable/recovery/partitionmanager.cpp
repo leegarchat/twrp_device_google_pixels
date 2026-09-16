@@ -810,11 +810,25 @@ void TWPartitionManager::Decrypt_Data() {
 						LOGERR("Unable to decrypt FBE device\n");
 					}
 					if (DataManager::GetIntValue("tw_mtp_enabled") != 0) {
-						LOGINFO("Restarting MTP after metadata decrypt\n");
-						Disable_MTP();
-						usleep(500000);
-						if (!Enable_MTP())
+						// Skip the restart while FBE user data is still locked
+						// (PIN/password/pattern set, CE not yet decrypted):
+						// /data/media is unreadable, so the restart adds no
+						// usable storage and only tears down USB
+						// (sys.usb.config=none stops adbd, killing adb on the
+						// password screen). The post-decrypt restart below
+						// picks MTP up once the user unlocks.
+						bool fbe_locked = Decrypt_Data->Is_FBE
+							&& DataManager::GetIntValue(TW_CRYPTO_PWTYPE) != 0
+							&& access("/data/media/0", R_OK) != 0;
+						if (fbe_locked) {
+							LOGINFO("Skipping MTP restart: FBE user data still locked (keeping adb up)\n");
+						} else {
+							LOGINFO("Restarting MTP after metadata decrypt\n");
 							Disable_MTP();
+							usleep(500000);
+							if (!Enable_MTP())
+								Disable_MTP();
+						}
 					}
 
 				} else {
