@@ -9,15 +9,61 @@
 
 use crate::config::load_device_config;
 use crate::i2c::patch_max77759_i2c_with_driver;
-use crate::ko_picker::{ko_try_load, log_msg};
+use crate::ko_picker::{detect_kernel_env, ko_try_load, log_msg};
 use crate::props::{get_prop, set_prop};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
 
 const TAG: &str = "otg";
 const PROC_SHIM: &str = "/proc/otg_host_shim";
 const PROC_READY: &str = "/proc/otg_host_ready";
+const USB_ROLE_CLASS: &str = "/sys/class/usb_role";
+/// gvotable CHARGER_MODE force values driving VBUS in host mode (6.1 trick,
+/// still valid on 6.12).
+const CHARGER_FORCE_VALUE: &[u8] = b"49\n";
+const CHARGER_FORCE_ACTIVE: &[u8] = b"1\n";
+
+/// Kernel 6.12+: kprobe shim is dead (dwc3_otg_host_ready gone from the
+/// driver) — use the native role-switch + gvotable VBUS path instead.
+/// Unknown version reads as legacy (shim path) to preserve 6.1 behavior.
+fn use_native_otg() -> bool {
+    match detect_kernel_env() {
+        Ok(e) => (e.major, e.minor) >= (6, 12),
+        Err(_) => false,
+    }
+}
+
+/// First usb_role switch found (e.g. 11210000.usb-role-switch/role).
+fn find_usb_role() -> Option<PathBuf> {
+    std::fs::read_dir(USB_ROLE_CLASS)
+        .ok()?
+        .flatten()
+        .map(|e| e.path().join("role"))
+        .find(|p| p.exists())
+}
+
+/// Native host path (6.12+): role switch to host + gvotable VBUS force.
+/// Proven live: role flips (xHCI enumerates), CHARGER_MODE force sets
+/// otg_on=1, USB mouse works. otg_id follows the role on its own; typec
+/// writes fail on the TCPC side and are skipped by design.
+fn native_activate() -> Result<(), String> {
+    let role = find_usb_role().ok_or_else(|| "no usb_role switch found".to_string())?;
+    info("switching controller role to host");
+    let _ = std::fs::write(&role, b"host\n");
+    sleep(Duration::from_secs(2));
+    info("forcing VBUS via gvotable CHARGER_MODE");
+    let _ = std::fs::write(CHARGER_VALUE, CHARGER_FORCE_VALUE);
+    let _ = std::fs::write(CHARGER_ACTIVE, CHARGER_FORCE_ACTIVE);
+    sleep(Duration::from_secs(2));
+    let back = std::fs::read_to_string(&role).unwrap_or_default();
+    if back.trim() == "host" {
+        info("native host path ACTIVE (role=host, VBUS forced)");
+        Ok(())
+    } else {
+        Err(format!("role switch did not stick: {:?}", back.trim()))
+    }
+}
 
 fn info(msg: &str) {
     log_msg(TAG, "INFO", msg);
@@ -51,8 +97,21 @@ pub fn run_otg_patch() -> Result<(), String> {
         info("debugfs mounted");
     }
 
+    // 6.12+ device-tree branch: shim excluded by design (its kprobe
+    // target dwc3_otg_host_ready no longer exists) — native role-switch
+    // + gvotable VBUS path instead. Legacy kernels keep the shim path.
+    let mut native_done = false;
     if Path::new(PROC_SHIM).exists() {
         info("module already loaded (/proc/otg_host_shim exists)");
+    } else if use_native_otg() {
+        info("6.12+ kernel: skipping shim, native host path");
+        match native_activate() {
+            Ok(()) => native_done = true,
+            Err(e) => {
+                let _ = set_prop("sys.usb.patch_dwc3", "0");
+                return Err(e);
+            }
+        }
     } else {
         info("/proc/otg_host_shim not found, injecting module");
         if !ko_try_load("otg_host_shim", None, "otg_patch") {
@@ -61,7 +120,10 @@ pub fn run_otg_patch() -> Result<(), String> {
         }
     }
 
-    if Path::new(PROC_SHIM).exists() {
+    if native_done {
+        set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
+        info("host_ready ACTIVE via native path, sys.usb.patch_dwc3=1");
+    } else if Path::new(PROC_SHIM).exists() {
         let ready = std::fs::read_to_string(PROC_READY)
             .unwrap_or_default()
             .trim()
