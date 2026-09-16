@@ -52,31 +52,43 @@ rm -rf "$FOLDER"
 mkdir -p "$FOLDER/vendor_ramdisk" || _die "Cannot create $FOLDER/vendor_ramdisk"
 
 device_code=$(getprop ro.hardware)
-kver=$(uname -r | cut -d. -f1-2)
-_log "device_code=$device_code kernel=$kver ($(uname -r))"
+_log "device_code=$device_code"
 
 # --- Kernel boot strings from /pixelrunatboot.json (kernel_bootcfg) ---
-# Same source as the build (families/*/family.json `kernels` + device
-# overrides, author order). The booted kernel selects its own cmdline +
-# bootconfig, so a 6.12 boot stamps 6.12 flags and a 6.1 boot stamps 6.1
-# flags — never the stale cmdline baked into nboot.lz4.
+# SINGLE record of the kernel this image was built with (no uname probing:
+# uname shows only the current slot and can carry arbitrary maintainer
+# strings). Stamp it verbatim; when the record is absent fall back to the
+# nboot.lz4 base header untouched.
 KB_JSON="/pixelrunatboot.json"
-[ -f "$KB_JSON" ] || _die "pixelrunatboot.json not found (need kernel_bootcfg)"
-KB_PAIR=$(awk -v d="$device_code" -v k="$kver" '
-  /"kernel_bootcfg"/ {t=1; next}
-  t==1 && index($0, "\"" d "\"") {t=2; next}
-  t==2 && index($0, "\"" k "\"") {t=3; next}
-  t==3 && /"cmdline"/ {c=$0; t=4; next}
-  t==4 && /"bootconfig"/ {print c; print $0; exit}
-' "$KB_JSON")
-K_CMDLINE_RAW=$(printf '%s' "$KB_PAIR" | sed -n '1p' | sed 's/.*"cmdline": "\(.*\)".*/\1/')
-K_BOOTCONFIG_RAW=$(printf '%s' "$KB_PAIR" | sed -n '2p' | sed 's/.*"bootconfig": "\(.*\)".*/\1/')
-[ -n "$K_CMDLINE_RAW" ] || _die "no kernel_bootcfg for device='$device_code' kernel='$kver'"
-# JSON unescape: \" -> " (cmdline dyndbg flag), \n stays escaped for bootconfig.
-K_CMDLINE=$(printf '%s' "$K_CMDLINE_RAW" | sed 's/\\"/"/g')
-echo "- Kernel profile: $device_code / $kver"
-_log "cmdline=[$K_CMDLINE]"
-_log "bootconfig_raw=[$K_BOOTCONFIG_RAW]"
+STAMP_BOOTCFG=0
+K_CMDLINE=""
+K_BOOTCONFIG_RAW=""
+K_VER=""
+if [ -f "$KB_JSON" ]; then
+    KB_PAIR=$(awk -v d="$device_code" '
+      /"kernel_bootcfg"/ {t=1; next}
+      t==1 && index($0, "\"" d "\"") {t=2; next}
+      t==2 && /"ver"/ {v=$0; t=3; next}
+      t==3 && /"cmdline"/ {c=$0; t=4; next}
+      t==4 && /"bootconfig"/ {print v; print c; print $0; exit}
+    ' "$KB_JSON")
+    K_VER=$(printf '%s' "$KB_PAIR" | sed -n '1p' | sed 's/.*"ver": "\(.*\)".*/\1/')
+    K_CMDLINE_RAW=$(printf '%s' "$KB_PAIR" | sed -n '2p' | sed 's/.*"cmdline": "\(.*\)".*/\1/')
+    K_BOOTCONFIG_RAW=$(printf '%s' "$KB_PAIR" | sed -n '3p' | sed 's/.*"bootconfig": "\(.*\)".*/\1/')
+    if [ -n "$K_CMDLINE_RAW" ]; then
+        # JSON unescape: \" -> " (cmdline dyndbg flag), \n stays escaped for bootconfig.
+        K_CMDLINE=$(printf '%s' "$K_CMDLINE_RAW" | sed 's/\\"/"/g')
+        STAMP_BOOTCFG=1
+    fi
+fi
+if [ "$STAMP_BOOTCFG" = "1" ]; then
+    echo "- Kernel profile (build): $device_code / $K_VER"
+    _log "cmdline=[$K_CMDLINE]"
+    _log "bootconfig_raw=[$K_BOOTCONFIG_RAW]"
+else
+    echo "- WARNING: no kernel_bootcfg for '$device_code', keeping base (nboot) header"
+    _log "WARNING: kernel_bootcfg fallback to nboot default"
+fi
 
 if ! [ -f /FFiles/check_dfe_and_reflash ] && ! [ -f /sdcard/Fox/check_dfe_and_reflash ]; then
     for f in "$SNAP/first_stage_ramdisk/system/etc"/fstab*; do
@@ -129,12 +141,16 @@ magiskboot_29 unpack -h empty.img >>"$LOGF" 2>&1 || true
 [ -f "$FOLDER/header" ] || _die "header missing after unpack -h (see $LOGF)"
 [ -f "$FOLDER/bootconfig" ] || _die "bootconfig missing after unpack -h (see $LOGF)"
 
-echo "- Stamping kernel cmdline ($kver) into header..."
-printf 'name=\ncmdline=%s\n' "$K_CMDLINE" > "$FOLDER/header" \
-    || _die "Cannot write header"
-printf '%b\n' "$K_BOOTCONFIG_RAW" > "$FOLDER/bootconfig" \
-    || _die "Cannot write bootconfig"
-_log "header+bootconfig stamped"
+echo "- Stamping build kernel cmdline ($K_VER) into header..."
+if [ "$STAMP_BOOTCFG" = "1" ]; then
+    printf 'name=\ncmdline=%s\n' "$K_CMDLINE" > "$FOLDER/header" \
+        || _die "Cannot write header"
+    printf '%b\n' "$K_BOOTCONFIG_RAW" > "$FOLDER/bootconfig" \
+        || _die "Cannot write bootconfig"
+    _log "header+bootconfig stamped ($K_VER)"
+else
+    _log "header+bootconfig left as unpacked (nboot default)"
+fi
 
 echo "- Creating recovery ramdisk cpio from snapshot..."
 cd "$SNAP" || _die "Cannot cd to $SNAP"
@@ -152,7 +168,7 @@ cpio -H newc -o < "$FSTAGE_LIST" > "$FOLDER/vendor_ramdisk/ramdisk.cpio" 2>/dev/
     || _die "ramdisk.cpio is empty after cpio"
 _log "ramdisk.cpio size=$(stat -c %s "$FOLDER/vendor_ramdisk/ramdisk.cpio" 2>/dev/null) bytes"
 
-echo "- Repacking vendor_boot image (cmdline=$kver)..."
+echo "- Repacking vendor_boot image (cmdline=${K_VER:-nboot default})..."
 cd "$FOLDER" || _die "Cannot cd to $FOLDER"
 magiskboot_29 repack "$FOLDER/empty.img" \
     || _die "magiskboot_29 repack failed"

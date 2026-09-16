@@ -207,17 +207,31 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     merged[dev] = pj
     # Flat per-device kernel boot strings (author order, like VENDOR_CMDLINE).
     fam = families.get(pj['family'], {})
-    vers = set((fam.get('kernels') or {}).keys()) | set((pj.get('kernels') or {}).keys())
-    devcfg = {}
-    for ver in sorted(vers):
-        prof, src = effective_profile(fam, pj, ver)
-        if prof is None:
-            continue
-        flags = norm_cmdline(prof.get('cmdline', {'type': 'arr', 'value': []}))
-        boot = list(prof.get('bootconfig_append', []) or [])
-        devcfg[ver] = {'cmdline': ' '.join(flags), 'bootconfig': '\n'.join(boot), 'source': src}
-    if devcfg:
-        bootcfg[dev] = devcfg
+    # Single record: the kernel THIS image is built with. Version comes
+    # from families/<fam>/.gen_kernel.mk (FOX_KERNEL_VER, written by
+    # build.sh pre-lunch); env vars don't survive recipe shells.
+    # No runtime detection: reflash stamps exactly this, or falls back
+    # to the nboot.lz4 base header when the record is absent.
+    ver = ''
+    genmk = tree / 'families' / pj.get('family', '') / '.gen_kernel.mk'
+    try:
+        for line in genmk.read_text().splitlines():
+            if line.startswith('FOX_KERNEL_VER :='):
+                ver = line.split(':=', 1)[1].strip()
+                break
+    except OSError:
+        pass
+    if not ver:
+        ver = fam.get('default_kernel', '')
+        print(f"    [PIXELCFG] WARNING: no .gen_kernel.mk for {pj['family']}, using default_kernel={ver}")
+    prof, src = effective_profile(fam, pj, ver)
+    if prof is None:
+        print(f'    [PIXELCFG] ERROR: no kernels[{ver}] for {dev}')
+        sys.exit(1)
+    flags = norm_cmdline(prof.get('cmdline', {'type': 'arr', 'value': []}))
+    boot = list(prof.get('bootconfig_append', []) or [])
+    bootcfg[dev] = {'ver': ver, 'cmdline': ' '.join(flags),
+                    'bootconfig': '\n'.join(boot), 'source': src}
     n += 1
 merged['kernel_bootcfg'] = bootcfg
 out.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + '\n')
