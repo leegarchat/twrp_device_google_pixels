@@ -169,6 +169,32 @@ device/google/pixels/
 (всегда открыт, в exclude). Пропсы семьи сливаются под пропсы девайса
 (девайс побеждает). Невалидный JSON/дубль ключа = громкий фейл сборки.
 
+## 4.1. Фолды и letterbox (is_fold + display-геометрия)
+
+Дисплеи тоже переехали в JSON (единый источник, код не знает разрешений):
+
+```json
+{
+  "is_fold": 1,
+  "front_display": {"w": 1080, "h": 2424},
+  "inner_display": {"w": 2076, "h": 2152}
+}
+```
+
+- `is_fold: 1` — фолд: применяются hinge-детект и двойная геометрия.
+  `0`/отсутствует — только `front_display` (база для slab).
+- `recovery-pixel-boot init` (`on early-init`, до чтения DOF_ в data.cpp
+  и до открытия DRM в minui): на фолде сканирует `/dev/input` на EV_SW
+  (`SW_LID` закрыт = cover, `SW_TABLET_MODE`/`lid` открыт = inner, нет
+  сенсора = безопасный дефолт cover) и ставит `DOF_SCREEN_W/H` активного
+  канваса + `DOF_PROGRESSIVE_SCALE=1`. Slab всегда берёт front.
+- Letterbox-движок (`data.cpp` + `pages.cpp` в снапшотах): виртуальный
+  канвас + центровка, uniform scale вместо растягивания. Без
+  `DOF_SCREEN_W`/progressive — стоковое поведение без изменений.
+- Парсер конфига понимает bare numbers (`Val::Num`) и вложенные
+  `{"w","h"}`-объекты; старые файлы без ключей парсятся в дефолты
+  (1080x2400, не фолд).
+
 ## 5. Rust-движок `recovery-pixel-boot`
 
 Статический мультиколл-бинанрь (`std` + `liblibc`, `recovery: true`,
