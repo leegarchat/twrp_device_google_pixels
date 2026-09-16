@@ -1,6 +1,8 @@
 {
   "family": "malibu",
   "soc_family": "malibu",
+  "is_fold": 0,
+  "front_display": {"w": 1080, "h": 2400},
   "touch_modules": [
     "heatmap",
     "touch_offload",

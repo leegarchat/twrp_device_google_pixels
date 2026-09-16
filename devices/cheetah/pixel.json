@@ -1,6 +1,8 @@
 {
   "family": "gs201",
   "soc_family": "gs201",
+  "is_fold": 0,
+  "front_display": {"w": 1080, "h": 2400},
   "touch_modules": [
     "stmvl53l1",
     "lwis",
