@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
-#              [-k|--kernel VER] [--force]
+#              [-k|--kernel VER] [--force] [--cpp-keymint]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -30,6 +30,12 @@
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
+#   --cpp-keymint     TEST (zuma only): build C++ keymint from source
+#                     (system/core/trusty/keymaster) instead of the Rust
+#                     prebuilt. Exported as FOX_ZUMA_CPP_KEYMINT for
+#                     device.mk/vendorsetup.sh/callback. Without it zuma
+#                     silently stays on Rust — this flag makes the test
+#                     explicit and visible in the build header below.
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -101,6 +107,7 @@ PATCH_VERSION=""
 LGZ_LEVEL="0"
 KERNEL_VER=""
 FOX_FORCE=false
+FOX_ZUMA_CPP_KEYMINT="0"
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -183,6 +190,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_FORCE=true
             shift
             ;;
+        --cpp-keymint)
+            FOX_ZUMA_CPP_KEYMINT="1"
+            shift
+            ;;
         -h|--help)
             sed -n '2,30p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
@@ -202,6 +213,12 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     fi
 fi
 export LGZ_LEVEL
+export FOX_ZUMA_CPP_KEYMINT
+# TEST flag is zuma-only: anything else with it is a no-op, say so loudly.
+if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" && -n "$FAMILY" && "$FAMILY" != "zuma" && "$FAMILY" != "shiba" && "$FAMILY" != "husky" && "$FAMILY" != "akita" ]]; then
+    echo "  WARNING: --cpp-keymint is zuma-only; ignored for family '$FAMILY'"
+    FOX_ZUMA_CPP_KEYMINT="0"
+fi
 
 # --- Kernel profile resolution (families/*/family.json `kernels`) ---
 # Engages only with a known family context (-f). Without -f the legacy
@@ -315,6 +332,11 @@ echo "=============================================="
 echo "  Source root:   $SOURCE_ROOT"
 echo "  Family:        ${FAMILY:-<interactive>}"
 echo "  Kernel:        ${FOX_KERNEL_VER:-<legacy default>}"
+if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" ]]; then
+echo "  Keymint:       C++ from source (TEST, no Rust prebuilt)"
+else
+echo "  Keymint:       platform default (zuma/zumapro=Rust prebuilt)"
+fi
 if [[ ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
     echo "  Groups:        $(printf '%s ' "${KERNEL_GROUPS[@]%%|*}")"
 fi
