@@ -1,11 +1,12 @@
 // Soong build for the FBE KDF playground binary (recovery only).
+// Dynamic libcrypto: no libcrypto_static recovery variant exists, and the
+// binary only ever runs post-unpack (decrypt flow) or via adb, where the
+// cluster (with libcrypto.so) is already unpacked.
 cc_binary {
     name: "fox_fbe_kdf",
     srcs: ["fox_fbe_kdf.c"],
     recovery: true,
-    static_executable: true,
-    stl: "none",
-    static_libs: ["libcrypto_static"],
+    shared_libs: ["libcrypto"],
     cflags: [
         "-Wall",
         "-Wextra",
