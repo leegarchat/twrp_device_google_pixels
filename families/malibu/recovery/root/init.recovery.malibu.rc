@@ -1,0 +1,3 @@
+# init.recovery.malibu.rc — Malibu SoC (Tensor G6) stub.
+# Loaded by init when ro.hardware=malibu. All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

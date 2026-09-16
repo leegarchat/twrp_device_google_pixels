@@ -115,6 +115,10 @@ _ALL_DEVS="$_FAM_DEVS${_FAM_EXTRA:+,$_FAM_EXTRA}"
 # (single source of truth, validated here).
 _conf_file="$(gettop)/device/google/pixels/.build_platform.conf"
 _FAM_UFS="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${UFS_ADDR:-}")"
+# DWC3 USB controller (11210000.dwc3 on older Tensors, a210000.dwc3 on
+# malibu). Empty = pre-USBCTRL family, keep the 11210000 default in the
+# recovery rc files untouched.
+_FAM_USBCTRL="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")"
 _FAM_KEYMINT="$(python3 -c "import json,sys; print(json.load(open('$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.json')).get('keymint',''))" 2>/dev/null)"
 case "$_FAM_KEYMINT" in
     rust|cpp) ;;
@@ -134,6 +138,7 @@ cat > "$_conf_file" <<_PLATFORM_EOF
 PLATFORM=${DEVICE_BUILD_FLAG}
 FAMILY=${DEVICE_BUILD_FLAG}
 UFS_ADDR=${_FAM_UFS}
+USBCTRL=${_FAM_USBCTRL}
 KEYMINT=${_FAM_KEYMINT}
 FAMILY_DEVICES=${_ALL_DEVS:-}
 LGZ_LEVEL=${_LGZ_LEVEL}
@@ -154,6 +159,8 @@ export FOX_AB_DEVICE=1
 export FOX_VENDOR_BOOT_RECOVERY=1
 if [ "$DEVICE_BUILD_FLAG" = "gs201" ] || [ "$DEVICE_BUILD_FLAG" = "gs101" ]; then
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/14700000.ufs/by-name/vendor_boot"
+elif [ "$DEVICE_BUILD_FLAG" = "malibu" ]; then
+    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/3c2d0000.ufs/by-name/vendor_boot"
 else
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/13200000.ufs/by-name/vendor_boot"
 fi

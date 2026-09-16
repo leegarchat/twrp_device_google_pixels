@@ -52,6 +52,15 @@ case "$KEYMINT" in
     *) echo "    [CONFIG] ERROR: bad KEYMINT='$KEYMINT', need rust|cpp from family.json"; return 1 ;;
 esac
 echo "    [CONFIG] KEYMINT=$KEYMINT"
+# DWC3 USB controller override arrives via .build_platform.conf (USBCTRL
+# from families/<fam>/family.conf, e.g. a210000.dwc3 on malibu). Empty =
+# pre-USBCTRL family, the 11210000 default baked into the rc files stands.
+: "${USBCTRL:=}"
+case "$USBCTRL" in
+    ""|*.dwc3) ;;
+    *) echo "    [CONFIG] ERROR: bad USBCTRL='$USBCTRL', need <base>.dwc3 or empty"; return 1 ;;
+esac
+[ -n "$USBCTRL" ] && echo "    [CONFIG] USBCTRL=$USBCTRL"
 
 # =========================================================================
 # LGZ compression configuration
@@ -710,6 +719,19 @@ case "$CALL_TYPE" in
         if [ -d "$family_dir/etc" ]; then
             cp -af "$family_dir/etc" "$TARGET_DIR/vendor/"
             echo "    [PLATFORM]   + VINTF keymint fragment"
+        fi
+
+        # --- Per-family USB controller address (DWC3) ---
+        # The recovery rc files bake in 11210000 (shared by gs201/zuma/zumapro);
+        # families with a different controller (malibu: a210000.dwc3) substitute
+        # both the .usb platform dir and the .dwc3 controller name.
+        if [ -n "$USBCTRL" ] && [ "$USBCTRL" != "11210000.dwc3" ]; then
+            usb_base="${USBCTRL%.dwc3}"
+            for usb_rc in "$TARGET_DIR/init.recovery.pixel_common.rc" "$TARGET_DIR/init.recovery.usb.rc"; do
+                [ -f "$usb_rc" ] || continue
+                sed -i "s/11210000\.usb/${usb_base}.usb/g; s/11210000\.dwc3/${USBCTRL}/g" "$usb_rc"
+                echo "    [PLATFORM]   + USB controller -> $USBCTRL ($(basename "$usb_rc"))"
+            done
         fi
 
         # --- Disable the keymint service that doesn't match this family ---

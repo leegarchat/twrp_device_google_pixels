@@ -1,0 +1,3 @@
+# init.recovery.grizzly.rc — Pixel 11 Pro (grizzly) stub.
+# Loaded by init when ro.hardware=grizzly. All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

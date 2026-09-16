@@ -1,0 +1,17 @@
+// Pre-rendered vendor fstab for malibu (Tensor G6).
+// Copied verbatim from grizzly CD1A.260905.001.B1 stock vendor/etc.
+// No build-time codegen: plain prebuilt_etc with the historical module
+// names, so device.mk PRODUCT_PACKAGES lines stay uniform.
+prebuilt_etc {
+    name: "fstab.malibu",
+    src: "fstab.malibu",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.malibu-fips",
+    src: "fstab.malibu-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
