@@ -389,6 +389,23 @@ if [[ -n "$FAMILY" ]]; then
     echo "[build] Pre-set DEVICE_BUILD_FLAG=$FAMILY"
 fi
 
+# Legacy path (no -f): the family is picked in the vendorsetup menu DURING
+# lunch, so KERNEL_MK is still empty here — but dumpvars parses BoardConfig.mk
+# during lunch and would hit the empty-cmdline guard for ANY family. Pre-generate
+# default profiles for every family now (cheap python, no build); the post-lunch
+# fallback below narrows to the selected family (honoring -k), and the end-of-build
+# cleanup removes all generated files so no stale override survives.
+if [[ -z "$KERNEL_MK" ]]; then
+    for _fam_json in "$SCRIPT_DIR"/families/*/family.json; do
+        _fam=$(basename "$(dirname "$_fam_json")")
+        [ "$_fam" = "common" ] && continue
+        _def=$(python3 -c "import json;print(json.load(open('$_fam_json')).get('default_kernel',''))" 2>/dev/null)
+        [ -n "$_def" ] || continue
+        python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate "$_fam" "-" "$_def" "$SCRIPT_DIR/families/$_fam/.gen_kernel.mk" >/dev/null 2>&1 || true
+    done
+    echo "[build] Pre-generated default kernel profiles for lunch (family selected interactively)"
+fi
+
 # Hard guarantee before lunch: dumpvars parses BoardConfig.mk during lunch
 # and aborts the whole build on empty VENDOR_CMDLINE — and a failed lunch
 # must never reach the destructive product-out clean below. Refuse early
@@ -413,12 +430,108 @@ set +e
 source build/envsetup.sh
 
 echo "[build] Running lunch twrp_pixels-ap2a-eng ..."
-lunch twrp_pixels-ap2a-eng
+lunch twrp_pixels-ap2a-eng || fox_safe_exit $?
 if [[ "$fox_sourced" != true ]]; then
     set -eo pipefail
 fi
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
+    else
+        exit "$SAFE_EXIT_CODE"
+    fi
+fi
 
 echo "[build] DEVICE_BUILD_FLAG=${DEVICE_BUILD_FLAG:-<not set>}"
+
+# Legacy fallback (no -f): the vendorsetup menu picked the family during lunch,
+# so KERNEL_MK is still empty. Resolve the kernel profile now: explicit -k wins
+# (validated, loud on unknown), otherwise the family default with a loud notice
+# (this is the interactive path; scripts/CI must pass -f/-k). Mirrors the -f
+# resolution above, minus the device filter and the tty picker.
+if [[ -z "$KERNEL_MK" && -n "${DEVICE_BUILD_FLAG:-}" ]]; then
+    KFAMILY="$DEVICE_BUILD_FLAG"
+    KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
+        echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
+        echo "$KLIST_RAW" >&2
+        fox_safe_exit 2
+    }
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        if [[ -z "$KLIST_RAW" || "$KLIST_RAW" == "(none)"* ]]; then
+            echo "ERROR: no kernel profiles for family '$KFAMILY' (WIP?)."
+            fox_safe_exit 2
+        fi
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        KDEFAULT=$(echo "$KLIST_RAW" | sed -n 's/.*(default: \([^)]*\)).*/\1/p')
+        if [[ -n "$KERNEL_VER" ]]; then
+            FOX_KERNEL_VER="$KERNEL_VER"
+        elif [[ -n "$KDEFAULT" ]]; then
+            FOX_KERNEL_VER="$KDEFAULT"
+            echo "[build] No -f/-k: using default kernel profile $FOX_KERNEL_VER for $KFAMILY (override with -k VER)"
+        else
+            echo "ERROR: no default kernel for $KFAMILY and no -k given."
+            fox_safe_exit 2
+        fi
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        FP_JSON=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
+            echo "$FP_JSON" >&2
+            fox_safe_exit 2
+        }
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        KERNEL_MK="$SCRIPT_DIR/families/$KFAMILY/.gen_kernel.mk"
+        if [[ "$FP_JSON" == "[]" ]]; then
+            # Family without pixel.json devices: single group from family profile.
+            KERNEL_GROUPS=("$KFAMILY|-")
+        else
+            GROUP_LINES=$(FP_JSON="$FP_JSON" python3 -c '
+import json, os
+fps = json.loads(os.environ["FP_JSON"])
+byhash = {}
+for e in fps:
+    byhash.setdefault(e["hash"], []).append(e["device"])
+for h in sorted(byhash):
+    print(h + "|" + ",".join(sorted(byhash[h])))' 2>/dev/null) || GROUP_LINES=""
+            ALL_DEVS=$(FP_JSON="$FP_JSON" python3 -c '
+import json, os
+print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))' 2>/dev/null) || ALL_DEVS=""
+            while IFS='|' read -r _h _devs; do
+                [ -n "$_devs" ] || continue
+                if [[ "$_devs" == "$ALL_DEVS" ]]; then
+                    _tag="$KFAMILY"
+                else
+                    _tag="${KFAMILY}_$(echo "$_devs" | tr ',' '-')"
+                fi
+                _gen="${_devs%%,*}"
+                KERNEL_GROUPS+=("$_tag|$_gen")
+            done <<< "$GROUP_LINES"
+        fi
+        if [[ ${#KERNEL_GROUPS[@]} -eq 0 ]]; then
+            echo "ERROR: no kernel groups for family '$KFAMILY'."
+            fox_safe_exit 2
+        fi
+        export FOX_KERNEL_VER
+        _pre_gen="${KERNEL_GROUPS[0]#*|}"
+        python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate \
+            "$KFAMILY" "${_pre_gen:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
+            || fox_safe_exit 2
+        # KeyMint HAL type for device.mk (same contract as the -f path above).
+        FOX_KEYMINT_TYPE="$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/families/$KFAMILY/family.json')).get('keymint',''))" 2>/dev/null)"
+        case "$FOX_KEYMINT_TYPE" in
+            rust|cpp) export FOX_KEYMINT_TYPE ;;
+            *) echo "ERROR: families/$KFAMILY/family.json needs keymint 'rust' or 'cpp'"; fox_safe_exit 2 ;;
+        esac
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+        if [[ "$fox_sourced" == true ]]; then
+            return "$SAFE_EXIT_CODE"
+        else
+            exit "$SAFE_EXIT_CODE"
+        fi
+    fi
+fi
 
 BUILD_TARGETS="adbd vendorbootimage"
 
@@ -559,10 +672,12 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
     fi
 done
 
-# A stale generated override would silently reconfigure later manual builds.
-if [[ -n "$KERNEL_MK" && -f "$KERNEL_MK" ]]; then
-    rm -f "$KERNEL_MK"
-    echo "[build] Removed generated $KERNEL_MK (reproducible via -k $FOX_KERNEL_VER)"
+# Stale generated overrides would silently reconfigure later manual builds
+# (dumpvars parses BoardConfig.mk on every lunch). Remove everything this
+# script may have generated — the pre-lunch sweep covers all families.
+_removed=$(rm -fv "$SCRIPT_DIR"/families/*/.gen_kernel.mk 2>/dev/null)
+if [[ -n "$_removed" ]]; then
+    echo "[build] Removed generated kernel profiles (reproducible via build.sh -k $FOX_KERNEL_VER)"
 fi
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     if [[ "$fox_sourced" == true ]]; then
