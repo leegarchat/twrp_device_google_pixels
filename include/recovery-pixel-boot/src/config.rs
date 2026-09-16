@@ -271,7 +271,7 @@ fn get_int(pairs: &[(String, Val)], key: &str) -> i64 {
         .unwrap_or_default()
 }
 
-fn get_obj<'x>(pairs: &'x [(String, Val)], key: &str) -> Vec<(String, Val)> {
+fn get_obj(pairs: &[(String, Val)], key: &str) -> Vec<(String, Val)> {
     pairs
         .iter()
         .find(|(k, _)| k == key)

@@ -155,7 +155,7 @@ const SW_TABLET_MODE: u32 = 0x01;
 // c_int on bionic), so the call site casts with `as _`; the value always
 // fits (top bit used is 2<<30).
 const fn evioc(addr_bits_nr: u32, len: usize) -> u64 {
-    ((2 << 30) | ((len as u64) << 16) | (0x45 << 8) | addr_bits_nr as u64) as u64
+    (2 << 30) | ((len as u64) << 16) | (0x45 << 8) | addr_bits_nr as u64
 }
 const EVIOCGBIT_EV: u32 = 0x20;
 const EVIOCGSW_NR: u32 = 0x1B;
@@ -217,11 +217,13 @@ fn detect_fold_state_in(input_dir: &std::path::Path) -> FoldState {
             Ok(c) => c,
             Err(_) => continue,
         };
+        // Safety: path is a valid CString from read_dir; flags are valid; fd checked below.
         let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
         if fd < 0 {
             continue;
         }
         let found = probe_hinge_fd(fd);
+        // Safety: fd came from a successful open just above and is closed exactly once.
         unsafe { libc::close(fd) };
         if let Some(state) = found {
             return state;
