@@ -299,3 +299,25 @@ adb shell 'grep -iE "ko_loader|susfs_fix|otg_patch|pixelrunatboot" /tmp/recovery
 adb shell 'ls /dev/ko_stage/*/ | head; cat /proc/modules | grep -cE "touch|goodix"'
 adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 ```
+
+## 13. Pixel 11 (malibu): заимствования из yogi-orangefox
+
+Часть логики P11-серии подсмотрена и адаптирована из
+https://github.com/asdfmonster261/yogi-orangefox ( unified-дерево под
+malibu: yogi = 11 Pro Fold, cubs/grizzly/kodiak = 11/11 Pro/11 Pro XL).
+Что взято:
+- vold multi-device metadata decrypt: парсинг `device=zoned:` /
+  `device=exp:`/`exp_alias:` в libfstab, поле `user_devices`, dm-имена и
+  key-подкаталоги по basename, 5-байтный `.weaver`-слот (BE@1),
+  фолбэк keySize 0→16, таймаут метадаты 30→120;
+- VINTF keymint-манифест schema 2.0 (recovery везёт libvintf 8.0, schema 9.0
+  из стока роняет регистрацию ВСЕХ device-HAL);
+- протокол Titan M3 weaver (raw-структуры, hdr `0x000e0000`) — перенесён
+  в наш Rust-демон как фолбэк с лэтчем, protobuf-путь Titan M не тронут;
+- референс тач-стека/карты девайсов (sec_touch через GTI на фолде,
+  focal+syna на candybar, dep-порядок).
+Что НЕ взято (сознательно): v5-HAL пребилдом из стока (собираем Rust-HAL
+из исходников), OTG через vendor aocd (наш native-путь встал сам),
+попереслотный reflash (наш путь — strip dtb + json-cmdline),
+семейный хардкод яркости cover-панели (на grizzly подсветка находится
+сама на `panel0-backlight`).
