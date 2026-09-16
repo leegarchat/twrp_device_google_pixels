@@ -365,7 +365,8 @@ bool fscrypt_mount_metadata_encrypted(const std::string& blk_device, const std::
         }
         std::string exp_blkdev;
         uint64_t exp_nr_sec;
-        if (!create_crypto_blk_dev(exp_name, exp_dev, exp_key, options, &exp_nr_sec)) {
+        if (!create_crypto_blk_dev(exp_name, exp_dev, exp_key, options, &exp_blkdev,
+                                   &exp_nr_sec)) {
             LOG(ERROR) << "create_crypto_blk_dev failed for expansion device: " << exp_dev;
             return false;
         }

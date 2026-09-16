@@ -24,7 +24,7 @@
          default_metadata_key_dir = default_metadata_key_dir + "/default";
      }
      auto gen = needs_encrypt ? makeGen(options) : neverGen();
-@@ -332,17 +337,36 @@
+@@ -332,17 +337,37 @@
  
      // create dm-default-key for zoned device
      std::string crypto_zoned_blkdev;
@@ -61,7 +61,8 @@
 +        }
 +        std::string exp_blkdev;
 +        uint64_t exp_nr_sec;
-+        if (!create_crypto_blk_dev(exp_name, exp_dev, exp_key, options, &exp_nr_sec)) {
++        if (!create_crypto_blk_dev(exp_name, exp_dev, exp_key, options, &exp_blkdev,
++                                   &exp_nr_sec)) {
 +            LOG(ERROR) << "create_crypto_blk_dev failed for expansion device: " << exp_dev;
              return false;
          }
