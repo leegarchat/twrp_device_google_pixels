@@ -1,0 +1,12 @@
+--- a/system/core/trusty/keymint/Android.bp
++++ b/system/core/trusty/keymint/Android.bp
+@@ -21,6 +21,9 @@
+     name: "android.hardware.security.keymint-service.rust.trusty",
+     relative_install_path: "hw",
+     vendor: true,
++    // FOX: allow install into the recovery ramdisk (zuma Rust-from-source
++    // test copies the vendor output into vendor_boot manually).
++    recovery_available: true,
+     init_rc: ["android.hardware.security.keymint-service.rust.trusty.rc"],
+     vintf_fragments: ["android.hardware.security.keymint-service.rust.trusty.xml"],
+     srcs: [
