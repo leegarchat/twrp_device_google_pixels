@@ -544,7 +544,7 @@ namespace keystore {
 				|| *synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V3
 				|| *synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V4) {
 			if (*synthetic_password_version == SYNTHETIC_PASSWORD_VERSION_V4)
-				printf("spblob v4 (diagnostic: running v2/v3 pipeline)\n");
+				printf("spblob v4\n");
 			else
 				printf("spblob v2 / v3\n");
 			/* Version 2 / 3 of the spblob is basically the same as version 1, but the order of getting the intermediate key and disk decryption key have been flip-flopped
