@@ -2,9 +2,10 @@
 //!
 //! Build-time merged map {codename: {...}} from families/*/family.json +
 //! devices/*/pixel.json. Device section: family/soc strings, touch module
-//! list, partition base names, haptics sysfs path, props map.
-//! The parser below handles exactly this schema: objects with string keys,
-//! string values, arrays of strings, nested objects one level deep.
+//! list, partition base names, haptics sysfs path, fold flag + display
+//! geometry, props map.
+//! The parser below handles exactly this schema: objects with string keys;
+//! string, number, string-array values; nested objects one level deep.
 
 use std::path::Path;
 
@@ -39,6 +40,20 @@ pub struct DeviceConfig {    pub family: String,
     pub vbus_paths: Vec<String>,
     /// TCPC driver dir name for otg-patch (default "max77759tcpc").
     pub tcpc_driver: String,
+    /// Fold device flag (default false). When true, init detects the hinge
+    /// state and applies front/inner display geometry.
+    pub is_fold: bool,
+    /// Base (cover/front) display virtual canvas (default 1080x2400).
+    pub front_display: DisplayGeom,
+    /// Inner display virtual canvas for folds; None when absent/incomplete.
+    pub inner_display: Option<DisplayGeom>,
+}
+
+/// Virtual display canvas (letterbox geometry) in pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DisplayGeom {
+    pub w: u32,
+    pub h: u32,
 }
 
 pub const CONFIG_PATH: &str = "/pixelrunatboot.json";
@@ -74,6 +89,7 @@ enum Val {
     Str(String),
     Arr(Vec<String>),
     Obj(Vec<(String, Val)>),
+    Num(i64),
 }
 
 impl<'a> Parser<'a> {
@@ -141,6 +157,23 @@ impl<'a> Parser<'a> {
             }
         }
     }
+    fn number(&mut self) -> Result<i64, String> {
+        let start = self.i;
+        if self.peek()? == b'-' {
+            self.i += 1;
+        }
+        let digits = self.i;
+        while matches!(self.b.get(self.i).copied(), Some(c) if c.is_ascii_digit()) {
+            self.i += 1;
+        }
+        if self.i == digits {
+            return Err("bad number".to_string());
+        }
+        std::str::from_utf8(&self.b[start..self.i])
+            .map_err(|_| "bad number".to_string())?
+            .parse::<i64>()
+            .map_err(|_| "bad number".to_string())
+    }
     fn array_of_strings(&mut self) -> Result<Vec<String>, String> {
         self.eat(b'[')?;
         let mut out = Vec::new();
@@ -164,7 +197,8 @@ impl<'a> Parser<'a> {
             }
         }
     }
-    /// Object whose values are strings, string arrays, or one-level string maps.
+    /// Object whose values are strings, string arrays, numbers, or
+    /// one-level maps of those (device sections + props + display geometry).
     fn object(&mut self) -> Result<Vec<(String, Val)>, String> {
         self.eat(b'{')?;
         let mut out = Vec::new();
@@ -184,6 +218,7 @@ impl<'a> Parser<'a> {
                 // Full recursion: device sections hold arrays AND the props
                 // map; non-string props values are filtered at extraction.
                 b'{' => Val::Obj(self.object()?),
+                b'0'..=b'9' | b'-' => Val::Num(self.number()?),
                 _ => return Err(format!("bad value for key {k}")),
             };
             out.push((k, v));
@@ -222,6 +257,43 @@ fn get_arr(pairs: &[(String, Val)], key: &str) -> Vec<String> {
             _ => None,
         })
         .unwrap_or_default()
+}
+
+fn get_int(pairs: &[(String, Val)], key: &str) -> i64 {
+    pairs
+        .iter()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, v)| match v {
+            Val::Num(n) => Some(*n),
+            Val::Str(s) => s.parse::<i64>().ok(),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn get_obj<'x>(pairs: &'x [(String, Val)], key: &str) -> Vec<(String, Val)> {
+    pairs
+        .iter()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, v)| match v {
+            Val::Obj(o) => Some(o.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Display geometry from a {"w": N, "h": M} object; None when incomplete.
+fn get_display_geom(pairs: &[(String, Val)], key: &str) -> Option<DisplayGeom> {
+    let obj = get_obj(pairs, key);
+    if obj.is_empty() {
+        return None;
+    }
+    let w = get_int(&obj, "w");
+    let h = get_int(&obj, "h");
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    Some(DisplayGeom { w: w as u32, h: h as u32 })
 }
 
 /// Load one device section from a config file.
@@ -320,6 +392,10 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
                 v
             }
         },
+        is_fold: get_int(pairs, "is_fold") != 0,
+        front_display: get_display_geom(pairs, "front_display")
+            .unwrap_or(DisplayGeom { w: 1080, h: 2400 }),
+        inner_display: get_display_geom(pairs, "inner_display"),
     })
 }
 
@@ -417,6 +493,46 @@ mod tests {
             c.props.iter().find(|(k, _)| k == "ro.product.model").unwrap().1,
             "Pixel 8"
         );
+    }
+
+    #[test]
+    fn numbers_and_display_geometry() {
+        let d = std::env::temp_dir().join(format!("fox_test_num_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"comet": {
+              "family": "zumapro",
+              "is_fold": 1,
+              "front_display": {"w": 1080, "h": 2424},
+              "inner_display": {"w": 2076, "h": 2152},
+              "props": {}
+            },
+            "shiba": {
+              "family": "zuma",
+              "is_fold": 0,
+              "front_display": {"w": 1080, "h": 2400},
+              "props": {}
+            },
+            "lynx": {"family": "gs201", "props": {}}}"#,
+        )
+        .unwrap();
+        let c = load_device_config_from(&f, "comet").unwrap();
+        assert!(c.is_fold);
+        assert_eq!(c.front_display, DisplayGeom { w: 1080, h: 2424 });
+        assert_eq!(c.inner_display, Some(DisplayGeom { w: 2076, h: 2152 }));
+        let s = load_device_config_from(&f, "shiba").unwrap();
+        assert!(!s.is_fold);
+        assert_eq!(s.front_display, DisplayGeom { w: 1080, h: 2400 });
+        assert_eq!(s.inner_display, None);
+        // Legacy file without the new keys: defaults, still parses.
+        let l = load_device_config_from(&f, "lynx").unwrap();
+        assert!(!l.is_fold);
+        assert_eq!(l.front_display, DisplayGeom { w: 1080, h: 2400 });
+        assert_eq!(l.inner_display, None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
