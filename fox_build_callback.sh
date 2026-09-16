@@ -42,6 +42,16 @@ case "$LGZ_LEVEL" in
     *) echo "    [CONFIG] WARNING: bad LGZ_LEVEL='$LGZ_LEVEL', using 0"; LGZ_LEVEL=0 ;;
 esac
 echo "    [CONFIG] LGZ_LEVEL=$LGZ_LEVEL"
+# Keymint HAL type arrives via .build_platform.conf (written by vendorsetup.sh
+# from families/<fam>/family.json `keymint`: rust|cpp). No prebuilt fallback:
+# an unknown type fails the build loudly — shipping recovery without a
+# working keymint means no decrypt.
+: "${KEYMINT:=}"
+case "$KEYMINT" in
+    rust|cpp) ;;
+    *) echo "    [CONFIG] ERROR: bad KEYMINT='$KEYMINT', need rust|cpp from family.json"; return 1 ;;
+esac
+echo "    [CONFIG] KEYMINT=$KEYMINT"
 
 # =========================================================================
 # LGZ compression configuration
@@ -666,40 +676,34 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM]   + device override: ${dev}.twrp.flags"
         done
 
-        # --- Per-platform keymint binary injection ---
-        # Zuma/Zumapro use the shared prebuilt Rust keymint from
-        # families/common/keymint/bin/hw/ (one binary for both).
-        # GS201 uses C++ keymint built from source (system/core/trusty/keymaster)
-        # via PRODUCT_PACKAGES; soong places it at $PRODUCT_OUT/vendor/bin/hw/.
+        # --- Per-family keymint binary injection ---
+        # Both HALs are built from source and selected by families/<fam>/
+        # family.json `keymint` (KEYMINT here): rust (system/core/trusty/keymint)
+        # or cpp (system/core/trusty/keymaster). Soong places the vendor output
+        # at $PRODUCT_OUT/vendor/bin/hw/; it is copied into the ramdisk and
+        # later packed into the LGZ cluster. No prebuilt blobs.
         # VINTF keymint fragments live in families/<platform>/etc/.
         family_dir="$SCRIPT_DIR/families/$platform"
-        common_keymint_bin="$SCRIPT_DIR/families/common/keymint/bin"
         PRODUCT_OUT="${TARGET_DIR%/recovery/root}"
 
-        echo "    [PLATFORM] Injecting keymint for: $platform"
+        echo "    [PLATFORM] Injecting keymint for: $platform (type $KEYMINT)"
 
         # --- Keymint binary ---
-        if [ "$platform" = "gs201" ]; then
-            # GS201: copy source-built C++ keymint from soong vendor output
-            src_bin="$PRODUCT_OUT/vendor/bin/hw/android.hardware.security.keymint-service.trusty"
-            if [ -f "$src_bin" ]; then
-                mkdir -p "$TARGET_DIR/vendor/bin/hw"
-                cp -f "$src_bin" "$TARGET_DIR/vendor/bin/hw/"
-                chmod 755 "$TARGET_DIR/vendor/bin/hw/android.hardware.security.keymint-service.trusty"
-                echo "    [PLATFORM]   + C++ keymint binary (source-built)"
-            else
-                echo "    [PLATFORM] ERROR: C++ keymint binary not found at: $src_bin"
-                echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes keymint-service.trusty"
-            fi
+        if [ "$KEYMINT" = "cpp" ]; then
+            km_bin_name="android.hardware.security.keymint-service.trusty"
         else
-            # Zuma/Zumapro: copy shared prebuilt Rust keymint
-            if [ -d "$common_keymint_bin" ]; then
-                cp -af "$common_keymint_bin" "$TARGET_DIR/vendor/"
-                find "$TARGET_DIR/vendor/bin/hw" -type f -exec chmod 755 {} +
-                echo "    [PLATFORM]   + Rust keymint binary (prebuilt)"
-            else
-                echo "    [PLATFORM] WARNING: No prebuilt keymint bin dir"
-            fi
+            km_bin_name="android.hardware.security.keymint-service.rust.trusty"
+        fi
+        src_bin="$PRODUCT_OUT/vendor/bin/hw/$km_bin_name"
+        if [ -f "$src_bin" ]; then
+            mkdir -p "$TARGET_DIR/vendor/bin/hw"
+            cp -f "$src_bin" "$TARGET_DIR/vendor/bin/hw/"
+            chmod 755 "$TARGET_DIR/vendor/bin/hw/$km_bin_name"
+            echo "    [PLATFORM]   + $KEYMINT keymint binary (source-built)"
+        else
+            echo "    [PLATFORM] ERROR: $KEYMINT keymint binary not found at: $src_bin"
+            echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes $km_bin_name"
+            return 1
         fi
 
         # --- VINTF keymint fragment (per family) ---
@@ -708,16 +712,16 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM]   + VINTF keymint fragment"
         fi
 
-        # --- Disable the keymint service that doesn't match this platform ---
+        # --- Disable the keymint service that doesn't match this family ---
         rc_file="$TARGET_DIR/init.recovery.pixel_common.rc"
         if [ -f "$rc_file" ]; then
-            if [ "$platform" = "gs201" ]; then
-                # GS201: disable Rust keymint start (no Rust binary)
-                sed -i 's/^\(    start vendor\.keymint\.rust-trusty\)/#\1  # disabled for gs201/' "$rc_file"
+            if [ "$KEYMINT" = "cpp" ]; then
+                # C++ family: disable Rust keymint start (no Rust binary)
+                sed -i 's/^\(    start vendor\.keymint\.rust-trusty\)/#\1  # disabled ('"$KEYMINT"' family)/' "$rc_file"
                 echo "    [PLATFORM]   + disabled Rust keymint start"
             else
-                # Zuma/Zumapro: disable C++ keymint start (no C++ binary)
-                sed -i 's/^\(    start vendor\.keymint-trusty\)/#\1  # disabled for '"$platform"'/' "$rc_file"
+                # Rust family: disable C++ keymint start (no C++ binary)
+                sed -i 's/^\(    start vendor\.keymint-trusty\)/#\1  # disabled ('"$KEYMINT"' family)/' "$rc_file"
                 echo "    [PLATFORM]   + disabled C++ keymint start"
             fi
         fi

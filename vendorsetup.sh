@@ -110,10 +110,17 @@ _ALL_DEVS="$_FAM_DEVS${_FAM_EXTRA:+,$_FAM_EXTRA}"
 # Environment variables don't survive make/ninja recipe shells reliably
 # (ninja passes only an allowlisted env, so LGZ_LEVEL exported by build.sh
 # would never arrive) — persist everything scripts need into this file.
-# Family facts (UFS/earlycon/keymint) come from families/<fam>/family.conf.
+# Family facts (UFS/earlycon) come from families/<fam>/family.conf;
+# keymint HAL type (rust|cpp) comes from families/<fam>/family.json
+# (single source of truth, validated here).
 _conf_file="$(gettop)/device/google/pixels/.build_platform.conf"
 _FAM_UFS="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${UFS_ADDR:-}")"
-_FAM_KEYMINT="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${KEYMINT:-}")"
+_FAM_KEYMINT="$(python3 -c "import json,sys; print(json.load(open('$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.json')).get('keymint',''))" 2>/dev/null)"
+case "$_FAM_KEYMINT" in
+    rust|cpp) ;;
+    *) echo "  ERROR: families/$DEVICE_BUILD_FLAG/family.json needs keymint 'rust' or 'cpp'"; return 1 ;;
+esac
+echo "  Keymint HAL: $_FAM_KEYMINT (from family.json)"
 # LGZ cluster level from build.sh (-l/--level) or environment; validated 0-3.
 _LGZ_LEVEL="${LGZ_LEVEL:-0}"
 case "$_LGZ_LEVEL" in

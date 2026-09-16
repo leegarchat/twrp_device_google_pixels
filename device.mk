@@ -112,10 +112,23 @@ PRODUCT_PACKAGES += \
     recovery-tensor-daemon \
     recovery-pixel-boot
 
-# gs201/gs101 Trusty TA speaks Keymaster 4.0 (not KeyMint AIDL) — the AOSP C++ binary
-# auto-negotiates via GetVersion fallback. Build it so callback can swap it in.
+# KeyMint HAL from source, per-family type from families/*/family.json
+# `keymint` (rust|cpp), delivered as FOX_KEYMINT_TYPE by build.sh.
+# Rust (zuma/zumapro, system/core/trusty/keymint) talks KeyMint AIDL to the
+# Trusty TA; C++ (gs201/gs101, system/core/trusty/keymaster) auto-negotiates
+# via GetVersion fallback for Keymaster 4.0 TAs. No prebuilt blobs.
+ifeq ($(FOX_KEYMINT_TYPE),cpp)
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
+else ifeq ($(FOX_KEYMINT_TYPE),rust)
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
+else
+# FOX_KEYMINT_TYPE empty/unknown (manual lunch without build.sh): fall back
+# to the family-name mapping.
 ifneq (,$(filter gs201 gs101,$(DEVICE_BUILD_FLAG)))
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
+else
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
+endif
 endif
 
 

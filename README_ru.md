@@ -17,10 +17,10 @@ device/google/pixels/
 ├── device.mk / BoardConfig.mk  # пакеты, оверлеи, Soong
 ├── twrp_pixels.mk
 ├── families/                   # SoC-уровень (общее на семейство)
-│   ├── common/                 # keymint-пребилды, recovery.wipe, vendor.prop
+│   ├── common/                 # recovery.wipe, vendor.prop (без бинарей)
 │   ├── gs101|gs201|zuma|zumapro/
-│   │   ├── family.conf         # FAMILY/UFS_ADDR/EARLYCON_ADDR/KEYMINT (для скриптов)
-│   │   ├── family.json         # то же + общие пропсы + kernels-профили (для мёрджа в конфиг)
+│   │   ├── family.conf         # FAMILY/UFS_ADDR/EARLYCON_ADDR (для скриптов)
+│   │   ├── family.json         # то же + keymint rust|cpp + общие пропсы + kernels-профили (для мёрджа в конфиг)
 │   │   ├── family.mk           # SoC-фрагмент (без cmdline: он едет из .gen_kernel.mk)
 │   │   ├── fstab/              # пре-рендеренные fstab под vendor_ramdisk
 │   │   ├── recovery.fstab      # fstab рекавери
@@ -83,6 +83,10 @@ device/google/pixels/
 3. Soong собирает пакеты (`recovery_init_stub`, `recovery-tensor-daemon`,
     `recovery-pixel-boot`, fstabs, keymint) + оверлеи:
     `TARGET_RECOVERY_DEVICE_DIRS = корень + devices/* + families/<флаг>`.
+    KeyMint HAL всегда из исходников (без пребилдов): тип выбирается полем
+    `keymint` (`rust`|`cpp`) из `families/<семья>/family.json` — `build.sh`
+    кладёт его в `FOX_KEYMINT_TYPE` для `device.mk` и в таргеты сборки,
+    `vendorsetup.sh` дублирует в `.build_platform.conf` для колбэка.
     `VENDOR_CMDLINE` на этом этапе уже переопределён из `.gen_kernel.mk`
     (сгенерирован до lunch — `dumpvars` парсит BoardConfig во время lunch).
 4. `--second-call` (`fox_build_callback.sh`, `$TARGET_DIR` = корень рамдиска):

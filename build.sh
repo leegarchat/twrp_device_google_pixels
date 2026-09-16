@@ -309,12 +309,34 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     fi
 fi
 
+if [[ -n "$FAMILY" ]]; then
+    # KeyMint HAL type for device.mk (config-parse env, like DEVICE_BUILD_FLAG):
+    # families/<fam>/family.json `keymint` (rust|cpp). Loud fail — without it
+    # device.mk falls back to the family-name mapping, which must never happen
+    # silently on a -f build.
+    FOX_KEYMINT_TYPE="$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/families/$FAMILY/family.json')).get('keymint',''))" 2>/dev/null)"
+    case "$FOX_KEYMINT_TYPE" in
+        rust|cpp) export FOX_KEYMINT_TYPE ;;
+        *) echo "ERROR: families/$FAMILY/family.json needs keymint 'rust' or 'cpp'"; fox_safe_exit 2 ;;
+    esac
+fi
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
+    else
+        exit "$SAFE_EXIT_CODE"
+    fi
+fi
+
 echo "=============================================="
 echo "  OrangeFox Recovery Build Script"
 echo "=============================================="
 echo "  Source root:   $SOURCE_ROOT"
 echo "  Family:        ${FAMILY:-<interactive>}"
 echo "  Kernel:        ${FOX_KERNEL_VER:-<legacy default>}"
+if [[ -n "$FAMILY" ]]; then
+echo "  Keymint:       $FOX_KEYMINT_TYPE (from family.json)"
+fi
 if [[ ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
     echo "  Groups:        $(printf '%s ' "${KERNEL_GROUPS[@]%%|*}")"
 fi
@@ -378,9 +400,27 @@ if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101"
         export VENDOR_BOOT_PATCH_STOCK=true
         echo "[build] gs101: stock vendor_boot patch mode (VENDOR_BOOT_PATCH_STOCK=true)"
     fi
-    BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.trusty"
-    echo "[build] ${DEVICE_BUILD_FLAG}: adding keymint-service.trusty to build targets"
 fi
+
+# KeyMint HAL module must be built explicitly: vendorbootimage does not pull
+# vendor/bin/hw binaries on its own (ninja graph entries exist via
+# PRODUCT_PACKAGES but intermediates never compile, and the recovery callback
+# finds nothing to copy). FOX_KEYMINT_TYPE arrives from family.json (see
+# above); manual lunch without build.sh falls back to the family-name mapping
+# (same default as device.mk).
+case "${FOX_KEYMINT_TYPE:-}" in
+    cpp) KEYMINT_MODULE="android.hardware.security.keymint-service.trusty" ;;
+    rust) KEYMINT_MODULE="android.hardware.security.keymint-service.rust.trusty" ;;
+    *)
+        if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
+            KEYMINT_MODULE="android.hardware.security.keymint-service.trusty"
+        else
+            KEYMINT_MODULE="android.hardware.security.keymint-service.rust.trusty"
+        fi
+        ;;
+esac
+BUILD_TARGETS="$BUILD_TARGETS $KEYMINT_MODULE"
+echo "[build] Keymint module: $KEYMINT_MODULE"
 
 echo "=============================================="
 echo "  Build targets: $BUILD_TARGETS"
@@ -427,6 +467,14 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         fi
     fi
 
+    # KeyMint HAL first, alone: the recovery callback copies the vendor output
+    # during vendorbootimage assembly and parallel ninja gives no ordering
+    # guarantee. The follow-up full mka reuses it (no-op) and builds the rest.
+    echo "[build] Building keymint HAL first ($KEYMINT_MODULE) ..."
+    mka "$KEYMINT_MODULE" -j"$JOBS" || fox_safe_exit $?
+    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+        break
+    fi
     mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
     if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
         break

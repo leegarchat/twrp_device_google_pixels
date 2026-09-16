@@ -1,6 +1,7 @@
 {
   "family": "gs101",
   "soc_family": "gs101",
+  "keymint": "cpp",
   "props": {},
   "default_kernel": "6.1",
   "kernels": {

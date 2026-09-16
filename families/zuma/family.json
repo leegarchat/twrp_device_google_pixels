@@ -1,6 +1,7 @@
 {
   "family": "zuma",
   "soc_family": "zuma",
+  "keymint": "rust",
   "props": {
     "ro.recovery.soc_family": "zuma",
     "persist.wm.extensions.enabled": "true",

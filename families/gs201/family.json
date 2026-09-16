@@ -1,6 +1,7 @@
 {
   "family": "gs201",
   "soc_family": "gs201",
+  "keymint": "cpp",
   "props": {
     "ro.recovery.soc_family": "gs201",
     "persist.wm.extensions.enabled": "true",

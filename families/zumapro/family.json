@@ -1,6 +1,7 @@
 {
   "family": "zumapro",
   "soc_family": "zumapro",
+  "keymint": "rust",
   "props": {
     "ro.recovery.soc_family": "zumapro",
     "persist.wm.extensions.enabled": "true",
