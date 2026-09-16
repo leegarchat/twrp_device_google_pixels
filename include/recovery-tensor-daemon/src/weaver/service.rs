@@ -11,8 +11,10 @@
 //! validates incoming buffers strictly against those dynamic parameters.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::gsc::{GscDevice, GscError, APP_ID_WEAVER, APP_SUCCESS, MAX_GSA_NOS_CALL_TRANSFER};
+use super::m3;
 use super::proto::{
     self, ProtoError, CMD_GET_CONFIG, CMD_READ, CMD_WRITE,
 };
@@ -51,6 +53,8 @@ pub enum ReadStatus {
 pub enum WeaverError {
     Gsc(GscError),
     Proto(ProtoError),
+    /// Titan M3 raw-struct codec failure (see [`super::m3`]).
+    M3(&'static str),
     /// Applet rejected the command (`call_status` != APP_SUCCESS).
     Chip(u32),
     BadSlot(i32),
@@ -63,6 +67,7 @@ impl std::fmt::Display for WeaverError {
         match self {
             WeaverError::Gsc(e) => write!(f, "gsc transport: {e}"),
             WeaverError::Proto(e) => write!(f, "protobuf: {e}"),
+            WeaverError::M3(e) => write!(f, "titan m3 raw: {e}"),
             WeaverError::Chip(s) => write!(f, "applet call_status=0x{s:x}"),
             WeaverError::BadSlot(s) => write!(f, "invalid slot {s}"),
             WeaverError::BadKeySize { expected, got } => {
@@ -90,9 +95,14 @@ impl From<ProtoError> for WeaverError {
 }
 
 /// Thread-safe Weaver front-end over one [`GscDevice`].
+///
+/// Titan M3 (malibu) fallback: protobuf is always tried first; a protobuf
+/// decode failure on an otherwise accepted applet reply latches raw M3
+/// mode for the process (see [`super::m3`]). Titan M behavior is unchanged.
 pub struct WeaverHal {
     gsc: GscDevice,
     cached: Mutex<Option<WeaverGeometry>>,
+    m3: AtomicBool,
 }
 
 // `read`/`write` are only driven by the Binder glue; the headless fallback
@@ -100,7 +110,19 @@ pub struct WeaverHal {
 #[cfg_attr(not(feature = "binder"), allow(dead_code))]
 impl WeaverHal {
     pub fn open(dev: &str) -> Result<WeaverHal, WeaverError> {
-        Ok(WeaverHal { gsc: GscDevice::open(dev)?, cached: Mutex::new(None) })
+        Ok(WeaverHal {
+            gsc: GscDevice::open(dev)?,
+            cached: Mutex::new(None),
+            m3: AtomicBool::new(false),
+        })
+    }
+
+    fn is_m3(&self) -> bool {
+        self.m3.load(Ordering::SeqCst)
+    }
+
+    fn latch_m3(&self) {
+        self.m3.store(true, Ordering::SeqCst);
     }
 
     fn check_status(status: u32) -> Result<(), WeaverError> {
@@ -110,17 +132,53 @@ impl WeaverHal {
         Ok(())
     }
 
-    /// Queries the applet geometry and refreshes the cache.
+    /// Queries the applet geometry and refreshes the cache. Protobuf first;
+    /// on a protobuf decode failure the Titan M3 raw layout is tried and,
+    /// when its header word validates, M3 mode is latched.
     pub fn get_config(&self) -> Result<WeaverGeometry, WeaverError> {
+        if self.is_m3() {
+            return self.get_config_m3();
+        }
         let (reply, status) =
             self.gsc.nos_call(APP_ID_WEAVER, CMD_GET_CONFIG, &[], 64)?;
         Self::check_status(status)?;
-        let wire = proto::parse_get_config(&reply)?;
+        let wire = match proto::parse_get_config(&reply) {
+            Ok(wire) => wire,
+            Err(proto_err) => match m3::parse_get_config(&reply) {
+                Some(m3geo) => {
+                    crate::logi!("weaver", "titan M3 raw protocol detected, latching M3 mode");
+                    self.latch_m3();
+                    return self.cache_geometry(WeaverGeometry {
+                        slots: m3geo.slots,
+                        key_size: m3geo.key_size,
+                        value_size: m3geo.value_size,
+                    });
+                }
+                None => return Err(WeaverError::Proto(proto_err)),
+            },
+        };
         let geo = WeaverGeometry {
             slots: wire.slots,
             key_size: wire.key_size as usize,
             value_size: wire.value_size as usize,
         };
+        self.cache_geometry(geo)
+    }
+
+    /// Raw M3 getConfig (M3 mode already latched).
+    fn get_config_m3(&self) -> Result<WeaverGeometry, WeaverError> {
+        let (reply, status) =
+            self.gsc.nos_call(APP_ID_WEAVER, CMD_GET_CONFIG, &[], 64)?;
+        Self::check_status(status)?;
+        let m3geo = m3::parse_get_config(&reply).ok_or(WeaverError::M3("bad getConfig reply"))?;
+        self.cache_geometry(WeaverGeometry {
+            slots: m3geo.slots,
+            key_size: m3geo.key_size,
+            value_size: m3geo.value_size,
+        })
+    }
+
+    fn cache_geometry(&self, geo: WeaverGeometry) -> Result<WeaverGeometry, WeaverError> {
         *self.cached.lock().map_err(|_| {
             WeaverError::Gsc(GscError::Unsupported("geometry cache lock poisoned"))
         })? = Some(geo);
@@ -166,6 +224,9 @@ impl WeaverHal {
         if key.len() != geo.key_size {
             return Err(WeaverError::BadKeySize { expected: geo.key_size, got: key.len() });
         }
+        if self.is_m3() {
+            return self.read_m3(slot, slot_u, key, &geo);
+        }
         // Request/response buffers are sized dynamically: no 64/128-byte
         // stack caps, so larger PQC-era keys/values keep working.
         let req = proto::build_read_request(slot_u, key);
@@ -195,6 +256,36 @@ impl WeaverHal {
         Ok(ReadOutcome { value, throttle_ms, status })
     }
 
+    /// Raw M3 read (M3 mode already latched via [`Self::get_config`]).
+    fn read_m3(
+        &self,
+        slot: i32,
+        slot_u: u32,
+        key: &[u8],
+        geo: &WeaverGeometry,
+    ) -> Result<ReadOutcome, WeaverError> {
+        let req = m3::build_read_request(slot_u, key);
+        let max_transfer_reply = MAX_GSA_NOS_CALL_TRANSFER.saturating_sub(req.len());
+        let reply_cap = (geo.value_size + 64).max(64).min(max_transfer_reply);
+        let (reply, status) =
+            self.gsc.nos_call(APP_ID_WEAVER, CMD_READ, &req, reply_cap)?;
+        Self::check_status(status)?;
+        let (error, throttle_ms, value) = m3::parse_read_response(&reply, geo.value_size)
+            .ok_or(WeaverError::M3("bad read reply"))?;
+        let status = match error {
+            0 => ReadStatus::Ok,
+            1 => ReadStatus::IncorrectKey,
+            2 => ReadStatus::Throttle,
+            _ => ReadStatus::Failed,
+        };
+        crate::logi!(
+            "weaver",
+            "read slot {slot}: error={error} throttle={throttle_ms} value_len={}",
+            value.len()
+        );
+        Ok(ReadOutcome { value, throttle_ms, status })
+    }
+
     /// Overwrites `slot`, requiring exact key/value sizes.
     pub fn write(&self, slot: i32, key: &[u8], value: &[u8]) -> Result<(), WeaverError> {
         let geo = self.geometry()?;
@@ -207,6 +298,13 @@ impl WeaverHal {
                 expected: geo.value_size,
                 got: value.len(),
             });
+        }
+        if self.is_m3() {
+            let req = m3::build_write_request(slot_u, key, value);
+            let (_, status) = self.gsc.nos_call(APP_ID_WEAVER, CMD_WRITE, &req, 0)?;
+            Self::check_status(status)?;
+            crate::logi!("weaver", "write slot {slot}: ok");
+            return Ok(());
         }
         let req = proto::build_write_request(slot_u, key, value);
         let (_, status) = self.gsc.nos_call(APP_ID_WEAVER, CMD_WRITE, &req, 0)?;

@@ -6,6 +6,7 @@
 //! Gatekeeper/CE FBE decryption.
 
 mod gsc;
+mod m3;
 mod proto;
 mod service;
 
