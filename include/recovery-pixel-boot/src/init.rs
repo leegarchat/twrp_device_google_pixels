@@ -150,9 +150,12 @@ const EV_SW: u32 = 0x05;
 const SW_LID: u32 = 0x00;
 const SW_TABLET_MODE: u32 = 0x01;
 
-// _IOR('E', nr, len): (2<<30) | (len<<16) | (0x45<<8) | nr.
-const fn evioc(addr_bits_nr: u32, len: usize) -> libc::c_ulong {
-    ((2 << 30) | ((len as u32) << 16) | (0x45 << 8) | addr_bits_nr) as libc::c_ulong
+// _IOR('E', nr, len): (2<<30) | (len<<16) | (0x45<<8) | nr, as u64.
+// The libc ioctl request type differs per target (u64 on host glibc,
+// c_int on bionic), so the call site casts with `as _`; the value always
+// fits (top bit used is 2<<30).
+const fn evioc(addr_bits_nr: u32, len: usize) -> u64 {
+    ((2 << 30) | ((len as u64) << 16) | (0x45 << 8) | addr_bits_nr as u64) as u64
 }
 const EVIOCGBIT_EV: u32 = 0x20;
 const EVIOCGSW_NR: u32 = 0x1B;
@@ -163,10 +166,10 @@ fn bit_is_set(bits: &[u64], bit: u32) -> bool {
 }
 
 /// Reads one ioctl bitmask from an open input fd; None on failure.
-fn ioctl_bits(fd: i32, req: libc::c_ulong, words: usize) -> Option<Vec<u64>> {
+fn ioctl_bits(fd: i32, req: u64, words: usize) -> Option<Vec<u64>> {
     let mut buf = vec![0u64; words];
     // Safety: fd is open, buffer is owned and sized.
-    let rc = unsafe { libc::ioctl(fd, req, buf.as_mut_ptr()) };
+    let rc = unsafe { libc::ioctl(fd, req as _, buf.as_mut_ptr()) };
     if rc < 0 {
         return None;
     }
