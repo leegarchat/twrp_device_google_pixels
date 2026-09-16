@@ -84,7 +84,7 @@
  	// Fetch the Keymaster Service version to be started
  	std::string version;
  #ifndef TW_FORCE_KEYMASTER_VER
-@@ -687,9 +754,28 @@
+@@ -687,9 +754,21 @@
  				Mount_By_Path(Decrypt_Data->Key_Directory, false);
  		if (!Decrypt_Data->Key_Directory.empty()) {
  			Set_Crypto_Type("file");
@@ -96,15 +96,8 @@
  #ifdef USE_FSCRYPT
 -			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, "", TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
 +			std::string keymint_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
-+			// TEST builds (zuma C++ keymint from source) run vendor.keymint-trusty
-+			// instead: skip only when neither service is usable. Empty rust state
-+			// (service never started, e.g. gs201) still means "proceed" as before.
-+			std::string keymint_cpp_state = android::base::GetProperty("init.svc.vendor.keymint-trusty", "");
-+			bool rust_ok = keymint_state.empty() || keymint_state == "running";
-+			bool cpp_ok = keymint_cpp_state == "running";
-+			if (!rust_ok && !cpp_ok) {
-+				LOGINFO("Skipping metadata decrypt: keymint service state is rust='%s' cpp='%s'\n",
-+					keymint_state.c_str(), keymint_cpp_state.c_str());
++			if (!keymint_state.empty() && keymint_state != "running") {
++				LOGINFO("Skipping metadata decrypt: keymint service state is '%s'\n", keymint_state.c_str());
 +			} else if (FscryptMountMetadataEncryptedWithTimeout(
 +				Decrypt_Data->Actual_Block_Device,
 +				Decrypt_Data->Mount_Point,
@@ -114,7 +107,7 @@
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +785,58 @@
+@@ -699,9 +778,58 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -173,7 +166,7 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -2194,7 +2329,10 @@
+@@ -2194,7 +2322,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -185,7 +178,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2472,20 @@
+@@ -2334,6 +2465,20 @@
  #endif
  }
  
@@ -206,7 +199,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2548,17 @@
+@@ -2396,6 +2541,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -224,7 +217,7 @@
  
  			return 0;
  		} else {
-@@ -4840,6 +5003,29 @@
+@@ -4840,6 +4996,29 @@
  	}
  }
  
@@ -254,7 +247,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5043,13 @@
+@@ -4857,13 +5036,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -270,7 +263,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4884,7 +5070,7 @@
+@@ -4884,7 +5063,7 @@
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){
  					LOGINFO("removing dynamic partition: %s\n", partition.c_str());

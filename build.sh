@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
-#              [-k|--kernel VER] [--force] [--cpp-keymint] [--rust-src-keymint]
+#              [-k|--kernel VER] [--force]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -30,20 +30,6 @@
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
-#   --cpp-keymint     TEST (zuma only): build C++ keymint from source
-#                     (system/core/trusty/keymaster) instead of the Rust
-#                     prebuilt. Exported as FOX_ZUMA_CPP_KEYMINT for
-#                     device.mk/vendorsetup.sh/callback. Without it zuma
-#                     silently stays on Rust — this flag makes the test
-#                     explicit and visible in the build header below.
-#                     NOTE: FAILED on zuma (service restart loop, Trusty TA
-#                     mismatch) — kept for experiments only.
-#   --rust-src-keymint
-#                     TEST (zuma only): build the Rust keymint HAL from
-#                     in-tree source (system/core/trusty/keymint) instead
-#                     of the vendor prebuilt. Same Rust behavior, no
-#                     prebuilt blob. Exported as FOX_ZUMA_RUST_SRC_KEYMINT.
-#                     Mutually exclusive with --cpp-keymint.
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -115,8 +101,6 @@ PATCH_VERSION=""
 LGZ_LEVEL="0"
 KERNEL_VER=""
 FOX_FORCE=false
-FOX_ZUMA_CPP_KEYMINT="0"
-FOX_ZUMA_RUST_SRC_KEYMINT="0"
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -199,14 +183,6 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_FORCE=true
             shift
             ;;
-        --cpp-keymint)
-            FOX_ZUMA_CPP_KEYMINT="1"
-            shift
-            ;;
-        --rust-src-keymint)
-            FOX_ZUMA_RUST_SRC_KEYMINT="1"
-            shift
-            ;;
         -h|--help)
             sed -n '2,30p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
@@ -226,17 +202,6 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     fi
 fi
 export LGZ_LEVEL
-export FOX_ZUMA_CPP_KEYMINT
-export FOX_ZUMA_RUST_SRC_KEYMINT
-if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" && "$FOX_ZUMA_RUST_SRC_KEYMINT" == "1" ]]; then
-    echo "ERROR: --cpp-keymint and --rust-src-keymint are mutually exclusive"
-    fox_safe_exit 1
-fi
-# TEST flag is zuma-only: anything else with it is a no-op, say so loudly.
-if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" && -n "$FAMILY" && "$FAMILY" != "zuma" && "$FAMILY" != "shiba" && "$FAMILY" != "husky" && "$FAMILY" != "akita" ]]; then
-    echo "  WARNING: --cpp-keymint is zuma-only; ignored for family '$FAMILY'"
-    FOX_ZUMA_CPP_KEYMINT="0"
-fi
 
 # --- Kernel profile resolution (families/*/family.json `kernels`) ---
 # Engages only with a known family context (-f). Without -f the legacy
@@ -350,13 +315,6 @@ echo "=============================================="
 echo "  Source root:   $SOURCE_ROOT"
 echo "  Family:        ${FAMILY:-<interactive>}"
 echo "  Kernel:        ${FOX_KERNEL_VER:-<legacy default>}"
-if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" ]]; then
-echo "  Keymint:       C++ from source (TEST, no Rust prebuilt)"
-elif [[ "$FOX_ZUMA_RUST_SRC_KEYMINT" == "1" ]]; then
-echo "  Keymint:       Rust from in-tree source (TEST, no prebuilt)"
-else
-echo "  Keymint:       platform default (zuma/zumapro=Rust prebuilt)"
-fi
 if [[ ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
     echo "  Groups:        $(printf '%s ' "${KERNEL_GROUPS[@]%%|*}")"
 fi
@@ -424,22 +382,6 @@ if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101"
     echo "[build] ${DEVICE_BUILD_FLAG}: adding keymint-service.trusty to build targets"
 fi
 
-# Zuma keymint TEST flags need their module built explicitly: vendorbootimage
-# does not pull vendor/bin/hw binaries on its own. Without this the module
-# has ninja graph entries but its intermediates are never compiled, the
-# vendor output is missing, and the callback falls back to nothing (this is
-# why the C++ test booted with no keymint at all, and why the rust-src test
-# shipped the prebuilt path with an empty hw dir).
-if [[ "${DEVICE_BUILD_FLAG:-}" == "zuma" ]]; then
-    if [[ "${FOX_ZUMA_CPP_KEYMINT:-0}" == "1" ]]; then
-        BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.trusty"
-        echo "[build] zuma: adding keymint-service.trusty (C++ TEST) to build targets"
-    elif [[ "${FOX_ZUMA_RUST_SRC_KEYMINT:-0}" == "1" ]]; then
-        BUILD_TARGETS="$BUILD_TARGETS android.hardware.security.keymint-service.rust.trusty"
-        echo "[build] zuma: adding keymint-service.rust.trusty (Rust-src TEST) to build targets"
-    fi
-fi
-
 echo "=============================================="
 echo "  Build targets: $BUILD_TARGETS"
 echo "  Parallelism:   -j$JOBS"
@@ -485,19 +427,6 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         fi
     fi
 
-    mka_keymint_first=""
-    for _t in $BUILD_TARGETS; do
-        case "$_t" in
-            *keymint-service*) mka_keymint_first="$_t" ;;
-        esac
-    done
-    if [[ -n "$mka_keymint_first" ]]; then
-        echo "[build] Building keymint HAL first ($mka_keymint_first) — the recovery callback copies it during vendorbootimage assembly, parallel ninja gives no ordering guarantee"
-        mka "$mka_keymint_first" -j"$JOBS" || fox_safe_exit $?
-        if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-            break
-        fi
-    fi
     mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
     if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
         break
