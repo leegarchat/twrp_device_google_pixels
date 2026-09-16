@@ -214,9 +214,17 @@ if [[ -n "$FAMILY" ]]; then
     KFAMILY="$FAMILY"
     KDEV="${_DEV:-}"
     if [[ -n "$KDEV" ]]; then
-        KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" "$KDEV" 2>/dev/null) || KLIST_RAW=""
+        KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" "$KDEV" 2>&1) || {
+            echo "ERROR: kernel profile list crashed for $KFAMILY/$KDEV (not 'no kernels' — the script itself failed):"
+            echo "$KLIST_RAW" >&2
+            fox_safe_exit 2
+        }
     else
-        KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" 2>/dev/null) || KLIST_RAW=""
+        KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
+            echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
+            echo "$KLIST_RAW" >&2
+            fox_safe_exit 2
+        }
     fi
     if [[ -n "$KLIST_RAW" && "$KLIST_RAW" != "(none)"* ]]; then
         KDEFAULT=$(echo "$KLIST_RAW" | sed -n 's/.*(default: \([^)]*\)).*/\1/p')
@@ -379,6 +387,25 @@ PRODUCT_OUT="out/target/product/pixels"
 if [[ -n "$FAMILY" ]]; then
     export DEVICE_BUILD_FLAG="$FAMILY"
     echo "[build] Pre-set DEVICE_BUILD_FLAG=$FAMILY"
+fi
+
+# Hard guarantee before lunch: dumpvars parses BoardConfig.mk during lunch
+# and aborts the whole build on empty VENDOR_CMDLINE — and a failed lunch
+# must never reach the destructive product-out clean below. Refuse early
+# with an actionable message instead of cryptic dumpvars spam.
+if [[ -n "${KERNEL_MK:-}" ]]; then
+    if [[ ! -s "$KERNEL_MK" ]] || ! grep -q '^VENDOR_CMDLINE := "[^"]' "$KERNEL_MK"; then
+        echo "ERROR: kernel profile missing/empty: $KERNEL_MK"
+        echo "  Regenerate: python3 $SCRIPT_DIR/gen_kernel_mk.py --generate $KFAMILY ${KDEV:--} ${FOX_KERNEL_VER:-VER} $KERNEL_MK"
+        fox_safe_exit 2
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+        if [[ "$fox_sourced" == true ]]; then
+            return "$SAFE_EXIT_CODE"
+        else
+            exit "$SAFE_EXIT_CODE"
+        fi
+    fi
 fi
 
 echo "[build] Sourcing build/envsetup.sh ..."
