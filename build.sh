@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
-#              [-k|--kernel VER] [--force] [--cpp-keymint]
+#              [-k|--kernel VER] [--force] [--cpp-keymint] [--rust-src-keymint]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -36,6 +36,14 @@
 #                     device.mk/vendorsetup.sh/callback. Without it zuma
 #                     silently stays on Rust — this flag makes the test
 #                     explicit and visible in the build header below.
+#                     NOTE: FAILED on zuma (service restart loop, Trusty TA
+#                     mismatch) — kept for experiments only.
+#   --rust-src-keymint
+#                     TEST (zuma only): build the Rust keymint HAL from
+#                     in-tree source (system/core/trusty/keymint) instead
+#                     of the vendor prebuilt. Same Rust behavior, no
+#                     prebuilt blob. Exported as FOX_ZUMA_RUST_SRC_KEYMINT.
+#                     Mutually exclusive with --cpp-keymint.
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -108,6 +116,7 @@ LGZ_LEVEL="0"
 KERNEL_VER=""
 FOX_FORCE=false
 FOX_ZUMA_CPP_KEYMINT="0"
+FOX_ZUMA_RUST_SRC_KEYMINT="0"
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -194,6 +203,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_ZUMA_CPP_KEYMINT="1"
             shift
             ;;
+        --rust-src-keymint)
+            FOX_ZUMA_RUST_SRC_KEYMINT="1"
+            shift
+            ;;
         -h|--help)
             sed -n '2,30p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
@@ -214,6 +227,11 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
 fi
 export LGZ_LEVEL
 export FOX_ZUMA_CPP_KEYMINT
+export FOX_ZUMA_RUST_SRC_KEYMINT
+if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" && "$FOX_ZUMA_RUST_SRC_KEYMINT" == "1" ]]; then
+    echo "ERROR: --cpp-keymint and --rust-src-keymint are mutually exclusive"
+    fox_safe_exit 1
+fi
 # TEST flag is zuma-only: anything else with it is a no-op, say so loudly.
 if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" && -n "$FAMILY" && "$FAMILY" != "zuma" && "$FAMILY" != "shiba" && "$FAMILY" != "husky" && "$FAMILY" != "akita" ]]; then
     echo "  WARNING: --cpp-keymint is zuma-only; ignored for family '$FAMILY'"
@@ -334,6 +352,8 @@ echo "  Family:        ${FAMILY:-<interactive>}"
 echo "  Kernel:        ${FOX_KERNEL_VER:-<legacy default>}"
 if [[ "$FOX_ZUMA_CPP_KEYMINT" == "1" ]]; then
 echo "  Keymint:       C++ from source (TEST, no Rust prebuilt)"
+elif [[ "$FOX_ZUMA_RUST_SRC_KEYMINT" == "1" ]]; then
+echo "  Keymint:       Rust from in-tree source (TEST, no prebuilt)"
 else
 echo "  Keymint:       platform default (zuma/zumapro=Rust prebuilt)"
 fi

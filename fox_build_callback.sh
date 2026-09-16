@@ -50,6 +50,13 @@ case "$ZUMA_CPP_KEYMINT" in
     *) echo "    [CONFIG] WARNING: bad ZUMA_CPP_KEYMINT='$ZUMA_CPP_KEYMINT', using 0"; ZUMA_CPP_KEYMINT=0 ;;
 esac
 [ "$ZUMA_CPP_KEYMINT" = "1" ] && echo "    [CONFIG] TEST: zuma C++ keymint from source (no Rust prebuilt)"
+# TEST toggle (see vendorsetup.sh): zuma Rust keymint HAL from in-tree source.
+: "${ZUMA_RUST_SRC_KEYMINT:=0}"
+case "$ZUMA_RUST_SRC_KEYMINT" in
+    0|1) ;;
+    *) echo "    [CONFIG] WARNING: bad ZUMA_RUST_SRC_KEYMINT='$ZUMA_RUST_SRC_KEYMINT', using 0"; ZUMA_RUST_SRC_KEYMINT=0 ;;
+esac
+[ "$ZUMA_RUST_SRC_KEYMINT" = "1" ] && echo "    [CONFIG] TEST: zuma Rust keymint from source (no prebuilt)"
 
 # =========================================================================
 # LGZ compression configuration
@@ -688,12 +695,18 @@ case "$CALL_TYPE" in
 
         # --- Keymint binary ---
         # C++ from source: gs201 always; zuma only under TEST toggle
-        # (FOX_ZUMA_CPP_KEYMINT=1). Else Rust prebuilt (zuma/zumapro).
+        # (FOX_ZUMA_CPP_KEYMINT=1). Rust from source: zuma only under TEST
+        # toggle (FOX_ZUMA_RUST_SRC_KEYMINT=1). Else Rust prebuilt.
         use_cpp_keymint=0
+        use_rust_src_keymint=0
         if [ "$platform" = "gs201" ]; then
             use_cpp_keymint=1
-        elif [ "$platform" = "zuma" ] && [ "$ZUMA_CPP_KEYMINT" = "1" ]; then
-            use_cpp_keymint=1
+        elif [ "$platform" = "zuma" ]; then
+            if [ "$ZUMA_CPP_KEYMINT" = "1" ]; then
+                use_cpp_keymint=1
+            elif [ "$ZUMA_RUST_SRC_KEYMINT" = "1" ]; then
+                use_rust_src_keymint=1
+            fi
         fi
         if [ "$use_cpp_keymint" = "1" ]; then
             # GS201 / zuma-TEST: copy source-built C++ keymint from soong vendor output
@@ -706,6 +719,19 @@ case "$CALL_TYPE" in
             else
                 echo "    [PLATFORM] ERROR: C++ keymint binary not found at: $src_bin"
                 echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes keymint-service.trusty"
+            fi
+        elif [ "$use_rust_src_keymint" = "1" ]; then
+            # Zuma-TEST: copy source-built Rust keymint HAL from soong vendor
+            # output (system/core/trusty/keymint). No prebuilt blob.
+            src_bin="$PRODUCT_OUT/vendor/bin/hw/android.hardware.security.keymint-service.rust.trusty"
+            if [ -f "$src_bin" ]; then
+                mkdir -p "$TARGET_DIR/vendor/bin/hw"
+                cp -f "$src_bin" "$TARGET_DIR/vendor/bin/hw/"
+                chmod 755 "$TARGET_DIR/vendor/bin/hw/android.hardware.security.keymint-service.rust.trusty"
+                echo "    [PLATFORM]   + Rust keymint binary (source-built, TEST)"
+            else
+                echo "    [PLATFORM] ERROR: Rust keymint binary not found at: $src_bin"
+                echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes keymint-service.rust.trusty"
             fi
         else
             # Zuma/Zumapro: copy shared prebuilt Rust keymint

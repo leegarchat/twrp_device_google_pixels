@@ -125,6 +125,12 @@ ifneq (,$(filter zuma,$(DEVICE_BUILD_FLAG)))
 ifeq ($(FOX_ZUMA_CPP_KEYMINT),1)
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
 endif
+# TEST: zuma Rust keymint HAL from in-tree source (system/core/trusty/keymint)
+# instead of the vendor prebuilt. Enable with FOX_ZUMA_RUST_SRC_KEYMINT=1 in
+# the lunch shell. Same Rust behavior, no prebuilt blob.
+ifeq ($(FOX_ZUMA_RUST_SRC_KEYMINT),1)
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
+endif
 endif
 
 
