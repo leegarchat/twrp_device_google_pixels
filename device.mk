@@ -117,6 +117,15 @@ PRODUCT_PACKAGES += \
 ifneq (,$(filter gs201 gs101,$(DEVICE_BUILD_FLAG)))
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
 endif
+# TEST: zuma C++ keymint from source (system/core/trusty/keymaster) instead of
+# the Rust prebuilt. Enable with FOX_ZUMA_CPP_KEYMINT=1 in the lunch shell
+# (config-parse env, like DEVICE_BUILD_FLAG). Default off — production zuma
+# stays on Rust. Requires matching callback branch (ZUMA_CPP_KEYMINT).
+ifneq (,$(filter zuma,$(DEVICE_BUILD_FLAG)))
+ifeq ($(FOX_ZUMA_CPP_KEYMINT),1)
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
+endif
+endif
 
 
 # Firstage ramdisk packages — pre-rendered plain fstabs, no BP codegen.

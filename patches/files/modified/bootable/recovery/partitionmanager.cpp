@@ -761,8 +761,15 @@ void TWPartitionManager::Decrypt_Data() {
 #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
 #ifdef USE_FSCRYPT
 			std::string keymint_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
-			if (!keymint_state.empty() && keymint_state != "running") {
-				LOGINFO("Skipping metadata decrypt: keymint service state is '%s'\n", keymint_state.c_str());
+			// TEST builds (zuma C++ keymint from source) run vendor.keymint-trusty
+			// instead: skip only when neither service is usable. Empty rust state
+			// (service never started, e.g. gs201) still means "proceed" as before.
+			std::string keymint_cpp_state = android::base::GetProperty("init.svc.vendor.keymint-trusty", "");
+			bool rust_ok = keymint_state.empty() || keymint_state == "running";
+			bool cpp_ok = keymint_cpp_state == "running";
+			if (!rust_ok && !cpp_ok) {
+				LOGINFO("Skipping metadata decrypt: keymint service state is rust='%s' cpp='%s'\n",
+					keymint_state.c_str(), keymint_cpp_state.c_str());
 			} else if (FscryptMountMetadataEncryptedWithTimeout(
 				Decrypt_Data->Actual_Block_Device,
 				Decrypt_Data->Mount_Point,
