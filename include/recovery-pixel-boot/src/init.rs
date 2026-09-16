@@ -136,6 +136,139 @@ fn repoint_ufs_lines(lines: &mut [String], live_dirs: &[String]) -> usize {
     fixed
 }
 
+/// Fold hinge state from input subsystem switch events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldState {
+    /// Hinge open (or unknown): inner/main display.
+    OpenInner,
+    /// Hinge closed: cover/front display. Safe default (cover always exists).
+    ClosedCover,
+}
+
+// Linux input bits (input-event-codes.h).
+const EV_SW: u32 = 0x05;
+const SW_LID: u32 = 0x00;
+const SW_TABLET_MODE: u32 = 0x01;
+
+// _IOR('E', nr, len): (2<<30) | (len<<16) | (0x45<<8) | nr.
+const fn evioc(addr_bits_nr: u32, len: usize) -> libc::c_ulong {
+    ((2 << 30) | ((len as u32) << 16) | (0x45 << 8) | addr_bits_nr) as libc::c_ulong
+}
+const EVIOCGBIT_EV: u32 = 0x20;
+const EVIOCGSW_NR: u32 = 0x1B;
+
+fn bit_is_set(bits: &[u64], bit: u32) -> bool {
+    let i = (bit / 64) as usize;
+    i < bits.len() && (bits[i] >> (bit % 64)) & 1 == 1
+}
+
+/// Reads one ioctl bitmask from an open input fd; None on failure.
+fn ioctl_bits(fd: i32, req: libc::c_ulong, words: usize) -> Option<Vec<u64>> {
+    let mut buf = vec![0u64; words];
+    // Safety: fd is open, buffer is owned and sized.
+    let rc = unsafe { libc::ioctl(fd, req, buf.as_mut_ptr()) };
+    if rc < 0 {
+        return None;
+    }
+    Some(buf)
+}
+
+/// Hinge probe of a single /dev/input/eventN node.
+/// Returns Some(state) when the node exposes a lid/tablet-mode switch.
+fn probe_hinge_fd(fd: i32) -> Option<FoldState> {
+    let ev = ioctl_bits(fd, evioc(EVIOCGBIT_EV, 4), 1)?;
+    if !bit_is_set(&ev, EV_SW) {
+        return None;
+    }
+    let sw = ioctl_bits(fd, evioc(EVIOCGBIT_EV + EV_SW, 8), 1)?;
+    if !bit_is_set(&sw, SW_LID) && !bit_is_set(&sw, SW_TABLET_MODE) {
+        return None;
+    }
+    let state = ioctl_bits(fd, evioc(EVIOCGSW_NR, 8), 1)?;
+    // Lid switch set = folded shut = cover; tablet-mode set = flat = inner.
+    if bit_is_set(&sw, SW_LID) && bit_is_set(&state, SW_LID) {
+        return Some(FoldState::ClosedCover);
+    }
+    if bit_is_set(&sw, SW_LID) {
+        return Some(FoldState::OpenInner);
+    }
+    if bit_is_set(&state, SW_TABLET_MODE) {
+        return Some(FoldState::OpenInner);
+    }
+    Some(FoldState::ClosedCover)
+}
+
+/// Scans an input dir for hinge switches. Split out for testability.
+fn detect_fold_state_in(input_dir: &std::path::Path) -> FoldState {
+    let rd = match std::fs::read_dir(input_dir) {
+        Ok(rd) => rd,
+        Err(_) => return FoldState::ClosedCover,
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("event") {
+            continue;
+        }
+        // Safety: path from read_dir; O_RDONLY|O_CLOEXEC; fd closed below.
+        let cpath = match std::ffi::CString::new(e.path().to_string_lossy().into_owned()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+        if fd < 0 {
+            continue;
+        }
+        let found = probe_hinge_fd(fd);
+        unsafe { libc::close(fd) };
+        if let Some(state) = found {
+            return state;
+        }
+    }
+    FoldState::ClosedCover
+}
+
+/// Live hinge state; unknown/absent sensor = ClosedCover (safe default).
+fn detect_fold_state() -> FoldState {
+    detect_fold_state_in(std::path::Path::new("/dev/input"))
+}
+
+/// Picks the active virtual canvas: folds use hinge state (inner when open
+/// and inner geometry exists, else cover); slabs always use front.
+fn pick_display_geom(
+    cfg: &crate::config::DeviceConfig,
+    hinge: FoldState,
+) -> (crate::config::DisplayGeom, &'static str) {
+    if cfg.is_fold {
+        if hinge == FoldState::OpenInner {
+            if let Some(g) = cfg.inner_display {
+                return (g, "inner");
+            }
+        }
+        return (cfg.front_display, "front");
+    }
+    (cfg.front_display, "front")
+}
+
+/// Applies display geometry before recovery UI starts (early-init stage):
+/// DOF_SCREEN_W/H virtual canvas + progressive letterbox mode. Runs before
+/// twrp.cpp SetDefaultValues/latches geometry, so first frame is correct.
+fn apply_display_geometry(
+    log: &mut Option<std::fs::File>,
+    cfg: &crate::config::DeviceConfig,
+    hinge: FoldState,
+) {
+    let (geom, which) = pick_display_geom(cfg, hinge);
+    let _ = set_prop("DOF_SCREEN_W", &geom.w.to_string());
+    let _ = set_prop("DOF_SCREEN_H", &geom.h.to_string());
+    let _ = set_prop("DOF_PROGRESSIVE_SCALE", "1");
+    crate::ko_picker::log_msg(
+        "boot",
+        "INFO",
+        &format!("display: {which} canvas {}x{} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.is_fold),
+    );
+    dlog(log, &format!("display: {which} canvas {}x{}", geom.w, geom.h));
+}
+
 fn by_name_exists(part: &str) -> bool {
     // ls /dev/block/platform/*/by-name/<part>
     if let Ok(platform) = std::fs::read_dir("/dev/block/platform") {
@@ -318,6 +451,19 @@ pub fn run_init() -> Result<(), String> {
         }
     }
 
+    // Display geometry: earliest race-free point (early-init exec, before
+    // twrp.cpp SetDefaultValues reads DOF_* and before minui opens DRM).
+    // Re-load config under the corrected code so folds resolve geometry.
+    {
+        let cfg_final = load_device_config(&final_code).unwrap_or_default();
+        let hinge = if cfg_final.is_fold {
+            detect_fold_state()
+        } else {
+            FoldState::ClosedCover
+        };
+        apply_display_geometry(&mut log, &cfg_final, hinge);
+    }
+
     // Device override (<device>.twrp.flags from devices/<codename>/) wins
     // over the family default; runs after props reveal ro.hardware and
     // before fix_twrp_flags patches/prunes the file.
@@ -445,6 +591,46 @@ mod tests {
         let empty: Vec<String> = Vec::new();
         assert_eq!(repoint_ufs_lines(&mut lines2, &empty), 0);
         assert!(lines2[0].contains("13200000.ufs"));
+    }
+
+    #[test]
+    fn fold_display_pick() {
+        use crate::config::{DeviceConfig, DisplayGeom};
+        let mut cfg = DeviceConfig::default();
+        cfg.front_display = DisplayGeom { w: 1080, h: 2424 };
+        // Slab ignores hinge.
+        assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner).1, "front");
+        // Fold without inner geometry falls back to cover.
+        cfg.is_fold = true;
+        assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner).1, "front");
+        // Fold open with inner geometry.
+        cfg.inner_display = Some(DisplayGeom { w: 2076, h: 2152 });
+        let (g, which) = pick_display_geom(&cfg, FoldState::OpenInner);
+        assert_eq!(which, "inner");
+        assert_eq!((g.w, g.h), (2076, 2152));
+        // Fold closed -> cover.
+        let (g, which) = pick_display_geom(&cfg, FoldState::ClosedCover);
+        assert_eq!(which, "front");
+        assert_eq!((g.w, g.h), (1080, 2424));
+    }
+
+    #[test]
+    fn hinge_scan_empty_dir_defaults_to_cover() {
+        let d = std::env::temp_dir().join(format!("fox_test_hinge_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(detect_fold_state_in(&d), FoldState::ClosedCover);
+        assert_eq!(detect_fold_state_in(std::path::Path::new("/nonexistent-fox")), FoldState::ClosedCover);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn bit_test_helper() {
+        assert!(bit_is_set(&[0b101], 0));
+        assert!(!bit_is_set(&[0b101], 1));
+        assert!(bit_is_set(&[0b101], 2));
+        assert!(!bit_is_set(&[0b101], 9));
+        assert!(!bit_is_set(&[], 0));
     }
 
     #[test]
