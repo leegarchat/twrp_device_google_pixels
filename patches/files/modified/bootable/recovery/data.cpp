@@ -819,6 +819,26 @@ void DataManager::SetDefaultValues()
   mConst.SetValue(OF_SCREEN_H_S, effective_screen_h);
   mData.SetValue(OF_SCREEN_NAV_H_S, effective_screen_h); // mData for nide navbar function
   
+  // Dynamic screen width override: if DOF_SCREEN_W is set (fold/tablet
+  // virtual canvas from pixel.json geometry, stamped by recovery-pixel-boot
+  // init before recovery starts), store it for pages.cpp letterboxing.
+  // tw_w_offset = DOF_SCREEN_W - gr_fb_width() makes scale_w exact and adds
+  // side black bars with centering; unset = default stretch behavior.
+  char dof_screen_w[PROPERTY_VALUE_MAX] = {0};
+  property_get("DOF_SCREEN_W", dof_screen_w, "");
+  if (dof_screen_w[0] != '\0') {
+      mConst.SetValue("dof_screen_w", dof_screen_w);
+  }
+
+  // Progressive scale mode: DOF_PROGRESSIVE_SCALE=1 adds vertical black bars
+  // with centering (pages.cpp derives tw_h_offset/tw_y_offset from
+  // screen_original_h vs fb height). Unset/0 = vertical stretch (default).
+  char dof_progressive_scale[PROPERTY_VALUE_MAX] = {0};
+  property_get("DOF_PROGRESSIVE_SCALE", dof_progressive_scale, "");
+  if (dof_progressive_scale[0] != '\0') {
+      mConst.SetValue("dof_progressive_scale", dof_progressive_scale);
+  }
+  
   mConst.SetValue(OF_STATUS_H_S, OF_STATUS_H);
   mConst.SetValue(OF_HIDE_NOTCH_S, OF_HIDE_NOTCH);
   mConst.SetValue(OF_STATUS_INDENT_LEFT_S, OF_STATUS_INDENT_LEFT);
