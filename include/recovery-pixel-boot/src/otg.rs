@@ -269,17 +269,48 @@ pub fn run_otg_auto() -> ! {
     }
     // Keep UDC name available for debugging parity with the shell version.
     let _ = UDC_NAME;
-    let mut prev = initial;
-    loop {
+    // Debounce + settle: VBUS sensing bounces on plug/unplug (contact
+    // bounce, TCPC renegotiation) and our own host-side boost can reflect
+    // back into the sensor. Without this the daemon flaps host<->device
+    // every second, tearing down enumeration mid-transfer. A switch needs
+    // DEBOUNCE_READS identical polls and a quiet window after the previous
+    // switch.
+    const DEBOUNCE_READS: u32 = 3;
+    const SETTLE_SECS: u64 = 5;
+    let mut prev = initial.clone();
+    let mut last_raw = initial;
+    let mut stable: u32 = 0;
+    let mut cooldown: u64;
+    // Monotonic-ish clock via /proc/uptime (no Instant persistence issues
+    // across the infinite loop, std only).
+    let uptime_secs = || {
+        std::fs::read_to_string("/proc/uptime")
+            .ok()
+            .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
+            .unwrap_or(0.0) as u64
+    };
+    // The boot switch above just ran: let hardware settle before listening.
+    cooldown = uptime_secs() + SETTLE_SECS;    loop {
         let vbus = read_vbus(&vbus_file);
-        if vbus != prev {
-            info(&format!("VBUS change: {prev} -> {vbus}"));
-            if vbus == "1" {
-                switch_to_device(&mut current);
+        if vbus != last_raw {
+            last_raw = vbus.clone();
+            stable = 0;
+        } else if stable < DEBOUNCE_READS {
+            stable += 1;
+        }
+        if stable >= DEBOUNCE_READS && vbus != prev {
+            if uptime_secs() < cooldown {
+                info(&format!("VBUS change {prev} -> {vbus} ignored (settle window)"));
             } else {
-                switch_to_host(&mut current);
+                info(&format!("VBUS change (stable): {prev} -> {vbus}"));
+                if vbus == "1" {
+                    switch_to_device(&mut current);
+                } else {
+                    switch_to_host(&mut current);
+                }
+                prev = vbus.clone();
+                cooldown = uptime_secs() + SETTLE_SECS;
             }
-            prev = vbus;
         }
         // ffs.ready is polled for parity with shell dump_state logging.
         let _ = get_prop("sys.usb.ffs.ready");
