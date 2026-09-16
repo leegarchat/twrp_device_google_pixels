@@ -168,15 +168,25 @@ merge_pixel_config() {
     python3 - "$SCRIPT_DIR" "$ramdisk_root/pixelrunatboot.json" "$platform" <<'PYEOF'
 import json, sys, pathlib
 tree, out, platform = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+# Kernel cmdline/bootconfig normalization is shared verbatim with
+# gen_kernel_mk.py (single source of truth: families/*/family.json
+# `kernels` + devices/*/pixel.json overrides). The flat strings emitted
+# here feed reflash_twrp.sh, which stamps them into the repacked
+# vendor_boot header via `magiskboot unpack -h` substitution.
+sys.path.insert(0, str(tree))
+from gen_kernel_mk import norm_cmdline, effective_profile
 merged = {}
+families = {}
 for famfile in sorted((tree / 'families').glob('*/family.json')):
     try:
         fam = json.loads(famfile.read_text())
     except Exception as e:
         print(f'    [PIXELCFG] ERROR: bad family JSON {famfile}: {e}')
         sys.exit(1)
+    families[fam['family']] = fam
     merged.setdefault('_families', {})[fam['family']] = fam
 n = 0
+bootcfg = {}
 for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     dev = pixfile.parent.name
     if dev in merged:
@@ -195,9 +205,24 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     props.update(pj.get('props', {}))
     pj['props'] = props
     merged[dev] = pj
+    # Flat per-device kernel boot strings (author order, like VENDOR_CMDLINE).
+    fam = families.get(pj['family'], {})
+    vers = set((fam.get('kernels') or {}).keys()) | set((pj.get('kernels') or {}).keys())
+    devcfg = {}
+    for ver in sorted(vers):
+        prof, src = effective_profile(fam, pj, ver)
+        if prof is None:
+            continue
+        flags = norm_cmdline(prof.get('cmdline', {'type': 'arr', 'value': []}))
+        boot = list(prof.get('bootconfig_append', []) or [])
+        devcfg[ver] = {'cmdline': ' '.join(flags), 'bootconfig': '\n'.join(boot), 'source': src}
+    if devcfg:
+        bootcfg[dev] = devcfg
     n += 1
+merged['kernel_bootcfg'] = bootcfg
 out.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + '\n')
 print(f'    [PIXELCFG] merged {n} devices (family {platform}) -> /pixelrunatboot.json')
+print(f'    [PIXELCFG] kernel_bootcfg for {len(bootcfg)} devices')
 PYEOF
 }
 

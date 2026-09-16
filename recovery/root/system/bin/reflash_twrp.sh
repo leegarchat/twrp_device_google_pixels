@@ -52,18 +52,31 @@ rm -rf "$FOLDER"
 mkdir -p "$FOLDER/vendor_ramdisk" || _die "Cannot create $FOLDER/vendor_ramdisk"
 
 device_code=$(getprop ro.hardware)
-_log "device_code=$device_code"
-printf 'androidboot.usbcontroller=11210000.dwc3\n' >> "$FOLDER/bootconfig"
-case "$device_code" in
-    panther|cheetah|lynx|pantah|gs201)
-        printf 'androidboot.boot_devices=14700000.ufs\n' >> "$FOLDER/bootconfig"
-        ;;
-    *)
-        printf 'androidboot.boot_devices=13200000.ufs\n' >> "$FOLDER/bootconfig"
-        ;;
-esac
-printf 'androidboot.load_modules_parallel=true\n' >> "$FOLDER/bootconfig"
-_log "bootconfig OK"
+kver=$(uname -r | cut -d. -f1-2)
+_log "device_code=$device_code kernel=$kver ($(uname -r))"
+
+# --- Kernel boot strings from /pixelrunatboot.json (kernel_bootcfg) ---
+# Same source as the build (families/*/family.json `kernels` + device
+# overrides, author order). The booted kernel selects its own cmdline +
+# bootconfig, so a 6.12 boot stamps 6.12 flags and a 6.1 boot stamps 6.1
+# flags — never the stale cmdline baked into nboot.lz4.
+KB_JSON="/pixelrunatboot.json"
+[ -f "$KB_JSON" ] || _die "pixelrunatboot.json not found (need kernel_bootcfg)"
+KB_PAIR=$(awk -v d="$device_code" -v k="$kver" '
+  /"kernel_bootcfg"/ {t=1; next}
+  t==1 && index($0, "\"" d "\"") {t=2; next}
+  t==2 && index($0, "\"" k "\"") {t=3; next}
+  t==3 && /"cmdline"/ {c=$0; t=4; next}
+  t==4 && /"bootconfig"/ {print c; print $0; exit}
+' "$KB_JSON")
+K_CMDLINE_RAW=$(printf '%s' "$KB_PAIR" | sed -n '1p' | sed 's/.*"cmdline": "\(.*\)".*/\1/')
+K_BOOTCONFIG_RAW=$(printf '%s' "$KB_PAIR" | sed -n '2p' | sed 's/.*"bootconfig": "\(.*\)".*/\1/')
+[ -n "$K_CMDLINE_RAW" ] || _die "no kernel_bootcfg for device='$device_code' kernel='$kver'"
+# JSON unescape: \" -> " (cmdline dyndbg flag), \n stays escaped for bootconfig.
+K_CMDLINE=$(printf '%s' "$K_CMDLINE_RAW" | sed 's/\\"/"/g')
+echo "- Kernel profile: $device_code / $kver"
+_log "cmdline=[$K_CMDLINE]"
+_log "bootconfig_raw=[$K_BOOTCONFIG_RAW]"
 
 if ! [ -f /FFiles/check_dfe_and_reflash ] && ! [ -f /sdcard/Fox/check_dfe_and_reflash ]; then
     for f in "$SNAP/first_stage_ramdisk/system/etc"/fstab*; do
@@ -98,6 +111,31 @@ umount -fl /system_root 2>/dev/null
 grep -q "first_stage_file_list.txt"       "$RECOVERY_LIST" || echo "first_stage_file_list.txt"       >> "$RECOVERY_LIST"
 grep -q "ramdisk_snapshot_manifest.txt"   "$RECOVERY_LIST" || echo "ramdisk_snapshot_manifest.txt"   >> "$RECOVERY_LIST"
 
+echo "- Decompressing base vendor_boot image..."
+cd "$FOLDER" || _die "Cannot cd to $FOLDER"
+
+magiskboot_29 decompress "$NBOOT_LZ4" ./empty.img \
+    || _die "magiskboot_29 decompress failed"
+[ -s "$FOLDER/empty.img" ] || _die "empty.img is empty/missing after decompress"
+_log "empty.img size=$(stat -c %s "$FOLDER/empty.img" 2>/dev/null) bytes"
+
+# Unpack the header (-h): exposes `header` (name=/cmdline=) and `bootconfig`
+# for substitution. NOTE: magiskboot exits nonzero on padded/stock images
+# even when extraction succeeds, so success = files exist, not rc.
+# NOTE 2: this also extracts the stub vendor_ramdisk fragments, so our
+# fresh cpios MUST be (re)created AFTER this step.
+echo "- Unpacking base header for cmdline/bootconfig substitution..."
+magiskboot_29 unpack -h empty.img >>"$LOGF" 2>&1 || true
+[ -f "$FOLDER/header" ] || _die "header missing after unpack -h (see $LOGF)"
+[ -f "$FOLDER/bootconfig" ] || _die "bootconfig missing after unpack -h (see $LOGF)"
+
+echo "- Stamping kernel cmdline ($kver) into header..."
+printf 'name=\ncmdline=%s\n' "$K_CMDLINE" > "$FOLDER/header" \
+    || _die "Cannot write header"
+printf '%b\n' "$K_BOOTCONFIG_RAW" > "$FOLDER/bootconfig" \
+    || _die "Cannot write bootconfig"
+_log "header+bootconfig stamped"
+
 echo "- Creating recovery ramdisk cpio from snapshot..."
 cd "$SNAP" || _die "Cannot cd to $SNAP"
 
@@ -114,15 +152,8 @@ cpio -H newc -o < "$FSTAGE_LIST" > "$FOLDER/vendor_ramdisk/ramdisk.cpio" 2>/dev/
     || _die "ramdisk.cpio is empty after cpio"
 _log "ramdisk.cpio size=$(stat -c %s "$FOLDER/vendor_ramdisk/ramdisk.cpio" 2>/dev/null) bytes"
 
-echo "- Decompressing base vendor_boot image..."
+echo "- Repacking vendor_boot image (cmdline=$kver)..."
 cd "$FOLDER" || _die "Cannot cd to $FOLDER"
-
-magiskboot_29 decompress "$NBOOT_LZ4" ./empty.img \
-    || _die "magiskboot_29 decompress failed"
-[ -s "$FOLDER/empty.img" ] || _die "empty.img is empty/missing after decompress"
-_log "empty.img size=$(stat -c %s "$FOLDER/empty.img" 2>/dev/null) bytes"
-
-echo "- Repacking vendor_boot image..."
 magiskboot_29 repack "$FOLDER/empty.img" \
     || _die "magiskboot_29 repack failed"
 [ -s "$FOLDER/new-boot.img" ] || _die "new-boot.img is empty/missing after repack"
