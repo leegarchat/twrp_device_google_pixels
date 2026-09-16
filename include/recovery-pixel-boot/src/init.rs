@@ -93,6 +93,49 @@ pub fn keep_flags_line(line: &str, exists: &dyn Fn(&str) -> bool) -> bool {
     exists(part) || exists(&format!("{part}_a"))
 }
 
+/// Extracts the platform dir name from a `/dev/block/platform/<dir>/...`
+/// flags path. Pure (testable); FS access lives in the caller.
+fn flags_platform_dir(line: &str) -> Option<&str> {
+    const PREFIX: &str = "/dev/block/platform/";
+    let start = line.find(PREFIX)? + PREFIX.len();
+    let rest = &line[start..];
+    let end = rest.find('/')?;
+    let dir = &rest[..end];
+    if dir.is_empty() {
+        return None;
+    }
+    Some(dir)
+}
+
+/// Rewrites stale `/dev/block/platform/<addr>.ufs/` prefixes in twrp.flags
+/// lines to the live UFS platform dir. Lines whose baked dir exists are
+/// never touched; only absent ones fall back to discovery. Returns the
+/// number of rewritten lines. Pure over `live_dirs` (testable).
+fn repoint_ufs_lines(lines: &mut [String], live_dirs: &[String]) -> usize {
+    let mut fixed = 0;
+    for line in lines.iter_mut() {
+        let Some(dir) = flags_platform_dir(line) else {
+            continue;
+        };
+        if !dir.contains("ufs") {
+            continue;
+        }
+        if live_dirs.iter().any(|d| d == dir) {
+            continue;
+        }
+        let mut sorted = live_dirs.to_vec();
+        sorted.sort();
+        let Some(target) = sorted.first() else {
+            continue;
+        };
+        let old = format!("/dev/block/platform/{dir}/");
+        let new = format!("/dev/block/platform/{target}/");
+        *line = line.replacen(&old, &new, 1);
+        fixed += 1;
+    }
+    fixed
+}
+
 fn by_name_exists(part: &str) -> bool {
     // ls /dev/block/platform/*/by-name/<part>
     if let Ok(platform) = std::fs::read_dir("/dev/block/platform") {
@@ -166,6 +209,33 @@ fn fix_twrp_flags(log: &mut Option<std::fs::File>) {
         }
     } else {
         crate::ko_picker::log_msg("boot", "WARN", "twrp.flags: no sd? found, OTG unchanged");
+    }
+
+    // 1b. UFS platform fallback: repoint baked family paths that are absent
+    // on this device to the live *ufs* dir (new SoC / stale family file).
+    // Static-first: existing dirs are never rewritten. Runs before the
+    // prune so repointed lines resolve instead of being dropped.
+    let live_ufs: Vec<String> = std::fs::read_dir("/dev/block/platform")
+        .map(|rd| {
+            let mut v: Vec<String> = rd
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.contains("ufs"))
+                .collect();
+            v.sort();
+            v
+        })
+        .unwrap_or_default();
+    if !live_ufs.is_empty() {
+        let fixed = repoint_ufs_lines(&mut lines, &live_ufs);
+        if fixed > 0 {
+            crate::ko_picker::log_msg(
+                "boot",
+                "INFO",
+                &format!("twrp.flags: UFS fallback repointed {fixed} line(s) -> {}", live_ufs[0]),
+            );
+            dlog(log, &format!("UFS fallback: repointed {fixed} line(s) -> {}", live_ufs[0]));
+        }
     }
 
     // 2. Prune by-name entries absent on this device (guard: skip when empty).
@@ -341,6 +411,40 @@ mod tests {
         assert!(!swap_device_flags(&d, "husky"));
         assert!(!swap_device_flags(&d, ""));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn ufs_platform_dir_parse() {
+        assert_eq!(
+            flags_platform_dir("/m f2fs /dev/block/platform/13200000.ufs/by-name/metadata flags"),
+            Some("13200000.ufs")
+        );
+        assert_eq!(flags_platform_dir("/a ext4 /dev/block/sda1"), None);
+        assert_eq!(flags_platform_dir("# comment"), None);
+        assert_eq!(flags_platform_dir("/x emmc /dev/block/platform/"), None);
+    }
+
+    #[test]
+    fn ufs_fallback_repoints_only_absent_dirs() {
+        let live = vec!["3c2d0000.ufs".to_string()];
+        // Absent family dir -> repointed to the live one.
+        let mut lines = vec![
+            "/m f2fs /dev/block/platform/13200000.ufs/by-name/metadata flags".to_string(),
+            "/s emmc /dev/block/platform/13200000.ufs/by-name/super flags".to_string(),
+        ];
+        assert_eq!(repoint_ufs_lines(&mut lines, &live), 2);
+        assert!(lines[0].contains("/dev/block/platform/3c2d0000.ufs/by-name/metadata"));
+        // Present dir -> untouched.
+        let mut ok = vec!["/m f2fs /dev/block/platform/3c2d0000.ufs/by-name/metadata flags".to_string()];
+        assert_eq!(repoint_ufs_lines(&mut ok, &live), 0);
+        // Non-ufs platform dir -> untouched.
+        let mut other = vec!["/u auto /dev/block/platform/soc/by-name/x flags".to_string()];
+        assert_eq!(repoint_ufs_lines(&mut other, &live), 0);
+        // No live dirs -> nothing rewritten.
+        let mut lines2 = vec!["/m f2fs /dev/block/platform/13200000.ufs/by-name/metadata flags".to_string()];
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(repoint_ufs_lines(&mut lines2, &empty), 0);
+        assert!(lines2[0].contains("13200000.ufs"));
     }
 
     #[test]
