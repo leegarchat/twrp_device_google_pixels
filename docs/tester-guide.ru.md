@@ -43,7 +43,7 @@ fastboot flash vendor_boot_a OrangeFox-test-xxx.img
 fastboot reboot recovery
 ```
 
-### Pixel 6 series (oriole/raven) — особая процедура
+### Pixel 6 series (gs101: oriole/raven/bluejay) — особая процедура
 
 У Pixel 6 нет раздела `vendor_kernel_boot`, поэтому шьётся **НЕ**
 `.img`, а **рамдиск** `.ramdisk.lz4` в platform-фрагмент (обрати
@@ -56,8 +56,6 @@ fastboot reboot recovery
 
 (`:default` или `:recovery` здесь НЕПРАВИЛЬНО — первое схлопывает всю
 таблицу и убивает стоковый dlkm, второе пишет не в тот фрагмент.)
-Pixel 6a (bluejay) в этом раунде тестов **не участвует** — gs101-сборки
-на него не шить.
 
 Сначала бэкап (бутлоадер, рут не нужен) — оба слота:
 ```

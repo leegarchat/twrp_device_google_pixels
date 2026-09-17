@@ -42,7 +42,7 @@ fastboot flash vendor_boot_a OrangeFox-test-xxx.img
 fastboot reboot recovery
 ```
 
-### Pixel 6 series (oriole/raven) — special procedure
+### Pixel 6 series (gs101: oriole/raven/bluejay) — special procedure
 
 Pixel 6 has no `vendor_kernel_boot` partition, so you do **NOT** flash
 the `.img` — you flash the `.ramdisk.lz4` **ramdisk** into the platform
@@ -55,8 +55,7 @@ fastboot reboot recovery
 
 (`:default` or `:recovery` are WRONG here — the first collapses the
 whole table and kills stock dlkm, the second overwrites the wrong
-fragment.) Pixel 6a (bluejay) is **not** in this test round — do not
-flash gs101 builds on it.
+fragment.)
 
 Backup first (bootloader, no root needed) — both slots:
 ```
