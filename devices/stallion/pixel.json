@@ -2,7 +2,10 @@
   "family": "zumapro",
   "soc_family": "zumapro",
   "is_fold": 0,
-  "front_display": {"w": 1080, "h": 2400},
+  "front_display": {
+    "w": 1080,
+    "h": 2400
+  },
   "touch_modules": [
     "stmvl53l1",
     "lwis",
@@ -25,29 +28,29 @@
     "ro.product.system.device": "stallion",
     "ro.product.system.model": "Pixel 10a",
     "ro.product.system.name": "stallion",
-    "ro.system.build.fingerprint": "google/stallion/stallion:17/CP2A.260705.006/15641320:user/release-keys",
+    "ro.system.build.fingerprint": "google/stallion_beta/stallion:17/CP41.260828.004.A8/16319058:user/release-keys",
     "ro.build.display.id": "stallion-eng 99.87.36 CP2A.260705.006 eng.qnorsten.test-keys",
     "ro.build.flavor": "stallion-eng",
     "ro.build.product": "stallion",
-    "ro.build.description": "stallion-user 17 CP2A.260705.006 15641320 release-keys",
+    "ro.build.description": "stallion-user 17 CP41.260828.004.A8 16319058 release-keys",
     "ro.display.series": "Pixel 10a",
     "ro.product.vendor.device": "stallion",
     "ro.product.vendor.model": "Pixel 10a",
     "ro.product.vendor.name": "stallion",
-    "ro.vendor.build.fingerprint": "google/stallion/stallion:17/CP2A.260705.006/15641320:user/release-keys",
+    "ro.vendor.build.fingerprint": "google/stallion_beta/stallion:17/CP41.260828.004.A8/16319058:user/release-keys",
     "ro.product.board": "stallion",
     "ro.product.odm.device": "stallion",
     "ro.product.odm.model": "Pixel 10a",
     "ro.product.odm.name": "stallion",
-    "ro.odm.build.fingerprint": "google/stallion/stallion:17/CP2A.260705.006/15641320:user/release-keys",
+    "ro.odm.build.fingerprint": "google/stallion_beta/stallion:17/CP41.260828.004.A8/16319058:user/release-keys",
     "ro.product.product.device": "stallion",
     "ro.product.product.model": "Pixel 10a",
     "ro.product.product.name": "stallion",
-    "ro.product.build.fingerprint": "google/stallion/stallion:17/CP2A.260705.006/15641320:user/release-keys",
+    "ro.product.build.fingerprint": "google/stallion_beta/stallion:17/CP41.260828.004.A8/16319058:user/release-keys",
     "ro.product.system_ext.device": "stallion",
     "ro.product.system_ext.model": "Pixel 10a",
     "ro.product.system_ext.name": "stallion",
-    "ro.system_ext.build.fingerprint": "google/stallion/stallion:17/CP2A.260705.006/15641320:user/release-keys",
+    "ro.system_ext.build.fingerprint": "google/stallion_beta/stallion:17/CP41.260828.004.A8/16319058:user/release-keys",
     "ro.product.device": "stallion",
     "ro.product.name": "stallion",
     "ro.product.model": "Pixel 10a"
@@ -70,5 +73,41 @@
     "/sys/class/power_supply/usb-charger/online"
   ],
   "tcpc_driver": "max77759tcpc",
-  "thermal_soc_type": "soc_therm"
+  "thermal_soc_type": "soc_therm",
+  "kernels": {
+    "6.1": {
+      "cmdline": {
+        "type": "arr",
+        "value": [
+          "workqueue.power_efficient=1",
+          "f2fs.num_compress_pages=128",
+          "dyndbg=\"func alloc_contig_dump_pages +p\"",
+          "earlycon=exynos4210,0x10870000",
+          "console=ttySAC0,115200",
+          "androidboot.console=ttySAC0",
+          "printk.devkmsg=on",
+          "cma_sysfs.experimental=Y",
+          "cgroup.memory=nokmem",
+          "rcupdate.rcu_expedited=1",
+          "rcu_nocbs=all",
+          "rcutree.enable_rcu_lazy",
+          "swiotlb=noforce",
+          "disable_dma32=on",
+          "sysctl.kernel.sched_pelt_multiplier=4",
+          "rodata=on",
+          "binder.impl=rust",
+          "kasan=off",
+          "at24.write_timeout=100",
+          "log_buf_len=1024K",
+          "android_arch_task_struct_size=784",
+          "bootconfig"
+        ]
+      },
+      "bootconfig_append": [
+        "androidboot.boot_devices=13200000.ufs"
+      ],
+      "prebuilt": {},
+      "ko": {}
+    }
+  }
 }
