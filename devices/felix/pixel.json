@@ -1,0 +1,122 @@
+{
+  "family": "gs201",
+  "soc_family": "gs201",
+  "is_fold": 1,
+  "front_display": {
+    "w": 1080,
+    "h": 2092
+  },
+  "inner_display": {
+    "w": 1840,
+    "h": 2208
+  },
+  "touch_modules": [
+    "stmvl53l1",
+    "lwis",
+    "cl_dsp-core",
+    "cs40l26-core",
+    "cs40l26-i2c",
+    "goodixfp",
+    "heatmap",
+    "touch_bus_negotiator",
+    "touch_offload",
+    "goog_touch_interface",
+    "fps_touch_handler"
+  ],
+  "part_touch": "vendor_dlkm",
+  "part_vendor": "vendor",
+  "cs40l26_pm": "",
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "max77759tcpc",
+  "thermal_soc_type": "soc_therm",
+  "props": {
+    "ro.quick_start.device_id": "felix",
+    "ro.lineage.device": "felix",
+    "ro.crdroid.device": "felix",
+    "ro.product.system.device": "felix",
+    "ro.product.system.model": "Pixel Fold",
+    "ro.product.system.name": "felix",
+    "ro.product.vendor.device": "felix",
+    "ro.product.vendor.model": "Pixel Fold",
+    "ro.product.vendor.name": "felix",
+    "ro.product.odm.device": "felix",
+    "ro.product.odm.model": "Pixel Fold",
+    "ro.product.odm.name": "felix",
+    "ro.product.product.device": "felix",
+    "ro.product.product.model": "Pixel Fold",
+    "ro.product.product.name": "felix",
+    "ro.product.system_ext.device": "felix",
+    "ro.product.system_ext.model": "Pixel Fold",
+    "ro.product.system_ext.name": "felix",
+    "ro.system.build.fingerprint": "google/felix_beta/felix:17/CP41.260828.005.A6/16319837:user/release-keys",
+    "ro.vendor.build.fingerprint": "google/felix_beta/felix:17/CP41.260828.005.A6/16319837:user/release-keys",
+    "ro.odm.build.fingerprint": "google/felix_beta/felix:17/CP41.260828.005.A6/16319837:user/release-keys",
+    "ro.product.build.fingerprint": "google/felix_beta/felix:17/CP41.260828.005.A6/16319837:user/release-keys",
+    "ro.system_ext.build.fingerprint": "google/felix_beta/felix:17/CP41.260828.005.A6/16319837:user/release-keys",
+    "ro.build.display.id": "felix-eng 99.87.36 CP41.260828.005.A6 eng.leegar.20240907.130349 test-keys",
+    "ro.build.flavor": "felix-eng",
+    "ro.build.product": "felix",
+    "ro.build.description": "felix-user 17 CP41.260828.005.A6 16319837 release-keys",
+    "ro.display.series": "Pixel Fold",
+    "ro.product.board": "felix",
+    "ro.product.device": "felix",
+    "ro.product.name": "felix",
+    "ro.product.model": "Pixel Fold"
+  },
+  "kernels": {
+    "6.1": {
+      "cmdline": {
+        "type": "arr",
+        "value": [
+          "workqueue.power_efficient=1",
+          "f2fs.num_compress_pages=128",
+          "swiotlb=noforce",
+          "fips140.load_sequential=1",
+          "exynos_drm.load_sequential=1",
+          "panel-samsung-ana6707-f10.load_sequential=1",
+          "s2mpg12-regulator.load_sequential=1",
+          "dyndbg=\"func alloc_contig_dump_pages +p\"",
+          "earlycon=exynos4210,0x10A00000",
+          "console=ttySAC0,115200",
+          "androidboot.console=ttySAC0",
+          "printk.devkmsg=on",
+          "cma_sysfs.experimental=Y",
+          "rcupdate.rcu_expedited=1",
+          "rcu_nocbs=all",
+          "rcutree.enable_rcu_lazy",
+          "swiotlb=1024",
+          "cgroup.memory=nokmem",
+          "disable_dma32=on",
+          "rodata=on",
+          "binder.impl=rust",
+          "at24.write_timeout=100",
+          "log_buf_len=1024K",
+          "android_arch_task_struct_size=784",
+          "bootconfig"
+        ]
+      },
+      "bootconfig_append": [
+        "androidboot.load_modules_parallel=true",
+        "androidboot.boot_devices=14700000.ufs"
+      ],
+      "prebuilt": {},
+      "ko": {}
+    }
+  }
+}
