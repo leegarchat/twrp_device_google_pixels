@@ -1,0 +1,11 @@
+--- a/bootable/recovery/gui/listbox.cpp
++++ b/bootable/recovery/gui/listbox.cpp
+@@ -370,7 +370,7 @@
+ 				mUpdate = 1;
+ 			}
+ 		}
+-		else if (varName == mVariable) {
++		else if (varName == mVariable && !mVariable.empty()) {
+ 			if (item.variableValue == currentValue) {
+ 				item.selected = 1;
+ 				SetVisibleListLocation(mVisibleItems.empty() ? 0 : mVisibleItems.size()-1);

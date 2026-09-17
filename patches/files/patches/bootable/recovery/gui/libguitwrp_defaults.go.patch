@@ -1,0 +1,14 @@
+--- a/bootable/recovery/gui/libguitwrp_defaults.go
++++ b/bootable/recovery/gui/libguitwrp_defaults.go
+@@ -277,6 +277,11 @@
+ 	if getMakeVars(ctx, "AB_OTA_UPDATER") == "true" {
+ 		cflags = append(cflags, "-DAB_OTA_UPDATER=1")
+ 	}
++
++	if tw_framerate := getMakeVars(ctx, "TW_FRAMERATE"); tw_framerate != "" {
++		cflags = append(cflags, "-DTW_FRAMERATE="+tw_framerate)
++	}
++
+ 	return cflags
+ }
+ 
