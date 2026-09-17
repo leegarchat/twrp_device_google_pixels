@@ -1,0 +1,3 @@
+# init.recovery.kodiak.rc — Pixel 11 Pro XL (kodiak) stub.
+# Loaded by init when ro.hardware=kodiak. All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

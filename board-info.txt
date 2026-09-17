@@ -1,1 +1,1 @@
-require board=cheetah|lynx|panther|tangorpro|shiba|husky|akita|tokay|caiman|comet|komodo|tegu|stallion|grizzly
+require board=cheetah|lynx|panther|tangorpro|felix|shiba|husky|akita|tokay|caiman|comet|komodo|tegu|stallion|grizzly|blazer|frankel|mustang|rango|yogi|cubs|kodiak

@@ -1,0 +1,74 @@
+{
+  "family": "laguna",
+  "soc_family": "laguna",
+  "is_fold": 1,
+  "front_display": {
+    "w": 1080,
+    "h": 2364
+  },
+  "touch_modules": [
+    "goodixfp",
+    "stm_core",
+    "syna_touch"
+  ],
+  "part_touch": "vendor_dlkm",
+  "part_vendor": "vendor",
+  "cs40l26_pm": "",
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "",
+  "thermal_soc_type": "soc_therm",
+  "props": {
+    "ro.quick_start.device_id": "rango",
+    "ro.lineage.device": "rango",
+    "ro.crdroid.device": "rango",
+    "ro.product.system.device": "rango",
+    "ro.product.system.model": "Pixel 10 Pro Fold",
+    "ro.product.system.name": "rango",
+    "ro.product.vendor.device": "rango",
+    "ro.product.vendor.model": "Pixel 10 Pro Fold",
+    "ro.product.vendor.name": "rango",
+    "ro.product.odm.device": "rango",
+    "ro.product.odm.model": "Pixel 10 Pro Fold",
+    "ro.product.odm.name": "rango",
+    "ro.product.product.device": "rango",
+    "ro.product.product.model": "Pixel 10 Pro Fold",
+    "ro.product.product.name": "rango",
+    "ro.product.system_ext.device": "rango",
+    "ro.product.system_ext.model": "Pixel 10 Pro Fold",
+    "ro.product.system_ext.name": "rango",
+    "ro.system.build.fingerprint": "google/rango_beta/rango:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.vendor.build.fingerprint": "google/rango_beta/rango:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.odm.build.fingerprint": "google/rango_beta/rango:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.product.build.fingerprint": "google/rango_beta/rango:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.system_ext.build.fingerprint": "google/rango_beta/rango:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.build.display.id": "rango-eng 99.87.36 CP41.260828.004.A8 eng.leegar.20240907.130349 test-keys",
+    "ro.build.flavor": "rango-eng",
+    "ro.build.product": "rango",
+    "ro.build.description": "rango-user 17 CP41.260828.004.A8 16319058 release-keys",
+    "ro.display.series": "Pixel 10 Pro Fold",
+    "ro.product.board": "rango",
+    "ro.product.device": "rango",
+    "ro.product.name": "rango",
+    "ro.product.model": "Pixel 10 Pro Fold"
+  },
+  "inner_display": {
+    "w": 2076,
+    "h": 2152
+  }
+}

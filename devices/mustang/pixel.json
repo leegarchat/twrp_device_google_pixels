@@ -1,0 +1,70 @@
+{
+  "family": "laguna",
+  "soc_family": "laguna",
+  "is_fold": 0,
+  "front_display": {
+    "w": 1080,
+    "h": 2400
+  },
+  "touch_modules": [
+    "focal_touch",
+    "stm_core",
+    "syna_touch"
+  ],
+  "part_touch": "vendor_dlkm",
+  "part_vendor": "vendor",
+  "cs40l26_pm": "",
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "",
+  "thermal_soc_type": "soc_therm",
+  "props": {
+    "ro.quick_start.device_id": "mustang",
+    "ro.lineage.device": "mustang",
+    "ro.crdroid.device": "mustang",
+    "ro.product.system.device": "mustang",
+    "ro.product.system.model": "Pixel 10 Pro XL",
+    "ro.product.system.name": "mustang",
+    "ro.product.vendor.device": "mustang",
+    "ro.product.vendor.model": "Pixel 10 Pro XL",
+    "ro.product.vendor.name": "mustang",
+    "ro.product.odm.device": "mustang",
+    "ro.product.odm.model": "Pixel 10 Pro XL",
+    "ro.product.odm.name": "mustang",
+    "ro.product.product.device": "mustang",
+    "ro.product.product.model": "Pixel 10 Pro XL",
+    "ro.product.product.name": "mustang",
+    "ro.product.system_ext.device": "mustang",
+    "ro.product.system_ext.model": "Pixel 10 Pro XL",
+    "ro.product.system_ext.name": "mustang",
+    "ro.system.build.fingerprint": "google/mustang_beta/mustang:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.vendor.build.fingerprint": "google/mustang_beta/mustang:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.odm.build.fingerprint": "google/mustang_beta/mustang:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.product.build.fingerprint": "google/mustang_beta/mustang:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.system_ext.build.fingerprint": "google/mustang_beta/mustang:17/CP41.260828.004.A8/16319058:user/release-keys",
+    "ro.build.display.id": "mustang-eng 99.87.36 CP41.260828.004.A8 eng.leegar.20240907.130349 test-keys",
+    "ro.build.flavor": "mustang-eng",
+    "ro.build.product": "mustang",
+    "ro.build.description": "mustang-user 17 CP41.260828.004.A8 16319058 release-keys",
+    "ro.display.series": "Pixel 10 Pro XL",
+    "ro.product.board": "mustang",
+    "ro.product.device": "mustang",
+    "ro.product.name": "mustang",
+    "ro.product.model": "Pixel 10 Pro XL"
+  }
+}

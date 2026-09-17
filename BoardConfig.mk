@@ -5,15 +5,23 @@
 #
 
 # BoardConfig.mk — Board-level configuration for OrangeFox Recovery.
-# Targets three Tensor SoC families:
-#   gs201   (Tensor G2): panther (Pixel 7), cheetah (Pixel 7 Pro), lynx (Pixel 7a)
+# Targets Tensor SoC families:
+#   gs201   (Tensor G2): panther (Pixel 7), cheetah (Pixel 7 Pro), lynx (Pixel 7a),
+#                        tangorpro (Pixel Tablet), felix (Pixel Fold)
 #   zuma    (Tensor G3): shiba (Pixel 8), husky (Pixel 8 Pro), akita (Pixel 8a)
-#   zumapro (Tensor G4): tokay (Pixel 9), komodo (Pixel 9 Pro XL), caiman (Pixel 9 Pro), tegu (Pixel 9a)
+#   zumapro (Tensor G4): tokay (Pixel 9), komodo (Pixel 9 Pro XL), caiman (Pixel 9 Pro),
+#                        tegu (Pixel 9a), stallion (Pixel 10a), comet (Pixel 9 Pro Fold)
+#   laguna  (Tensor G5): frankel (Pixel 10), blazer (Pixel 10 Pro), mustang (Pixel 10 Pro XL),
+#                        rango (Pixel 10 Pro Fold)
+#   malibu  (Tensor G6): grizzly (Pixel 11 Pro), cubs (Pixel 11), kodiak (Pixel 11 Pro XL),
+#                        yogi (Pixel 11 Pro Fold)
 #
 # Build flag DEVICE_BUILD_FLAG selects the target family:
 #   (default) → zuma (UFS 13200000, earlycon 10A00000)
 #   zumapro   → zumapro (UFS 13200000, earlycon 10870000)
 #   gs201     → gs201 (UFS 14700000, earlycon 10A00000)
+#   laguna    → laguna (UFS 3c400000, DWC3 c400000)
+#   malibu    → malibu (UFS 3c2d0000, DWC3 a210000)
 #
 # Crypto: FBE with wrappedkey_v0 + metadata encryption via Trusty TEE KeyMint
 # Boot: Virtual A/B with vendor_boot, GKI or monolithic kernel

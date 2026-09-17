@@ -161,6 +161,8 @@ if [ "$DEVICE_BUILD_FLAG" = "gs201" ] || [ "$DEVICE_BUILD_FLAG" = "gs101" ]; the
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/14700000.ufs/by-name/vendor_boot"
 elif [ "$DEVICE_BUILD_FLAG" = "malibu" ]; then
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/3c2d0000.ufs/by-name/vendor_boot"
+elif [ "$DEVICE_BUILD_FLAG" = "laguna" ]; then
+    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/3c400000.ufs/by-name/vendor_boot"
 else
     export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/13200000.ufs/by-name/vendor_boot"
 fi

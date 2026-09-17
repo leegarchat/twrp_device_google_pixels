@@ -1,0 +1,3 @@
+# init.recovery.laguna.rc — Laguna SoC (Tensor G5) stub.
+# Loaded by init when ro.hardware=laguna. All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

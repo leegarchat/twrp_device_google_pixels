@@ -1,0 +1,17 @@
+// Pre-rendered vendor fstab for laguna (Tensor G5).
+// Copied verbatim from blazer CP41.260828.004.A8 stock vendor/etc.
+// No build-time codegen: plain prebuilt_etc with the historical module
+// names, so device.mk PRODUCT_PACKAGES lines stay uniform.
+prebuilt_etc {
+    name: "fstab.laguna",
+    src: "fstab.laguna",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.laguna-fips",
+    src: "fstab.laguna-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}

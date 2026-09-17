@@ -1,0 +1,23 @@
+<!-- Tensor G5 (laguna) Rust KeyMint HAL manifest, KeyMint AIDL v5.
+     Structure mirrors stock vendor fragment; schema 2.0:
+     OFRP recovery ships libvintf 8.0 which rejects stock schema 9.0. -->
+<manifest version="2.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>5</version>
+        <fqname>IKeyMintDevice/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.keymint</name>
+        <version>3</version>
+        <fqname>IRemotelyProvisionedComponent/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.secureclock</name>
+        <fqname>ISecureClock/default</fqname>
+    </hal>
+    <hal format="aidl">
+        <name>android.hardware.security.sharedsecret</name>
+        <fqname>ISharedSecret/default</fqname>
+    </hal>
+</manifest>

@@ -140,6 +140,7 @@ endif
 # families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
 # families/gs201/fstab/   → fstab.gs201*                            (Tensor G2, UFS 14700000)
 # families/malibu/fstab/  → fstab.malibu*                           (Tensor G6, UFS 3c2d0000)
+# families/laguna/fstab/  → fstab.laguna*                           (Tensor G5, UFS 3c400000)
 # gs101                   → reuses gs201 fstab (Tensor G1, UFS 14700000 — same as gs201)
 ifeq ($(DEVICE_BUILD_FLAG),zumapro)
 PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
@@ -156,6 +157,9 @@ PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk
 else ifeq ($(DEVICE_BUILD_FLAG),malibu)
 PRODUCT_PACKAGES += fstab.malibu.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.malibu-fips.vendor_ramdisk
+else ifeq ($(DEVICE_BUILD_FLAG),laguna)
+PRODUCT_PACKAGES += fstab.laguna.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.laguna-fips.vendor_ramdisk
 else
 PRODUCT_PACKAGES += fstab.zuma.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zuma-fips.vendor_ramdisk

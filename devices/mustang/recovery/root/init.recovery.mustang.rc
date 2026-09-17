@@ -1,0 +1,3 @@
+# init.recovery.mustang.rc — Pixel 10 Pro XL (mustang) stub.
+# Loaded by init when ro.hardware=mustang. All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc
