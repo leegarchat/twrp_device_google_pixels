@@ -112,6 +112,40 @@
       ],
       "prebuilt": {},
       "ko": {}
+    },
+    "6.12": {
+      "cmdline": {
+        "type": "arr",
+        "value": [
+          "workqueue.power_efficient=1",
+          "f2fs.num_compress_pages=128",
+          "fips140.load_sequential=1",
+          "exynos_drm.load_sequential=1",
+          "dyndbg=\"func alloc_contig_dump_pages +p\"",
+          "earlycon=exynos4210,0x10A00000",
+          "console=ttySAC0,115200",
+          "androidboot.console=ttySAC0",
+          "printk.devkmsg=on",
+          "cma_sysfs.experimental=Y",
+          "rcupdate.rcu_expedited=1",
+          "rcu_nocbs=all",
+          "rcutree.enable_rcu_lazy",
+          "swiotlb=1024",
+          "cgroup.memory=nokmem",
+          "disable_dma32=on",
+          "rodata=on",
+          "at24.write_timeout=100",
+          "log_buf_len=1024K",
+          "android_arch_task_struct_size=784",
+          "bootconfig"
+        ]
+      },
+      "bootconfig_append": [
+        "androidboot.load_modules_parallel=true",
+        "androidboot.boot_devices=14700000.ufs"
+      ],
+      "prebuilt": {},
+      "ko": {}
     }
   }
 }
