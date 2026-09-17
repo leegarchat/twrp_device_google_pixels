@@ -144,7 +144,7 @@
  		if (mount(Symlink_Path.c_str(), Symlink_Mount_Point.c_str(), "", MS_BIND, NULL) < 0) {
  			return false;
  		}
-@@ -1804,9 +1886,20 @@
+@@ -1804,17 +1886,28 @@
  		if (Is_Storage && MTP_Storage_ID > 0)
  			PartitionManager.Remove_MTP_Storage(MTP_Storage_ID);
  
@@ -155,19 +155,19 @@
 +			// multiple times: from Mount and from Post_Decrypt)
 +			while (umount2(Symlink_Mount_Point.c_str(), flags) == 0);
 +		}
- 
++
 +		// Unmount sub-mounts under /data that block clean unmount
 +		// (e.g. /data/user/0 bind mount from fscrypt_init_user0)
 +		if (Mount_Point == "/data") {
 +			umount2("/data/user/0", flags);
 +			umount2("/data/media/0", flags);
 +		}
-+
-+		umount2(Mount_Point.c_str(), flags);
+ 
  		umount2(Mount_Point.c_str(), flags);
++		umount2(Mount_Point.c_str(), flags);
  		if (Is_Mounted()) {
  			if (Mount_Point == "/data" || Mount_Point == "/sdcard" || Mount_Point == "/data/media/0") {
-@@ -1814,7 +1907,7 @@
+ 				LOGINFO("DEBUG: attempting again to unmount '%s'\n", Mount_Point.c_str());
  				TWFunc::Exec_Cmd("umount -l " + Mount_Point);
  				sleep(1);
  				if (!Is_Mounted())
@@ -196,3 +196,36 @@
  			return true;
  		}
  	} else {
+@@ -2677,9 +2783,30 @@
+ 	if (Needs_Fs_Compress)
+ 		f2fs_command += " -O compression,extra_attr";
+ 
+-	f2fs_command += " " + Actual_Block_Device + " " + dev_sz_str;
++	// Block size. AOSP passes this and TWRP did not.
++	const std::string blk_sz_str = std::to_string(getpagesize());
++	f2fs_command += " -w " + blk_sz_str + " -b " + blk_sz_str;
++
++	// A zoned companion device has to be named, and mkfs refuses without -m. Detected the
++	// same way fs_mgr detects the legacy zoned_device flag, so a device without one is
++	// unaffected and keeps the sector-count form below.
++	std::string zoned_device;
++	if (Mount_Point == "/data" && TWFunc::Path_Exists("/dev/block/by-name/zoned_device"))
++		zoned_device = "/dev/block/by-name/zoned_device";
++
++	if (!zoned_device.empty())
++		f2fs_command += " -c " + zoned_device + " -m " + Actual_Block_Device;
++	else
++		f2fs_command += " " + Actual_Block_Device + " " + dev_sz_str;
++
++	// sload_f2fs below cannot handle the result. It has no way to be told about a second
++	// device -- its -c is "enable compression", not "add device" -- so it reads the new
++	// superblock, sees Device[1], fails to open it and exits 255. Chained with &&, that
++	// turns a successful mkfs into "Unable to wipe Data". AOSP's format_f2fs() never runs
++	// sload at all, and with no -f source directory it does nothing anyway.
++	const bool skip_sload = !zoned_device.empty();
+ 
+-	if (TWFunc::Path_Exists("/system/bin/sload_f2fs")) {
++	if (!skip_sload && TWFunc::Path_Exists("/system/bin/sload_f2fs")) {
+ 		f2fs_command += " && sload_f2fs -t /data " + Actual_Block_Device;
+ 	}
+ 
