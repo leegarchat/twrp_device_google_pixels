@@ -666,6 +666,27 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         fi
     fi
 
+    # Refresh OrangeFox env snapshot for the post-image hook (Fox_After_*).
+    # The hook script (vendor/recovery/OrangeFox_A14.sh) reads OUT/FOX_BUILD_TYPE
+    # from inherited env or /tmp/pixels/fox_env.sh, which lunch writes ONCE via
+    # printconfig. If the file is gone (/tmp volatility, manual cleanup), group
+    # 2+ recipes run with empty OUT (artifacts at /...) and default Unofficial
+    # type. Re-materialize it from the current (post-lunch, proven-good) env
+    # before every group; fail fast if the shell itself lost the critical vars.
+    if [[ -z "${OUT:-}" || -z "${FOX_BUILD_TYPE:-}" ]]; then
+        echo "ERROR: build env lost OUT/FOX_BUILD_TYPE before group build — re-run lunch"
+        fox_safe_exit 2
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        _fox_dev=$(cut -d'_' -f2 <<<"${TARGET_PRODUCT:-twrp_pixels}")
+        mkdir -p "/tmp/$_fox_dev"
+        export > "/tmp/$_fox_dev/fox_env.sh"
+        echo "[build] Refreshed /tmp/$_fox_dev/fox_env.sh for post-image hook"
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+        break
+    fi
+
     # KeyMint HAL first, alone: the recovery callback copies the vendor output
     # during vendorbootimage assembly and parallel ninja gives no ordering
     # guarantee. The follow-up full mka reuses it (no-op) and builds the rest.
