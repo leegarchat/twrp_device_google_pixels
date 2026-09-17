@@ -59,10 +59,19 @@ platform-фрагмент (first-stage + recovery слиты: в `BoardConfig.mk
 build/make сам подмешивает `TARGET_RECOVERY_ROOT_OUT` в platform),
 без dtb и без dlkm-фрагмента.
 
-Стоковые модули ядра (204 `.ko` + `modules.*` из LOS 6.1.145, собрать
-из исходников их негде) лежат в `families/gs101/modules/` и копируются
-`family.mk` в `/lib/modules/` platform-рамдиска — тем же путём, что
-стоковый dlkm-фрагмент. First-stage поднимает UFS один в один как сток.
+Стоковые модули ядра для first-stage (UFS bring-up closure:
+`ufs-exynos-gs` + транзитивные зависимости по `modules.dep`, 23 `.ko`
+из LOS 6.1.145 — собрать из исходников их негде) лежат в
+`families/gs101/modules/` и копируются `family.mk` в `/lib/modules/`
+platform-рамдиска — тем же путём, что стоковый dlkm-фрагмент.
+Вшиты сознательно: `fastboot flash vendor_boot:default` заменяет всю
+ramdisk-секцию одной записью, стоковый dlkm-фрагмент прошику не
+переживает, а UFS на gs101 модульный — без них first-stage ничего не
+смонтирует. Всё поверх UFS (тач/drm/keymint) движок грузит из раздела
+`vendor_dlkm` в рантайме, как на остальных семьях. First-stage
+(`vendor_ramdisk/` стейджинг: `/init`, линкер, sepolicy, fstab) колбэк
+не пакует никогда — только читает для списков файлов, так что кластер
+его не трогает по построению.
 
 Тестеры шьют **не образ**, а platform-рамдиск: `build.sh` после сборки
 распаковывает `OrangeFox-*-gs101.img` (magiskboot) и кладёт рядом

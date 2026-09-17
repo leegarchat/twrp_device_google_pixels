@@ -18,8 +18,15 @@
 BOARD_FLASH_BLOCK_SIZE := 131072
 
 # First-stage kernel modules (stock LOS 6.1.145, cannot be built from source):
-# 204 .ko + modules.{load,dep,alias,softdep,blocklist} land at /lib/modules/
-# in the platform ramdisk, same path as the stock dlkm fragment overlay.
+# the UFS bring-up closure (ufs-exynos-gs + transitive deps from modules.dep,
+# 23 .ko incl. trusty-core/ipc in the chain) + modules.* metadata land at
+# /lib/modules/ in the platform ramdisk, same path as the stock dlkm
+# fragment overlay. Why bundled: `fastboot flash vendor_boot:default`
+# replaces the whole ramdisk section (single table entry), so the stock
+# dlkm fragment does NOT survive flashing — without these in platform,
+# first-stage has no UFS (modular on gs101) and mounts nothing. Everything
+# past UFS (touch/drm/keymint) the engine loads from the vendor_dlkm
+# partition at runtime, like on all other families.
 GS101_MODULES_DIR := $(DEVICE_PATH)/families/gs101/modules/lib/modules
 PRODUCT_COPY_FILES += $(foreach f,$(wildcard $(GS101_MODULES_DIR)/*.ko),$(f):$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/$(notdir $(f)))
 PRODUCT_COPY_FILES += $(GS101_MODULES_DIR)/modules.load:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/modules.load

@@ -59,11 +59,19 @@ disables `BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT` for gs101 while
 merges `TARGET_RECOVERY_ROOT_OUT` into the platform itself), with no dtb
 and no dlkm fragment.
 
-Stock kernel modules (204 `.ko` + `modules.*` from LOS 6.1.145, not
-buildable from source) live in `families/gs101/modules/` and are copied
-by `family.mk` into the platform ramdisk's `/lib/modules/` — the same
-path the stock dlkm fragment overlays. First-stage brings up UFS exactly
-like stock.
+Stock kernel modules for first-stage (UFS bring-up closure:
+`ufs-exynos-gs` + transitive deps from `modules.dep`, 23 `.ko` from LOS
+6.1.145 — not buildable from source) live in `families/gs101/modules/`
+and are copied by `family.mk` into the platform ramdisk's `/lib/modules/`
+— the same path the stock dlkm fragment overlays. Bundled deliberately:
+`fastboot flash vendor_boot:default` replaces the whole ramdisk section
+with a single entry, so the stock dlkm fragment does not survive
+flashing, and UFS on gs101 is modular — without these, first-stage
+mounts nothing. Everything past UFS (touch/drm/keymint) the engine
+loads from the `vendor_dlkm` partition at runtime, like on all other
+families. First-stage (`vendor_ramdisk/` staging: `/init`, linker,
+sepolicy, fstab) is never packed by the callback — only read for file
+lists — so the cluster cannot touch it by construction.
 
 Testers flash **not the image** but the platform ramdisk: after the
 build, `build.sh` unpacks `OrangeFox-*-gs101.img` (magiskboot) and drops

@@ -39,7 +39,7 @@ Paths are relative to `device/google/pixels/`.
 | `families/<fam>/recovery/` | Family ramdisk overlay (rc stubs) |
 | `families/<fam>/twrp.flags` | Family `twrp.flags` (UFS paths etc.) on top of the default |
 | `families/<fam>/etc/` | VINTF fragments (keymint manifests schema 2.0) |
-| `families/gs101/modules/` | Stock 6.1 `.ko` + `modules.*` (the single sanctioned blob: kernel is not built from source; lands in platform `/lib/modules/`) |
+| `families/gs101/modules/` | First-stage UFS closure: 23 stock 6.1 `.ko` + `modules.*` (topo order in `modules.load`; the single sanctioned blob — kernel is not built from source; lands in platform `/lib/modules/`) |
 | `families/common/` | Common files without binaries: `recovery.wipe`, `vendor.prop` |
 | `devices/<codename>/device.conf` | `DEVICE=` + `FAMILY=` — binding for `build.sh` |
 | `devices/<codename>/pixel.json` | Vendor config: modules, partitions, sysfs paths, props (see `device-config.en.md`) |
