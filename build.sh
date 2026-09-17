@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
-#              [-k|--kernel VER] [--force] [--list]
+#              [-k|--kernel VER] [--force] [--list] [--build-type TYPE]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -25,6 +25,10 @@
 #                     keymint, default + available kernels; devices with
 #                     effective kernels, "[override]" marks a device-level
 #                     `kernels` entry) and exit. Read-only, builds nothing.
+#   --build-type TYPE Build type string, default Stable. Only exact `Stable`
+#                     enables OF_ADVANCED_SECURITY downstream (adbd stopped
+#                     at boot, MTP autostart off); any other value builds a
+#                     non-Secure image. Exported for vendorsetup.sh/lunch.
 #   --notrm           Don't clean out/target/product/pixels before build.
 #                     (Between kernel-profile groups a clean is mandatory
 #                     and always performed, with a notice.)
@@ -136,6 +140,7 @@ PATCH_VERSION=""
 LGZ_LEVEL="0"
 KERNEL_VER=""
 FOX_FORCE=false
+FOX_BUILD_TYPE="Stable"
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -218,6 +223,15 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_FORCE=true
             shift
             ;;
+        --build-type)
+            shift
+            FOX_BUILD_TYPE="${1:-}"
+            if [[ -z "$FOX_BUILD_TYPE" ]]; then
+                echo "ERROR: --build-type requires a value (e.g., Stable, Beta)"
+                fox_safe_exit 1
+            fi
+            shift
+            ;;
         --list)
             fox_print_tree
             fox_safe_exit 0
@@ -228,7 +242,7 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             ;;
         -h|--help)
-            sed -n '2,30p' "${BASH_SOURCE[0]}"
+            sed -n '2,42p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
             ;;
         *)
@@ -246,6 +260,7 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     fi
 fi
 export LGZ_LEVEL
+export FOX_BUILD_TYPE
 
 # --- Kernel profile resolution (families/*/family.json `kernels`) ---
 # Engages only with a known family context (-f). Without -f the legacy

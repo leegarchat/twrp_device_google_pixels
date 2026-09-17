@@ -146,7 +146,12 @@ _PLATFORM_EOF
 echo "  Wrote $_conf_file"
 
 # --- Version & Build ---
-export FOX_BUILD_TYPE=Stable
+# Build type override: build.sh --build-type TYPE exports FOX_BUILD_TYPE
+# before lunch; otherwise default to Stable. Only exact `Stable` enables
+# OF_ADVANCED_SECURITY downstream (orangefox.mk) — any other value builds
+# a non-Secure image (adbd up at boot, MTP autostart).
+: "${FOX_BUILD_TYPE:=Stable}"
+export FOX_BUILD_TYPE
 export FOX_VARIANT=default
 export OF_MAINTAINER=LeeGarChat
 export USE_CCACHE="1"
@@ -199,7 +204,6 @@ export OF_OPTIONS_LIST_NUM=6
 export OF_USE_LZ4_COMPRESSION=1
 
 # --- Feature flags ---
-export OF_IGNORE_LOGICAL_MOUNT_ERRORS=1
 export OF_NO_TREBLE_COMPATIBILITY_CHECK=1
 export OF_ENABLE_LPTOOLS=1
 export OF_USE_GREEN_LED=0
