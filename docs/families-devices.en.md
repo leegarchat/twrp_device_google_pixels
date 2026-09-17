@@ -44,7 +44,38 @@ profile in `kernels` → `board-info.txt` → test per `tester-guide.en.md`.
 | zumapro | `13200000` | `11210000.dwc3` | rust | 6.1, 6.12 |
 | laguna | `3c400000` | `c400000.dwc3` | rust | 6.12 |
 | malibu | `3c2d0000` | `a210000.dwc3` | rust | 6.12 |
-| gs101 | — | — | cpp | WIP |
+| gs101 | `14700000` | `11110000.dwc3` | cpp | 6.1 |
 
 Devices are grouped into a single image per family (`kernels` overrides
 disabled via `_kernels_disabled`; to restore — rename the key).
+
+## gs101 (Tensor G1, Pixel 6 series) — special build
+
+gs101 has no `vendor_kernel_boot` partition: stock `vendor_boot` carries
+platform + dlkm + dtb fragments. Our image builds as a **single**
+platform fragment (first-stage + recovery merged: `BoardConfig.mk`
+disables `BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT` for gs101 while
+`BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT` stays on — build/make
+merges `TARGET_RECOVERY_ROOT_OUT` into the platform itself), with no dtb
+and no dlkm fragment.
+
+Stock kernel modules (204 `.ko` + `modules.*` from LOS 6.1.145, not
+buildable from source) live in `families/gs101/modules/` and are copied
+by `family.mk` into the platform ramdisk's `/lib/modules/` — the same
+path the stock dlkm fragment overlays. First-stage brings up UFS exactly
+like stock.
+
+Testers flash **not the image** but the platform ramdisk: after the
+build, `build.sh` unpacks `OrangeFox-*-gs101.img` (magiskboot) and drops
+`OrangeFox-*-gs101.ramdisk.lz4` next to it (stock `lz4_legacy` format,
+byte-verified against our known-booting images). Flashing:
+
+```bash
+fastboot flash vendor_boot:default OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
+fastboot reboot recovery
+```
+
+Host fastboot fetches the on-device `vendor_boot`, swaps the default
+fragment and flashes it back — the device's dtb and bootloader stay
+untouched. `reflash_twrp.sh` and the ramdisk snapshot are not yet
+updated for this scheme — only after boot is confirmed.

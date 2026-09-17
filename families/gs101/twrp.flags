@@ -29,7 +29,8 @@
 /boot                emmc    /dev/block/platform/14700000.ufs/by-name/boot                      flags=slotselect;display="Boot Image";backup=1;flashimg=1
 /init_boot           emmc    /dev/block/platform/14700000.ufs/by-name/init_boot                 flags=slotselect;display="Init Boot (Generic Ramdisk)";backup=1;flashimg=1
 /vendor_boot         emmc    /dev/block/platform/14700000.ufs/by-name/vendor_boot                flags=slotselect;display="Vendor Boot (OrangeFox Recovery)";backup=1;flashimg=1
-/vendor_kernel_boot  emmc    /dev/block/platform/14700000.ufs/by-name/vendor_kernel_boot         flags=slotselect;display="Vendor Kernel Boot (GKI modules)";backup=1;flashimg=1
+# NOTE: gs101 has NO vendor_kernel_boot partition (Tensor G1 keeps DLKM+DTB
+# inside vendor_boot) — no entry here by design.
 /dtbo                emmc    /dev/block/platform/14700000.ufs/by-name/dtbo                      flags=slotselect;display="DTBO (Device Tree Overlay)";backup=1;flashimg=1
 
 # ============================================================

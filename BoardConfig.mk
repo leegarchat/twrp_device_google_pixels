@@ -234,7 +234,17 @@ TW_INCLUDE_LPTOOLS := true
 
 # Vendor Boot
 BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT := true
+# gs101 (Tensor G1) has no vendor_kernel_boot partition and its bootloader
+# expects recovery inside the platform fragment: merge first-stage + recovery
+# into one ramdisk (build/make adds TARGET_RECOVERY_ROOT_OUT to the platform
+# via PRIVATE_ADDITIONAL_DIR), no standalone recovery fragment, no dtb/dlkm
+# fragments (stock kernel modules ride inside our platform, see
+# families/gs101/family.mk). All other families keep the split layout.
+ifeq ($(DEVICE_BUILD_FLAG),gs101)
+BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT := false
+else
 BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT := true
+endif
 
 # AVB
 BOARD_AVB_ENABLE := true

@@ -25,7 +25,7 @@
 | `device.mk` | Пакеты, оверлеи рамдиска (`TARGET_RECOVERY_DEVICE_DIRS`), фильтры по семье |
 | `BoardConfig.mk` | Архитектура, разделы, TWRP/OF-флаги (`TW_FRAMERATE := 120`, яркость, исключения), `-include .gen_kernel.mk` |
 | `Android.mk` / `Android.bp` / `AndroidProducts.mk` | Включение в сборку, Soong-модули, список продуктов |
-| `custom_bootimg.mk` | Сборка `vendor_boot`; для `gs101` — режим патчинга стокового образа (DTB+DLKM в одном разделе) |
+| `custom_bootimg.mk` | Сборка `vendor_boot` (legacy stock-patch режим gs101 superseded, см. `families-devices_ru.md`) |
 | `board-info.txt` | Канонический список из 22 девайсов для сборочного забора |
 
 ## Данные: семьи и девайсы
@@ -39,6 +39,7 @@
 | `families/<fam>/recovery/` | Family-оверлей рамдиска (rc-стабы) |
 | `families/<fam>/twrp.flags` | `twrp.flags` семьи (UFS-пути и т.д.) поверх дефолта |
 | `families/<fam>/etc/` | VINTF-фрагменты (keymint-манифесты schema 2.0) |
+| `families/gs101/modules/` | Стоковые `.ko` 6.1 + `modules.*` (единственный санкционированный блоб: ядро не собирается из исходников; едут в `/lib/modules/` platform) |
 | `families/common/` | Общее без бинарей: `recovery.wipe`, `vendor.prop` |
 | `devices/<codename>/device.conf` | `DEVICE=` + `FAMILY=` — привязка для `build.sh` |
 | `devices/<codename>/pixel.json` | Вендор-конфиг: модули, разделы, sysfs-пути, пропсы (см. `device-config_ru.md`) |

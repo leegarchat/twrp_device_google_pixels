@@ -1,0 +1,3 @@
+# init.recovery.gs101.rc — Tensor G1 family stub.
+# Loaded by init when ro.hardware=gs101 (SoC fallback). All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

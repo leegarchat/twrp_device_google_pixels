@@ -1,0 +1,72 @@
+{
+  "family": "gs101",
+  "soc_family": "gs101",
+  "is_fold": 0,
+  "front_display": {
+    "w": 1080,
+    "h": 2400
+  },
+  "touch_modules": [
+    "touch_bus_negotiator",
+    "heatmap",
+    "touch_offload",
+    "ftm5",
+    "sec_touch",
+    "goodixfp"
+  ],
+  "part_touch": "vendor_dlkm",
+  "part_vendor": "vendor",
+  "props": {
+    "ro.quick_start.device_id": "oriole",
+    "ro.lineage.device": "oriole",
+    "ro.crdroid.device": "oriole",
+    "ro.product.system.device": "oriole",
+    "ro.product.system.model": "Pixel 6",
+    "ro.product.system.name": "oriole",
+    "ro.system.build.fingerprint": "google/oriole/oriole:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.build.display.id": "oriole-eng 99.87.36 AP3A.241005.015 eng.leegar.20240907.130349 test-keys",
+    "ro.build.flavor": "oriole-eng",
+    "ro.build.product": "oriole",
+    "ro.build.description": "oriole-user 16 BP4A.251205.006 14401865 release-keys",
+    "ro.display.series": "Pixel 6",
+    "ro.product.vendor.device": "oriole",
+    "ro.product.vendor.model": "Pixel 6",
+    "ro.product.vendor.name": "oriole",
+    "ro.vendor.build.fingerprint": "google/oriole/oriole:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.board": "oriole",
+    "ro.product.odm.device": "oriole",
+    "ro.product.odm.model": "Pixel 6",
+    "ro.product.odm.name": "oriole",
+    "ro.odm.build.fingerprint": "google/oriole/oriole:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.product.device": "oriole",
+    "ro.product.product.model": "Pixel 6",
+    "ro.product.product.name": "oriole",
+    "ro.product.build.fingerprint": "google/oriole/oriole:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.system_ext.device": "oriole",
+    "ro.product.system_ext.model": "Pixel 6",
+    "ro.product.system_ext.name": "oriole",
+    "ro.system_ext.build.fingerprint": "google/oriole/oriole:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.device": "oriole",
+    "ro.product.name": "oriole",
+    "ro.product.model": "Pixel 6"
+  },
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "max77759tcpc",
+  "thermal_soc_type": "soc_therm"
+}

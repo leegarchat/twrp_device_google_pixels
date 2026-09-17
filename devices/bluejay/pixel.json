@@ -1,0 +1,71 @@
+{
+  "family": "gs101",
+  "soc_family": "gs101",
+  "is_fold": 0,
+  "front_display": {
+    "w": 1080,
+    "h": 2400
+  },
+  "touch_modules": [
+    "touch_bus_negotiator",
+    "heatmap",
+    "touch_offload",
+    "ftm5",
+    "goodixfp"
+  ],
+  "part_touch": "vendor_dlkm",
+  "part_vendor": "vendor",
+  "props": {
+    "ro.quick_start.device_id": "bluejay",
+    "ro.lineage.device": "bluejay",
+    "ro.crdroid.device": "bluejay",
+    "ro.product.system.device": "bluejay",
+    "ro.product.system.model": "Pixel 6a",
+    "ro.product.system.name": "bluejay",
+    "ro.system.build.fingerprint": "google/bluejay/bluejay:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.build.display.id": "bluejay-eng 99.87.36 AP3A.241005.015 eng.leegar.20240907.130349 test-keys",
+    "ro.build.flavor": "bluejay-eng",
+    "ro.build.product": "bluejay",
+    "ro.build.description": "bluejay-user 16 BP4A.251205.006 14401865 release-keys",
+    "ro.display.series": "Pixel 6a",
+    "ro.product.vendor.device": "bluejay",
+    "ro.product.vendor.model": "Pixel 6a",
+    "ro.product.vendor.name": "bluejay",
+    "ro.vendor.build.fingerprint": "google/bluejay/bluejay:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.board": "bluejay",
+    "ro.product.odm.device": "bluejay",
+    "ro.product.odm.model": "Pixel 6a",
+    "ro.product.odm.name": "bluejay",
+    "ro.odm.build.fingerprint": "google/bluejay/bluejay:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.product.device": "bluejay",
+    "ro.product.product.model": "Pixel 6a",
+    "ro.product.product.name": "bluejay",
+    "ro.product.build.fingerprint": "google/bluejay/bluejay:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.system_ext.device": "bluejay",
+    "ro.product.system_ext.model": "Pixel 6a",
+    "ro.product.system_ext.name": "bluejay",
+    "ro.system_ext.build.fingerprint": "google/bluejay/bluejay:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.device": "bluejay",
+    "ro.product.name": "bluejay",
+    "ro.product.model": "Pixel 6a"
+  },
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "max77759tcpc",
+  "thermal_soc_type": "soc_therm"
+}

@@ -25,7 +25,7 @@ Paths are relative to `device/google/pixels/`.
 | `device.mk` | Packages, ramdisk overlays (`TARGET_RECOVERY_DEVICE_DIRS`), per-family filters |
 | `BoardConfig.mk` | Architecture, partitions, TWRP/OF flags (`TW_FRAMERATE := 120`, brightness, exclusions), `-include .gen_kernel.mk` |
 | `Android.mk` / `Android.bp` / `AndroidProducts.mk` | Build inclusion, Soong modules, product list |
-| `custom_bootimg.mk` | `vendor_boot` build; for `gs101` — stock image patching mode (DTB+DLKM in one partition) |
+| `custom_bootimg.mk` | `vendor_boot` build (legacy gs101 stock-patch mode superseded, see `families-devices.en.md`) |
 | `board-info.txt` | Canonical list of 22 devices for the build fence |
 
 ## Data: families and devices
@@ -39,6 +39,7 @@ Paths are relative to `device/google/pixels/`.
 | `families/<fam>/recovery/` | Family ramdisk overlay (rc stubs) |
 | `families/<fam>/twrp.flags` | Family `twrp.flags` (UFS paths etc.) on top of the default |
 | `families/<fam>/etc/` | VINTF fragments (keymint manifests schema 2.0) |
+| `families/gs101/modules/` | Stock 6.1 `.ko` + `modules.*` (the single sanctioned blob: kernel is not built from source; lands in platform `/lib/modules/`) |
 | `families/common/` | Common files without binaries: `recovery.wipe`, `vendor.prop` |
 | `devices/<codename>/device.conf` | `DEVICE=` + `FAMILY=` — binding for `build.sh` |
 | `devices/<codename>/pixel.json` | Vendor config: modules, partitions, sysfs paths, props (see `device-config.en.md`) |

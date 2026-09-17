@@ -6,13 +6,12 @@
 # gs201/zuma/zumapro: Standard AOSP vendor_boot build (recovery ramdisk in vendor_boot,
 #   DLKM/DTB in separate vendor_kernel_boot partition). No custom rules needed.
 #
-# gs101 (Pixel 6 series, future): vendor_boot contains DLKM + DTB + recovery ramdisk
-#   in a single partition (no vendor_kernel_boot). Cannot overwrite vendor_boot entirely —
-#   must patch stock image, replacing only the recovery ramdisk fragment.
-#   Requires prebuilt stock vendor_boot at $(DEVICE_PATH)/families/gs101/vendor_boot_stock.img
-#
-# To activate stock-patching mode for gs101, set VENDOR_BOOT_PATCH_STOCK := true
-# in BoardConfig.mk (or via build.sh --family gs101).
+# gs101 (Pixel 6 series): SUPERSEDED. The stock-patching mode below is kept
+# for reference only — nothing enables VENDOR_BOOT_PATCH_STOCK anymore.
+# Current gs101 flow (see families/gs101/family.mk): single platform fragment
+# (first-stage + recovery merged, stock .ko bundled inside), no dtb/dlkm
+# fragments; build.sh extracts the platform ramdisk as lz4_legacy for
+# `fastboot flash vendor_boot:default`. The device keeps its own dtb/dlkm.
 
 VENDOR_BOOT_PATCH_DIR := $(PRODUCT_OUT)/vendor_boot_patch
 FOX_MAGISKBOOT ?= $(PWD)/vendor/recovery/tools/magiskboot

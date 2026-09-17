@@ -1,0 +1,3 @@
+# init.recovery.raven.rc — Pixel 6 Pro (raven) stub.
+# Loaded by init when ro.hardware=raven. All actual init code is in init.recovery.pixel_common.rc.
+import /init.recovery.pixel_common.rc

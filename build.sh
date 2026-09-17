@@ -594,12 +594,10 @@ fi
 
 BUILD_TARGETS="adbd vendorbootimage"
 
-if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
-    if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
-        export VENDOR_BOOT_PATCH_STOCK=true
-        echo "[build] gs101: stock vendor_boot patch mode (VENDOR_BOOT_PATCH_STOCK=true)"
-    fi
-fi
+# gs101 needs no special build-mode switch: family.mk already merges
+# first-stage + recovery into a single platform fragment (no dtb/dlkm
+# fragments). Post-processing below extracts that fragment for
+# `fastboot flash vendor_boot:default` after the image is copied.
 
 # KeyMint HAL module must be built explicitly: vendorbootimage does not pull
 # vendor/bin/hw binaries on its own (ninja graph entries exist via
@@ -749,6 +747,36 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
 
     if [[ -z "$LATEST_IMG" && -z "$LATEST_ZIP" ]]; then
         echo "[build] WARNING: No OrangeFox artifacts found in $PRODUCT_OUT"
+    fi
+
+    # --- gs101: extract the platform ramdisk for `fastboot flash vendor_boot:default` ---
+    # Tensor G1 has no vendor_kernel_boot partition; the device keeps its own
+    # dtb + bootloader, we only replace the default (platform) ramdisk. Host
+    # fastboot fetches the on-device vendor_boot, swaps the fragment and
+    # flashes back — so testers need just our ramdisk in stock lz4_legacy
+    # format, not the whole image.
+    if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" && -n "$LATEST_IMG" ]]; then
+        GS101_WORK="$SOURCE_ROOT/$PRODUCT_OUT/gs101_ramdisk"
+        rm -rf "$GS101_WORK" && mkdir -p "$GS101_WORK"
+        MAGISKBOOT_BIN="$SOURCE_ROOT/vendor/recovery/tools/magiskboot"
+        if [[ ! -x "$MAGISKBOOT_BIN" ]]; then
+            echo "[build] WARNING: magiskboot missing, skipping gs101 ramdisk extract"
+        else
+            "$MAGISKBOOT_BIN" unpack -h "$LATEST_IMG" | grep -E "VND_RAMDISK|DTB_SZ" || true
+            (cd "$GS101_WORK" && "$MAGISKBOOT_BIN" unpack "$LATEST_IMG" >/dev/null 2>&1)
+            if [[ -f "$GS101_WORK/vendor_ramdisk/ramdisk.cpio" ]]; then
+                # magiskboot unpacks fragments decompressed; recompress to the
+                # stock lz4_legacy format for the :default flash path.
+                lz4 -l -9 -f "$GS101_WORK/vendor_ramdisk/ramdisk.cpio" "$GS101_WORK/vendor_ramdisk.cpio.lz4"
+                RAMDISK_DEST="${IMG_DEST%.img}.ramdisk.lz4"
+                cp "$GS101_WORK/vendor_ramdisk.cpio.lz4" "$RAMDISK_DEST"
+                echo "[build] gs101 ramdisk: $RAMDISK_DEST"
+                md5sum "$RAMDISK_DEST" "$IMG_DEST"
+            else
+                echo "[build] WARNING: no platform ramdisk in $LATEST_IMG, skipping gs101 extract"
+            fi
+        fi
+        rm -rf "$GS101_WORK"
     fi
 done
 

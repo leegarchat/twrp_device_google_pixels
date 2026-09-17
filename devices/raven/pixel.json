@@ -1,0 +1,72 @@
+{
+  "family": "gs101",
+  "soc_family": "gs101",
+  "is_fold": 0,
+  "front_display": {
+    "w": 1440,
+    "h": 3120
+  },
+  "touch_modules": [
+    "touch_bus_negotiator",
+    "heatmap",
+    "touch_offload",
+    "ftm5",
+    "sec_touch",
+    "goodixfp"
+  ],
+  "part_touch": "vendor_dlkm",
+  "part_vendor": "vendor",
+  "props": {
+    "ro.quick_start.device_id": "raven",
+    "ro.lineage.device": "raven",
+    "ro.crdroid.device": "raven",
+    "ro.product.system.device": "raven",
+    "ro.product.system.model": "Pixel 6 Pro",
+    "ro.product.system.name": "raven",
+    "ro.system.build.fingerprint": "google/raven/raven:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.build.display.id": "raven-eng 99.87.36 AP3A.241005.015 eng.leegar.20240907.130349 test-keys",
+    "ro.build.flavor": "raven-eng",
+    "ro.build.product": "raven",
+    "ro.build.description": "raven-user 16 BP4A.251205.006 14401865 release-keys",
+    "ro.display.series": "Pixel 6 Pro",
+    "ro.product.vendor.device": "raven",
+    "ro.product.vendor.model": "Pixel 6 Pro",
+    "ro.product.vendor.name": "raven",
+    "ro.vendor.build.fingerprint": "google/raven/raven:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.board": "raven",
+    "ro.product.odm.device": "raven",
+    "ro.product.odm.model": "Pixel 6 Pro",
+    "ro.product.odm.name": "raven",
+    "ro.odm.build.fingerprint": "google/raven/raven:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.product.device": "raven",
+    "ro.product.product.model": "Pixel 6 Pro",
+    "ro.product.product.name": "raven",
+    "ro.product.build.fingerprint": "google/raven/raven:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.system_ext.device": "raven",
+    "ro.product.system_ext.model": "Pixel 6 Pro",
+    "ro.product.system_ext.name": "raven",
+    "ro.system_ext.build.fingerprint": "google/raven/raven:16/BP4A.251205.006/14401865:user/release-keys",
+    "ro.product.device": "raven",
+    "ro.product.name": "raven",
+    "ro.product.model": "Pixel 6 Pro"
+  },
+  "thermal_zone_types": [
+    "BIG",
+    "CLUSTER2",
+    "CLUSTER_BIG",
+    "cpu_big",
+    "CPU-Big",
+    "prime",
+    "PRIME"
+  ],
+  "thermal_temp_path": "",
+  "torch_i2c_match": "-0063",
+  "torch_pinctrl_match": "flash|torch",
+  "vbus_paths": [
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+    "/sys/class/power_supply/usb-charger/online"
+  ],
+  "tcpc_driver": "max77759tcpc",
+  "thermal_soc_type": "soc_therm"
+}

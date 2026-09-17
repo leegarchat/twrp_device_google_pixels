@@ -8,29 +8,32 @@
   "kernels": {
     "6.1": {
       "cmdline": {"type": "arr", "value": [
+        "fips140.load_sequential=1",
+        "exynos_mfc.load_sequential=1",
+        "exynos_drm.load_sequential=1",
+        "pcie-exynos-core.load_sequential=1",
+        "g2d.load_sequential=1",
+        "disable_dma32=on",
         "dyndbg=\"func alloc_contig_dump_pages +p\"",
         "earlycon=exynos4210,0x10A00000",
         "console=ttySAC0,115200",
         "androidboot.console=ttySAC0",
         "printk.devkmsg=on",
-        "swiotlb=noforce",
         "cma_sysfs.experimental=Y",
-        "cgroup_disable=memory",
         "rcupdate.rcu_expedited=1",
-        "androidboot.usbcontroller=11210000.dwc3",
         "rcu_nocbs=all",
-        "stack_depot_disable=off",
-        "page_pinner=on",
-        "swiotlb=1024",
-        "disable_dma32=on",
+        "rcutree.enable_rcu_lazy",
+        "swiotlb=noforce",
+        "cgroup.memory=nokmem",
+        "rodata=on",
         "at24.write_timeout=100",
         "log_buf_len=1024K",
+        "android_arch_task_struct_size=512",
         "bootconfig"
       ]},
       "bootconfig_append": [
-        "androidboot.usbcontroller=11110000.dwc3",
-        "androidboot.boot_devices=14700000.ufs",
-        "androidboot.load_modules_parallel=true"
+        "androidboot.load_modules_parallel=true",
+        "androidboot.boot_devices=14700000.ufs"
       ],
       "prebuilt": {},
       "ko": {}
