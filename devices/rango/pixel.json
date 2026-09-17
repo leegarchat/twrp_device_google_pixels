@@ -9,7 +9,8 @@
   "touch_modules": [
     "goodixfp",
     "stm_core",
-    "syna_touch"
+    "syna_touch",
+    "fst2"
   ],
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",

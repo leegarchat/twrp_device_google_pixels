@@ -14,6 +14,8 @@
     "cs40l26-i2c",
     "goodixfp",
     "heatmap",
+    "touch_bus_negotiator",
+    "touch_offload",
     "goog_touch_interface",
     "focal_touch",
     "sec_touch",

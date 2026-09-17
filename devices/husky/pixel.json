@@ -75,9 +75,5 @@
     "/sys/class/power_supply/usb-charger/online"
   ],
   "tcpc_driver": "max77759tcpc",
-  "thermal_soc_type": "soc_therm",
-  "part_sysdlkm": "system_dlkm",
-  "preload_modules": [
-    "pwrseq-core"
-  ]
+  "thermal_soc_type": "soc_therm"
 }

@@ -14,7 +14,6 @@
     "goog_usi_stylus",
     "nvt_touch",
     "goodixfp",
-    "synadhd",
     "fps_touch_handler"
   ],
   "part_touch": "vendor_dlkm",
