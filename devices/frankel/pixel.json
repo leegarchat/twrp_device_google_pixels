@@ -67,7 +67,7 @@
     "ro.product.name": "frankel",
     "ro.product.model": "Pixel 10"
   },
-  "kernels": {
+  "_kernels_disabled": {
     "6.12": {
       "cmdline": {
         "type": "arr",

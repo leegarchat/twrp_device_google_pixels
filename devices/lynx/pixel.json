@@ -77,7 +77,7 @@
   ],
   "tcpc_driver": "max77759tcpc",
   "thermal_soc_type": "soc_therm",
-  "kernels": {
+  "_kernels_disabled": {
     "6.1": {
       "cmdline": {
         "type": "arr",

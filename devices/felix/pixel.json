@@ -79,7 +79,7 @@
     "ro.product.name": "felix",
     "ro.product.model": "Pixel Fold"
   },
-  "kernels": {
+  "_kernels_disabled": {
     "6.1": {
       "cmdline": {
         "type": "arr",
