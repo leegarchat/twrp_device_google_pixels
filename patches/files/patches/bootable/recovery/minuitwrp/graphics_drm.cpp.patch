@@ -1,0 +1,30 @@
+--- a/bootable/recovery/minuitwrp/graphics_drm.cpp
++++ b/bootable/recovery/minuitwrp/graphics_drm.cpp
+@@ -803,18 +803,23 @@
+ static drmModeConnector *find_used_connector_by_type(int fd,
+                                  drmModeRes *resources,
+                                  unsigned type) {
++    drmModeConnector* best = nullptr;
+     for (int i = 0; i < resources->count_connectors; i++) {
+         drmModeConnector* connector = drmModeGetConnector(fd, resources->connectors[i]);
+         if (connector) {
+             if ((connector->connector_type == type) &&
+                     (connector->connection == DRM_MODE_CONNECTED) &&
+-                    (connector->count_modes > 0))
+-                return connector;
+-
++                    (connector->count_modes > 0)) {
++                if (!best || connector->connector_type_id > best->connector_type_id) {
++                    if (best) drmModeFreeConnector(best);
++                    best = connector;
++                    continue;
++                }
++            }
+             drmModeFreeConnector(connector);
+         }
+     }
+-    return nullptr;
++    return best;
+ }
+ 
+ static drmModeConnector *find_first_connected_connector(int fd,
