@@ -18,7 +18,7 @@ device/google/pixels/
 ├── twrp_pixels.mk
 ├── families/                   # SoC-уровень (общее на семейство)
 │   ├── common/                 # recovery.wipe, vendor.prop (без бинарей)
-│   ├── gs101|gs201|zuma|zumapro|malibu/
+│   ├── gs101|gs201|zuma|zumapro|malibu|laguna/
 │   │   ├── family.conf         # FAMILY/UFS_ADDR/EARLYCON_ADDR (для скриптов)
 │   │   ├── family.json         # то же + keymint rust|cpp + общие пропсы + kernels-профили (для мёрджа в конфиг)
 │   │   ├── family.mk           # SoC-фрагмент (без cmdline: он едет из .gen_kernel.mk)
