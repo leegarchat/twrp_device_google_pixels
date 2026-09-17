@@ -13,7 +13,7 @@ from JSON, HALs are built from source — no vendor prebuilts.
 
 | Family | SoC | Devices |
 |---|---|---|
-| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
+| `gs101` | Tensor G1 | oriole (6), raven (6 Pro) — bluejay (6a) not for testers yet |
 | `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
 | `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
 | `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |

@@ -43,6 +43,32 @@ fastboot flash vendor_boot_a OrangeFox-test-xxx.img
 fastboot reboot recovery
 ```
 
+### Pixel 6 series (oriole/raven) — особая процедура
+
+У Pixel 6 нет раздела `vendor_kernel_boot`, поэтому шьётся **НЕ**
+`.img`, а **рамдиск** `.ramdisk.lz4` в platform-фрагмент (обрати
+внимание на висячее двоеточие = пустое имя фрагмента):
+
+```
+fastboot flash vendor_boot_a: OrangeFox-test-xxx-gs101.ramdisk.lz4
+fastboot reboot recovery
+```
+
+(`:default` или `:recovery` здесь НЕПРАВИЛЬНО — первое схлопывает всю
+таблицу и убивает стоковый dlkm, второе пишет не в тот фрагмент.)
+Pixel 6a (bluejay) в этом раунде тестов **не участвует** — gs101-сборки
+на него не шить.
+
+Сначала бэкап (бутлоадер, рут не нужен) — оба слота:
+```
+fastboot fetch vendor_boot_a ./vendor_boot_a.stock.img
+fastboot fetch vendor_boot_b ./vendor_boot_b.stock.img
+```
+Размер должен быть 67108864 байта (64 МБ). Откат:
+```
+fastboot flash vendor_boot_a vendor_boot_a.stock.img   # или _b
+```
+
 Правила:
 
 1. Шей **только** тот раздел, который сказали (обычно `vendor_boot_X`).
@@ -251,7 +277,14 @@ UI          : полосы (какие стороны) / растянуто / п
 ## 11. Как сдампить родной vendor_boot (бэкап перед тестом)
 
 Если нет factory images под рукой — сдампь заведомо рабочий `vendor_boot`
-прямо с девайса **до** прошивки теста. Нужен root (в системе) или recovery:
+прямо с девайса **до** прошивки теста. Проще всего — бутлоадер, рут не
+нужен (работает и для Pixel 6):
+```
+fastboot fetch vendor_boot_a ./vendor_boot_a.stock.img
+fastboot fetch vendor_boot_b ./vendor_boot_b.stock.img
+```
+
+Либо нужен root (в системе) или recovery:
 
 Из системы с рутом (оба слота сразу):
 ```
@@ -280,6 +313,8 @@ fastboot flash vendor_boot_a vendor_boot_a.stock.img   # или _b
 fastboot getvar current-slot
 fastboot --set-active=a|b
 fastboot flash vendor_boot_a|b <файл>
+fastboot flash vendor_boot_a: <ramdisk.lz4>   # только Pixel 6 series (двоеточие!)
+fastboot fetch vendor_boot_a|b ./backup.img   # бэкап без рута
 fastboot reboot recovery
 fastboot reboot
 adb devices -l

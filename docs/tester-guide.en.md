@@ -42,6 +42,32 @@ fastboot flash vendor_boot_a OrangeFox-test-xxx.img
 fastboot reboot recovery
 ```
 
+### Pixel 6 series (oriole/raven) — special procedure
+
+Pixel 6 has no `vendor_kernel_boot` partition, so you do **NOT** flash
+the `.img` — you flash the `.ramdisk.lz4` **ramdisk** into the platform
+fragment (note the trailing colon = empty fragment name):
+
+```
+fastboot flash vendor_boot_a: OrangeFox-test-xxx-gs101.ramdisk.lz4
+fastboot reboot recovery
+```
+
+(`:default` or `:recovery` are WRONG here — the first collapses the
+whole table and kills stock dlkm, the second overwrites the wrong
+fragment.) Pixel 6a (bluejay) is **not** in this test round — do not
+flash gs101 builds on it.
+
+Backup first (bootloader, no root needed) — both slots:
+```
+fastboot fetch vendor_boot_a ./vendor_boot_a.stock.img
+fastboot fetch vendor_boot_b ./vendor_boot_b.stock.img
+```
+Size must be 67108864 bytes (64 MB). Rollback:
+```
+fastboot flash vendor_boot_a vendor_boot_a.stock.img   # or _b
+```
+
 Rules:
 
 1. Flash **only** the partition you were told to (normally `vendor_boot_X`).
@@ -250,8 +276,14 @@ Notes      : <anything unusual: how long boot took, error texts, ...>
 ## 11. How to dump your factory vendor_boot (backup before testing)
 
 No factory images at hand? Dump the known-good `vendor_boot` straight from
-the device **before** flashing the test build. Needs root (in system) or
-recovery:
+the device **before** flashing the test build. Easiest — bootloader, no
+root needed (works for Pixel 6 too):
+```
+fastboot fetch vendor_boot_a ./vendor_boot_a.stock.img
+fastboot fetch vendor_boot_b ./vendor_boot_b.stock.img
+```
+
+Alternatively, needs root (in system) or recovery:
 
 From rooted system (both slots at once):
 ```
@@ -280,6 +312,8 @@ fastboot flash vendor_boot_a vendor_boot_a.stock.img   # or _b
 fastboot getvar current-slot
 fastboot --set-active=a|b
 fastboot flash vendor_boot_a|b <file>
+fastboot flash vendor_boot_a: <ramdisk.lz4>   # Pixel 6 series only (note the colon)
+fastboot fetch vendor_boot_a|b ./backup.img   # backup without root
 fastboot reboot recovery
 fastboot reboot
 adb devices -l
