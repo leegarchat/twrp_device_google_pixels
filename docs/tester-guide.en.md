@@ -51,14 +51,22 @@ Rules:
 After `fastboot reboot recovery`, wait up to 60 seconds (USB stack and
 decryption services start with a delay), then run:
 
-> **adb on the password screen.** While the initial PIN prompt is up, the
-> USB stack may be asleep and adb unavailable (`no devices`). This is normal —
-> it only wakes up once you leave the password screen: enter the PIN (if touch
-> works) or exit to the main menu without decrypting — **Skip** button / back
-> key (may be absent on some builds; then PIN is the only way out).
-> Run all adb commands below **after** leaving the password screen. The logs
-> (`recovery.log`, `weaver.log`) are written from the very start, so pulling
-> them later loses nothing.
+> **adb on the password screen (non-Stable test builds).** You received a
+> NON-Stable (Beta) test build — it does not force-disable adb/MTP the way
+> Stable builds do. So adb on the initial PIN prompt **may work or may not —
+> the developer genuinely does not know**: their own device is currently
+> unencrypted, so they have no way to check this path. Your job is to
+> record the fact.
+> - If `adb devices` sees the device right on the password screen — great,
+>   run all commands below right there and report that adb on password
+>   **was present**.
+> - If `no devices` — also fine for the test: leave the password screen
+>   (enter the PIN if touch works, or **Skip** button / back key to the main
+>   menu without decrypting — may be absent on some builds; then PIN is the
+>   only way out) and run the commands after. Report that adb on password
+>   **was absent**.
+> The logs (`recovery.log`, `weaver.log`) are written from the very start in
+> both cases — pulling them later loses nothing.
 
 ```
 adb devices -l
@@ -75,8 +83,9 @@ What good looks like:
 | `uname -r` | kernel the build was made for (ask maintainer if unsure) |
 | slot suffix | the slot you flashed (`_a` / `_b`) |
 
-Then pull the two main logs — after the PIN / leaving the password screen
-is fine, the files accumulate from boot (they are the most valuable artifact):
+Then pull the two main logs — as soon as adb is available (right on the
+password screen if present, or after the PIN / leaving it — the files
+accumulate from boot, they are the most valuable artifact):
 
 ```
 adb pull /tmp/recovery.log
@@ -207,6 +216,7 @@ Flashed to : vendor_boot_a / vendor_boot_b
 Device     : <codename, e.g. grizzly>
 Outcome    : boots+adb / boots-no-adb / no-boot / boots-no-decrypt
 adb visible: yes / no
+adb on password: present / absent (if device encrypted)
 decrypt    : ok / failed / not tried
 touch      : ok / dead / partial
 UI         : bars (which sides) / stretched / rotated / which screen (fold: folded/unfolded) + photo
