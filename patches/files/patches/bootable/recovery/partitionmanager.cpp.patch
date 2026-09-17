@@ -107,7 +107,7 @@
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +778,58 @@
+@@ -699,9 +778,45 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -142,31 +142,18 @@
  					if (!Decrypt_Data->Decrypt_FBE_DE()) {
  						LOGERR("Unable to decrypt FBE device\n");
  					}
-+					if (DataManager::GetIntValue("tw_mtp_enabled") != 0) {
-+						// Skip the restart while FBE user data is still locked
-+						// (PIN/password/pattern set, CE not yet decrypted):
-+						// /data/media is unreadable, so the restart adds no
-+						// usable storage and only tears down USB
-+						// (sys.usb.config=none stops adbd, killing adb on the
-+						// password screen). The post-decrypt restart below
-+						// picks MTP up once the user unlocks.
-+						bool fbe_locked = Decrypt_Data->Is_FBE
-+							&& DataManager::GetIntValue(TW_CRYPTO_PWTYPE) != 0
-+							&& access("/data/media/0", R_OK) != 0;
-+						if (fbe_locked) {
-+							LOGINFO("Skipping MTP restart: FBE user data still locked (keeping adb up)\n");
-+						} else {
-+							LOGINFO("Restarting MTP after metadata decrypt\n");
-+							Disable_MTP();
-+							usleep(500000);
-+							if (!Enable_MTP())
-+								Disable_MTP();
-+						}
-+					}
++					// Intentionally no MTP restart here: Disable_MTP() pulses
++					// sys.usb.config through "none", which stops adbd and
++					// unbinds UDC, killing adb for the whole password-screen
++					// period for zero benefit (/data/media is unreadable
++					// while FBE is locked). Stable builds run with
++					// tw_mtp_enabled=0 anyway (OF_ADVANCED_SECURITY); the
++					// post-user-decrypt restart below picks MTP up after
++					// unlock.
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -2194,7 +2322,10 @@
+@@ -2194,7 +2309,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -178,7 +165,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2465,20 @@
+@@ -2334,6 +2452,20 @@
  #endif
  }
  
@@ -199,7 +186,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2541,17 @@
+@@ -2396,6 +2528,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -217,7 +204,7 @@
  
  			return 0;
  		} else {
-@@ -4840,6 +4996,29 @@
+@@ -4840,6 +4983,29 @@
  	}
  }
  
@@ -247,7 +234,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5036,13 @@
+@@ -4857,13 +5023,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -263,7 +250,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4884,7 +5063,7 @@
+@@ -4884,7 +5050,7 @@
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){
  					LOGINFO("removing dynamic partition: %s\n", partition.c_str());
