@@ -241,6 +241,16 @@ fn switch_to_device(current: &mut String) {
     let _ = std::fs::write(OTG_ID, b"1\n");
     // Single write (shell version wrote it twice).
     let _ = set_prop("sys.usb.ffs.ready", "1");
+    // Self-healing rebind: init triggers are edge-based, so a missed edge
+    // (spurious host switch at boot, ffs.ready already 1) leaves UDC
+    // unbound forever with no further property change to re-fire the
+    // usb.rc bind trigger. Writing the controller explicitly re-binds the
+    // gadget regardless of edge state; starting adbd is a no-op when it
+    // already runs and covers the never-started race.
+    let controller = get_prop("sys.usb.controller");
+    let controller = if controller.is_empty() { UDC_NAME } else { controller.as_str() };
+    let _ = std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes());
+    let _ = set_prop("ctl.start", "adbd");
     *current = "device".into();
 }
 
@@ -257,8 +267,34 @@ pub fn run_otg_auto() -> ! {
     info("waiting 3s for boot to settle");
     sleep(Duration::from_secs(3));
 
-    let initial = read_vbus(&vbus_file);
-    info(&format!("initial VBUS: {initial}"));
+    // Debounce + settle: VBUS sensing bounces on plug/unplug (contact
+    // bounce, TCPC renegotiation) and our own host-side boost can reflect
+    // back into the sensor. Without this the daemon flaps host<->device
+    // every second, tearing down enumeration mid-transfer. A switch needs
+    // DEBOUNCE_READS identical polls and a quiet window after the previous
+    // switch.
+    const DEBOUNCE_READS: u32 = 3;
+    const SETTLE_SECS: u64 = 5;
+    // The initial read is debounced too: a single poll can catch a
+    // PD-negotiation dip with the cable plugged in, causing a spurious
+    // host switch (UDC unbind) at boot with adb dead until replug.
+    // Poll up to ~8s for a stable value; fall back to the last read.
+    let mut initial = read_vbus(&vbus_file);
+    let mut initial_stable: u32 = 0;
+    for _ in 0..8 {
+        sleep(Duration::from_secs(1));
+        let vbus = read_vbus(&vbus_file);
+        if vbus == initial {
+            initial_stable += 1;
+            if initial_stable >= DEBOUNCE_READS {
+                break;
+            }
+        } else {
+            initial = vbus;
+            initial_stable = 0;
+        }
+    }
+    info(&format!("initial VBUS (stable): {initial}"));
     let mut current = String::new();
     if initial == "1" {
         info("PC detected at boot (VBUS=1), starting in DEVICE mode");
@@ -269,14 +305,6 @@ pub fn run_otg_auto() -> ! {
     }
     // Keep UDC name available for debugging parity with the shell version.
     let _ = UDC_NAME;
-    // Debounce + settle: VBUS sensing bounces on plug/unplug (contact
-    // bounce, TCPC renegotiation) and our own host-side boost can reflect
-    // back into the sensor. Without this the daemon flaps host<->device
-    // every second, tearing down enumeration mid-transfer. A switch needs
-    // DEBOUNCE_READS identical polls and a quiet window after the previous
-    // switch.
-    const DEBOUNCE_READS: u32 = 3;
-    const SETTLE_SECS: u64 = 5;
     let mut prev = initial.clone();
     let mut last_raw = initial;
     let mut stable: u32 = 0;
