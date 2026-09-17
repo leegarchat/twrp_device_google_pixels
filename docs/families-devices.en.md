@@ -59,19 +59,13 @@ disables `BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT` for gs101 while
 merges `TARGET_RECOVERY_ROOT_OUT` into the platform itself), with no dtb
 and no dlkm fragment.
 
-Stock kernel modules for first-stage (UFS bring-up closure:
-`ufs-exynos-gs` + transitive deps from `modules.dep`, 23 `.ko` from LOS
-6.1.145 — not buildable from source) live in `families/gs101/modules/`
-and are copied by `family.mk` into the platform ramdisk's `/lib/modules/`
-— the same path the stock dlkm fragment overlays. Bundled deliberately:
-`fastboot flash vendor_boot:default` replaces the whole ramdisk section
-with a single entry, so the stock dlkm fragment does not survive
-flashing, and UFS on gs101 is modular — without these, first-stage
-mounts nothing. Everything past UFS (touch/drm/keymint) the engine
-loads from the `vendor_dlkm` partition at runtime, like on all other
-families. First-stage (`vendor_ramdisk/` staging: `/init`, linker,
-sepolicy, fstab) is never packed by the callback — only read for file
-lists — so the cluster cannot touch it by construction.
+Stock first-stage modules stay untouched: flashing is fragment surgery
+— `fastboot flash vendor_boot: <ramdisk>` (empty name = the platform
+fragment; NOT `:default` — that collapses the whole section into one
+entry and kills the stock dlkm). Host fastboot fetches the on-device
+`vendor_boot` itself, swaps only the platform entry and flashes it
+back: stock dlkm+dtb survive, first-stage keeps autoloading all 204
+stock modules from dlkm.
 
 Testers flash **not the image** but the platform ramdisk: after the
 build, `build.sh` unpacks `OrangeFox-*-gs101.img` (magiskboot) and drops
@@ -79,11 +73,9 @@ build, `build.sh` unpacks `OrangeFox-*-gs101.img` (magiskboot) and drops
 byte-verified against our known-booting images). Flashing:
 
 ```bash
-fastboot flash vendor_boot:default OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
+fastboot flash vendor_boot: OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
 fastboot reboot recovery
 ```
 
-Host fastboot fetches the on-device `vendor_boot`, swaps the default
-fragment and flashes it back — the device's dtb and bootloader stay
-untouched. `reflash_twrp.sh` and the ramdisk snapshot are not yet
+`reflash_twrp.sh` and the ramdisk snapshot are not yet
 updated for this scheme — only after boot is confirmed.

@@ -39,7 +39,6 @@
 | `families/<fam>/recovery/` | Family-оверлей рамдиска (rc-стабы) |
 | `families/<fam>/twrp.flags` | `twrp.flags` семьи (UFS-пути и т.д.) поверх дефолта |
 | `families/<fam>/etc/` | VINTF-фрагменты (keymint-манифесты schema 2.0) |
-| `families/gs101/modules/` | UFS-замыкание first-stage: 23 стоковых `.ko` 6.1 + `modules.*` (топо-порядок в `modules.load`; единственный санкционированный блоб — ядро не собирается из исходников; едут в `/lib/modules/` platform) |
 | `families/common/` | Общее без бинарей: `recovery.wipe`, `vendor.prop` |
 | `devices/<codename>/device.conf` | `DEVICE=` + `FAMILY=` — привязка для `build.sh` |
 | `devices/<codename>/pixel.json` | Вендор-конфиг: модули, разделы, sysfs-пути, пропсы (см. `device-config_ru.md`) |

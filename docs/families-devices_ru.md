@@ -59,19 +59,13 @@ platform-фрагмент (first-stage + recovery слиты: в `BoardConfig.mk
 build/make сам подмешивает `TARGET_RECOVERY_ROOT_OUT` в platform),
 без dtb и без dlkm-фрагмента.
 
-Стоковые модули ядра для first-stage (UFS bring-up closure:
-`ufs-exynos-gs` + транзитивные зависимости по `modules.dep`, 23 `.ko`
-из LOS 6.1.145 — собрать из исходников их негде) лежат в
-`families/gs101/modules/` и копируются `family.mk` в `/lib/modules/`
-platform-рамдиска — тем же путём, что стоковый dlkm-фрагмент.
-Вшиты сознательно: `fastboot flash vendor_boot:default` заменяет всю
-ramdisk-секцию одной записью, стоковый dlkm-фрагмент прошику не
-переживает, а UFS на gs101 модульный — без них first-stage ничего не
-смонтирует. Всё поверх UFS (тач/drm/keymint) движок грузит из раздела
-`vendor_dlkm` в рантайме, как на остальных семьях. First-stage
-(`vendor_ramdisk/` стейджинг: `/init`, линкер, sepolicy, fstab) колбэк
-не пакует никогда — только читает для списков файлов, так что кластер
-его не трогает по построению.
+Стоковые модули first-stage трогать не надо: прошивка идёт хирургией
+фрагментов — `fastboot flash vendor_boot: <ramdisk>` (пустое имя =
+platform-фрагмент; НЕ `:default` — тот схлопывает всю секцию в одну
+запись и убивает стоковый dlkm). Хостовый fastboot сам стянет текущий
+`vendor_boot` с девайса, заменит только platform-запись и зашьёт
+назад: стоковые dlkm+dtb выживают, first-stage продолжает грузить все
+204 стоковых модуля из dlkm автоматом.
 
 Тестеры шьют **не образ**, а platform-рамдиск: `build.sh` после сборки
 распаковывает `OrangeFox-*-gs101.img` (magiskboot) и кладёт рядом
@@ -79,11 +73,10 @@ ramdisk-секцию одной записью, стоковый dlkm-фрагм
 проверен побайтово против наших грузящихся образов). Прошивка:
 
 ```bash
-fastboot flash vendor_boot:default OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
+fastboot flash vendor_boot: OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
 fastboot reboot recovery
 ```
 
-Хост-fastboot сам стянет текущий `vendor_boot` с девайса, заменит
-default-фрагмент и зашьёт назад — dtb и bootloader девайса не трогаем.
-`reflash_twrp.sh` и ramdisk-снапшот под эту схему ещё не обновлены —
-только после подтверждения запуска.
+First-stage (`vendor_ramdisk/` стейджинг: `/init`, линкер, sepolicy,
+fstab) колбэк не пакует никогда — только читает для списков файлов,
+так что кластер его не трогает по построению.

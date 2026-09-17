@@ -9,28 +9,15 @@
 # platform fragment (first-stage + recovery merged via
 # BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT with
 # BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=false, see BoardConfig.mk),
-# no dtb, no dlkm fragment. Stock kernel modules ride INSIDE our platform
-# (families/gs101/modules/, copied below) so first-stage init brings up UFS
-# exactly like stock. Post-processing (build.sh gs101 block) extracts the
-# platform ramdisk as lz4_legacy for `fastboot flash vendor_boot:default`.
+# no dtb, no dlkm fragment, no kernel modules inside. Flashing is fragment
+# surgery: `fastboot flash vendor_boot: <ramdisk>` (empty name = the
+# platform fragment; NOT :default, which would collapse the whole section
+# into one entry and kill dlkm) replaces ONLY that entry — stock dlkm+dtb
+# survive, first-stage keeps autoloading all stock modules from dlkm.
+# Everything past that (touch/drm/keymint) the engine loads from the
+# vendor_dlkm partition at runtime, like on all other families.
+# Post-processing (build.sh gs101 block) extracts the platform ramdisk as
+# lz4_legacy for that command.
 
 # Partitions - Blocks
 BOARD_FLASH_BLOCK_SIZE := 131072
-
-# First-stage kernel modules (stock LOS 6.1.145, cannot be built from source):
-# the UFS bring-up closure (ufs-exynos-gs + transitive deps from modules.dep,
-# 23 .ko incl. trusty-core/ipc in the chain) + modules.* metadata land at
-# /lib/modules/ in the platform ramdisk, same path as the stock dlkm
-# fragment overlay. Why bundled: `fastboot flash vendor_boot:default`
-# replaces the whole ramdisk section (single table entry), so the stock
-# dlkm fragment does NOT survive flashing — without these in platform,
-# first-stage has no UFS (modular on gs101) and mounts nothing. Everything
-# past UFS (touch/drm/keymint) the engine loads from the vendor_dlkm
-# partition at runtime, like on all other families.
-GS101_MODULES_DIR := $(DEVICE_PATH)/families/gs101/modules/lib/modules
-PRODUCT_COPY_FILES += $(foreach f,$(wildcard $(GS101_MODULES_DIR)/*.ko),$(f):$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/$(notdir $(f)))
-PRODUCT_COPY_FILES += $(GS101_MODULES_DIR)/modules.load:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/modules.load
-PRODUCT_COPY_FILES += $(GS101_MODULES_DIR)/modules.dep:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/modules.dep
-PRODUCT_COPY_FILES += $(GS101_MODULES_DIR)/modules.alias:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/modules.alias
-PRODUCT_COPY_FILES += $(GS101_MODULES_DIR)/modules.softdep:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/modules.softdep
-PRODUCT_COPY_FILES += $(GS101_MODULES_DIR)/modules.blocklist:$(TARGET_COPY_OUT_VENDOR_RAMDISK)/lib/modules/modules.blocklist
