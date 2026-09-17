@@ -18,6 +18,17 @@ follow this guide exactly and you will always have a way back.
   fastboot getvar current-slot
   ```
 - Back up anything important. Test builds: **never Format Data unless asked**.
+- **Verify the image hash BEFORE flashing.** Telegram sometimes delivers
+  `.img` files truncated (this really happened during R11 testing and cost
+  days of pointless debugging). The maintainer posts an `md5` next to every
+  test build (or pinned in https://t.me/OFRPforTensor) — compare:
+  ```
+  md5sum OrangeFox-test-xxx.img
+  ```
+  (Windows: `certutil -hashfile OrangeFox-test-xxx.img MD5`.) If it does not
+  match — re-download, preferably from the GDrive folder linked in the
+  channel. **Bootloop + empty pstore with a mismatched hash = broken
+  download, not a bug — do not report it, re-download first.**
 
 ---
 
