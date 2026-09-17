@@ -259,6 +259,59 @@ print(f'    [PIXELCFG] kernel_bootcfg for {len(bootcfg)} devices')
 PYEOF
 }
 
+# Post-removal of dead ramdisk weight (family.json `post_remove_ramdisk`).
+# Runs BEFORE lgz_compress_ramdisk + manifest/file-list generation, so removed
+# files never enter the cluster, the snapshot manifest, recovery_file_list.txt,
+# or reflash cpios. Entries are ramdisk-relative paths (files or dirs).
+# Loud fail on a non-list value; unsafe entries (absolute, `..`, empty) abort
+# the build instead of risking the host or a half-pruned ramdisk.
+apply_post_remove_ramdisk() {
+    local ramdisk_root="$1" platform="$2"
+    local fam_json="$SCRIPT_DIR/families/$platform/family.json"
+    if [ ! -f "$fam_json" ]; then
+        echo "    [PRUNE] WARNING: no family.json for $platform, skipping post-removal"
+        return 0
+    fi
+    local entries
+    entries=$(python3 - "$fam_json" <<'PYEOF'
+import json, pathlib, sys
+try:
+    fam = json.loads(pathlib.Path(sys.argv[1]).read_text())
+except Exception as e:
+    print(f'    [PRUNE] ERROR: bad family JSON: {e}')
+    sys.exit(1)
+lst = fam.get('post_remove_ramdisk', [])
+if not isinstance(lst, list) or not all(isinstance(x, str) for x in lst):
+    print('    [PRUNE] ERROR: post_remove_ramdisk must be [str]')
+    sys.exit(1)
+for x in lst:
+    if not x or x.startswith('/') or x == '..' or x.startswith('../') or '/../' in x or x.endswith('/..'):
+        print(f'    [PRUNE] ERROR: unsafe entry {x!r} (must be a relative in-ramdisk path)')
+        sys.exit(1)
+    print(x)
+PYEOF
+) || { [ -n "$entries" ] && echo "$entries"; return 1; }
+    if [ -z "$entries" ]; then
+        echo "    [PRUNE] post_remove_ramdisk empty for $platform, nothing to remove"
+        return 0
+    fi
+    local freed=0 n=0 rel size
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        if [ -e "$ramdisk_root/$rel" ] || [ -L "$ramdisk_root/$rel" ]; then
+            size=$(du -sb "$ramdisk_root/$rel" 2>/dev/null | cut -f1)
+            size="${size:-0}"
+            rm -rf -- "$ramdisk_root/$rel"
+            freed=$((freed + size))
+            n=$((n + 1))
+            echo "    [PRUNE]   - $rel (${size} bytes)"
+        else
+            echo "    [PRUNE]   (absent, skip) $rel"
+        fi
+    done <<< "$entries"
+    echo "    [PRUNE] removed $n entr(ies), freed $freed bytes for $platform"
+}
+
 # LGZ helper functions
 # =========================================================================
 
@@ -766,6 +819,15 @@ case "$CALL_TYPE" in
         else
             echo "    [INIT-STUB] WARNING: init or recovery_init_stub missing, swap skipped (init.cpp fallback)"
         fi
+
+        # --- Post-removal of dead weight (family.json `post_remove_ramdisk`) ---
+        # Must run BEFORE lgz_compress_ramdisk + manifest/file-list generation:
+        # removed files must not enter the cluster, the snapshot manifest, or
+        # recovery_file_list.txt (reflash cpio would reference dead paths).
+        echo ""
+        echo "    === Ramdisk Post-Removal ==="
+        apply_post_remove_ramdisk "$TARGET_DIR" "$PLATFORM" || return 1
+        echo ""
 
         # --- LGZ: Compress ramdisk binaries for space savings ---
         echo ""

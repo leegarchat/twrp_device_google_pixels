@@ -2,6 +2,7 @@
   "family": "zuma",
   "soc_family": "zuma",
   "keymint": "rust",
+  "post_remove_ramdisk": [],
   "props": {
     "ro.recovery.soc_family": "zuma",
     "persist.wm.extensions.enabled": "true",

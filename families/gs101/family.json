@@ -2,6 +2,7 @@
   "family": "gs101",
   "soc_family": "gs101",
   "keymint": "cpp",
+  "post_remove_ramdisk": [],
   "props": {},
   "default_kernel": "6.1",
   "kernels": {

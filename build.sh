@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
-#              [-k|--kernel VER] [--force]
+#              [-k|--kernel VER] [--force] [--list]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -21,6 +21,10 @@
 #   --force           Non-interactive mode: with -k builds silently;
 #                     WITHOUT -k aborts with the available version list
 #                     (no silent default in scripts/CI).
+#   --list            Print the family/device/kernel tree (families with
+#                     keymint, default + available kernels; devices with
+#                     effective kernels, "[override]" marks a device-level
+#                     `kernels` entry) and exit. Read-only, builds nothing.
 #   --notrm           Don't clean out/target/product/pixels before build.
 #                     (Between kernel-profile groups a clean is mandatory
 #                     and always performed, with a notice.)
@@ -90,6 +94,37 @@ fox_nproc() {
     n=$(getconf _NPROCESSORS_ONLN 2>/dev/null) && [ "$n" -gt 0 ] 2>/dev/null && { echo "$n"; return 0; }
     n=$(grep -c ^processor /proc/cpuinfo 2>/dev/null) && [ "$n" -gt 0 ] 2>/dev/null && { echo "$n"; return 0; }
     echo 8
+}
+
+# --- Device/family/kernel inventory (build.sh --list) ---
+# Tree view over families/*/family.json + devices/*/device.conf:
+# per family keymint/default kernels, per device effective kernel versions
+# (family ∪ device overrides; "[override]" marks a devices/<dev>/pixel.json
+# `kernels` entry). Read-only: prints and returns, never builds.
+fox_print_tree() {
+    local fam_json fam info dev_conf dev dfam klist over
+    echo "SoC families (families/*/family.json) and devices (devices/*/device.conf):"
+    echo ""
+    for fam_json in "$SCRIPT_DIR"/families/*/family.json; do
+        fam=$(basename "$(dirname "$fam_json")")
+        info=$(python3 -c "import json,sys; f=json.load(open(sys.argv[1])); print('%s|%s|%s' % (f.get('keymint','?'), f.get('default_kernel','?'), ','.join(sorted((f.get('kernels') or {}).keys())) or '(none)'))" "$fam_json" 2>/dev/null) || {
+            echo "  $fam: ERROR: unreadable family.json"
+            continue
+        }
+        echo "$fam [keymint=$(echo "$info" | cut -d'|' -f1), default=$(echo "$info" | cut -d'|' -f2), kernels=$(echo "$info" | cut -d'|' -f3)]"
+        local any_dev=false
+        for dev_conf in "$SCRIPT_DIR"/devices/*/device.conf; do
+            dev=$(basename "$(dirname "$dev_conf")")
+            dfam=$(FAMILY=""; DEVICE=""; . "$dev_conf" 2>/dev/null; printf '%s' "$FAMILY")
+            [ "$dfam" = "$fam" ] || continue
+            any_dev=true
+            klist=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$fam" "$dev" 2>/dev/null) || klist="(error)"
+            over=""
+            python3 -c "import json,sys; sys.exit(0 if 'kernels' in json.load(open(sys.argv[1])) else 1)" "$SCRIPT_DIR/devices/$dev/pixel.json" 2>/dev/null && over=" [override]"
+            echo "  $dev [kernels=${klist}${over}]"
+        done
+        $any_dev || echo "  (no devices)"
+    done
 }
 
 # --- Parse arguments ---
@@ -182,6 +217,15 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
         --force)
             FOX_FORCE=true
             shift
+            ;;
+        --list)
+            fox_print_tree
+            fox_safe_exit 0
+            if [[ "$fox_sourced" == true ]]; then
+                return "$SAFE_EXIT_CODE"
+            else
+                exit "$SAFE_EXIT_CODE"
+            fi
             ;;
         -h|--help)
             sed -n '2,30p' "${BASH_SOURCE[0]}"

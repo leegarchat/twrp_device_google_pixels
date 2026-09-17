@@ -2,6 +2,7 @@
   "family": "malibu",
   "soc_family": "malibu",
   "keymint": "rust",
+  "post_remove_ramdisk": [],
   "props": {
     "ro.recovery.soc_family": "malibu",
     "ro.soc.model": "Tensor G6",

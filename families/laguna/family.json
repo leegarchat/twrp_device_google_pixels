@@ -2,6 +2,7 @@
   "family": "laguna",
   "soc_family": "laguna",
   "keymint": "rust",
+  "post_remove_ramdisk": [],
   "props": {
     "ro.recovery.soc_family": "laguna",
     "ro.soc.model": "Tensor G5",
