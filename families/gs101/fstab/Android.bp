@@ -1,0 +1,18 @@
+// Pre-rendered vendor fstab for gs101 (Tensor G1).
+// Same UFS 14700000 as gs201 — content identical to fstab.gs201, kept as
+// own static copy so every family owns its first-stage fstab.
+// No build-time codegen: plain prebuilt_etc with the historical module
+// names, so device.mk PRODUCT_PACKAGES lines are unchanged.
+prebuilt_etc {
+    name: "fstab.gs101",
+    src: "fstab.gs101",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}
+
+prebuilt_etc {
+    name: "fstab.gs101-fips",
+    src: "fstab.gs101-fips",
+    vendor: true,
+    vendor_ramdisk_available: true,
+}

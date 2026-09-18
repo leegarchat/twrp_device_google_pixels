@@ -1,4 +1,0 @@
-# Android fstab file.
-# <src>                  <mnt_point>         <type>    <mnt_flags and options>                               <fs_mgr_flags>
-# Keep persist in an fstab file, since we need to run fsck on it after abnormal shutdown.
-/dev/block/platform/13200000.ufs/by-name/persist  /mnt/vendor/persist f2fs      noatime,nosuid,nodev,sync wait,check,formattable

@@ -1,2 +1,0 @@
-# per-file for Pixel fstab
-per-file fstab.*=file:device/google/gs-common:main:/FSTAB_OWNERS

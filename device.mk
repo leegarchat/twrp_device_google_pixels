@@ -132,16 +132,14 @@ endif
 endif
 
 
-# Firstage ramdisk packages — pre-rendered plain fstabs, no BP codegen.
-# Module names are historical (PRODUCT_PACKAGES unchanged); sources live in
-# families/<fam>/fstab/ as static prebuilt_etc (rendered once from the old
-# vendor-ref/conf-* templates with identical sed substitutions).
+# Firstage ramdisk packages — static plain fstabs, no templates, no codegen.
+# Every family owns its fstab/ as prebuilt_etc (ext4+erofs twins, no AVB).
 # families/zuma/fstab/    → fstab.zuma*                             (Tensor G3, UFS 13200000)
 # families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
 # families/gs201/fstab/   → fstab.gs201*                            (Tensor G2, UFS 14700000)
+# families/gs101/fstab/   → fstab.gs101*                            (Tensor G1, UFS 14700000 — same content as gs201, own copy)
 # families/malibu/fstab/  → fstab.malibu*                           (Tensor G6, UFS 3c2d0000)
 # families/laguna/fstab/  → fstab.laguna*                           (Tensor G5, UFS 3c400000)
-# gs101                   → reuses gs201 fstab (Tensor G1, UFS 14700000 — same as gs201)
 ifeq ($(DEVICE_BUILD_FLAG),zumapro)
 PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
@@ -151,9 +149,8 @@ else ifeq ($(DEVICE_BUILD_FLAG),gs201)
 PRODUCT_PACKAGES += fstab.gs201.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk
 else ifeq ($(DEVICE_BUILD_FLAG),gs101)
-# gs101 uses same UFS address (14700000) as gs201 — reuse gs201 fstab for now.
-PRODUCT_PACKAGES += fstab.gs201.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.gs101.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.gs101-fips.vendor_ramdisk
 else ifeq ($(DEVICE_BUILD_FLAG),malibu)
 PRODUCT_PACKAGES += fstab.malibu.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.malibu-fips.vendor_ramdisk

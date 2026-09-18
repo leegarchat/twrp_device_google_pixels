@@ -1,4 +1,0 @@
-# Android fstab file.
-# <src>                  <mnt_point>         <type>    <mnt_flags and options>                               <fs_mgr_flags>
-# Create the specific fstab file for modem partition as flexibility
-/dev/block/platform/13200000.ufs/by-name/modem           /mnt/vendor/modem_img       ext4    noatime,ro,context=u:object_r:modem_img_file:s0    wait,slotselect

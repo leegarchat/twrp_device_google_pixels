@@ -1,6 +1,0 @@
-/dev/block/platform/13200000.ufs/by-name/boot            /boot                       emmc    defaults                 slotselect,first_stage_mount
-/dev/block/platform/13200000.ufs/by-name/init_boot       /init_boot                  emmc    defaults                 slotselect,first_stage_mount
-/dev/block/platform/13200000.ufs/by-name/misc            /misc                       emmc    defaults                 wait
-#/dev/block/platform/13200000.ufs/by-name/pvmfw           /pvmfw                      emmc    defaults                 wait,slotselect,first_stage_mount
-/dev/block/platform/13200000.ufs/by-name/vbmeta          /vbmeta                     emmc    defaults                 slotselect,first_stage_mount
-/devices/platform/11210000.usb*                          auto                        vfat    defaults                 voldmanaged=usb:auto

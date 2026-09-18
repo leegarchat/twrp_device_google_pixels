@@ -1,6 +1,0 @@
-# Android fstab file for efs partitions
-#
-#<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>
-/dev/block/platform/13200000.ufs/by-name/efs             /mnt/vendor/efs             f2fs    noatime,sync             wait,check,formattable
-/dev/block/platform/13200000.ufs/by-name/efs_backup      /mnt/vendor/efs_backup      f2fs    noatime,sync             wait,check,formattable
-/dev/block/platform/13200000.ufs/by-name/modem_userdata  /mnt/vendor/modem_userdata  f2fs    noatime,sync             wait,check,formattable

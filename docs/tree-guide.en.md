@@ -79,7 +79,7 @@ Paths are relative to `device/google/pixels/`.
 | Path | Purpose |
 |---|---|
 | `docs/` | This documentation + tester guides + `FOX_FLAGS` |
-| `vendor-ref/` | Reference configs (`bootctrl`, `conf-<fam>`) — for comparison, not built |
+| `vendor-ref/bootctrl/` | Bootctrl HAL 1.2 sources (built from source via Soong namespace) |
 | `screenshots/` | GUI screenshots for posts and guides |
 | `test_/` | Unpacked images for analysis (gitignore) |
 | `test_ai_handoff.md`, `test_static_init.md` | Historical session notes (not guides) |
