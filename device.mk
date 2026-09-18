@@ -137,7 +137,7 @@ endif
 # families/zuma/fstab/    → fstab.zuma*                             (Tensor G3, UFS 13200000)
 # families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
 # families/gs201/fstab/   → fstab.gs201*                            (Tensor G2, UFS 14700000)
-# families/gs101/fstab/   → fstab.gs101*                            (Tensor G1, UFS 14700000 — same content as gs201, own copy)
+# families/gs101/fstab/   → fstab.gs101*                            (Tensor G1, UFS 14700000 — stock-based, no /system_dlkm, USB 11110000)
 # families/malibu/fstab/  → fstab.malibu*                           (Tensor G6, UFS 3c2d0000)
 # families/laguna/fstab/  → fstab.laguna*                           (Tensor G5, UFS 3c400000)
 ifeq ($(DEVICE_BUILD_FLAG),zumapro)

@@ -1,26 +1,36 @@
-# Android fstab file.
+# Android fstab file — gs101 (Tensor G1: oriole/raven/bluejay).
 #
-# The filesystem that contains the filesystem checker binary (typically /system) cannot
-# specify MF_CHECK, and must come before any filesystems that do specify MF_CHECK
+# Based on stock LOS 6.1.145 first_stage_ramdisk/system/etc/fstab.gs101
+# (UFS 14700000, DWC3 USB 11110000). Deltas vs stock, by design:
+#  - ro logical mounts go as adjacent ext4+erofs twins (first-stage walks
+#    same-mountpoint entries until one mounts; stock Google firmware uses
+#    erofs, LOS uses ext4);
+#  - no avb=/avb_keys= anywhere (recovery mounts without dm-verity);
+#  - NO /system_dlkm (partition does not exist on gs101; first-mounting it
+#    would fail the boot);
+#  - /metadata kept f2fs+ext4 dual, /data keeps the Pixel FBE flag set our
+#    decrypt stack expects (latemount: first-stage skips it anyway).
 #
 #<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>
-system                                                   /system                     ext4    noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-system                                                   /system                     erofs   noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-system_dlkm                                              /system_dlkm                ext4    noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-system_dlkm                                              /system_dlkm                erofs   noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-system_ext                                               /system_ext                 ext4    noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-system_ext                                               /system_ext                 erofs   noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-product                                                  /product                    ext4    noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-product                                                  /product                    erofs   noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-vendor                                                   /vendor                     ext4    noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-vendor                                                   /vendor                     erofs   noatime,ro                       wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
-vendor_dlkm                                              /vendor_dlkm                ext4    noatime,ro                       wait,slotselect,logical,first_stage_mount
-vendor_dlkm                                              /vendor_dlkm                erofs   noatime,ro                       wait,slotselect,logical,first_stage_mount
+system                                                   /system                     ext4    noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system                                                   /system                     erofs   noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext                 ext4    noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext                 erofs   noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product                    ext4    noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product                    erofs   noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor                     ext4    noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor                     erofs   noatime,ro             wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor_dlkm                                              /vendor_dlkm                ext4    noatime,ro             wait,slotselect,logical,first_stage_mount
+vendor_dlkm                                              /vendor_dlkm                erofs   noatime,ro             wait,slotselect,logical,first_stage_mount
 /dev/block/platform/14700000.ufs/by-name/boot            /boot                       emmc    defaults                 slotselect,first_stage_mount
-/dev/block/platform/14700000.ufs/by-name/init_boot       /init_boot                  emmc    defaults                 slotselect,first_stage_mount
+/dev/block/platform/14700000.ufs/by-name/efs             /mnt/vendor/efs             ext4    defaults,noatime,rw      wait,check,formattable
+/dev/block/platform/14700000.ufs/by-name/efs_backup      /mnt/vendor/efs_backup      ext4    defaults,noatime,rw      wait,check,formattable
+/dev/block/platform/14700000.ufs/by-name/modem_userdata  /mnt/vendor/modem_userdata  ext4    defaults,noatime,rw      wait,check,formattable
+/dev/block/platform/14700000.ufs/by-name/modem           /mnt/vendor/modem_img       ext4    noatime,ro,context=u:object_r:modem_img_file:s0    wait,slotselect
 /dev/block/platform/14700000.ufs/by-name/misc            /misc                       emmc    defaults                 wait
 /dev/block/platform/14700000.ufs/by-name/metadata        /metadata                   f2fs    noatime,nosuid,nodev,sync  wait,check,formattable,first_stage_mount
-#/dev/block/platform/14700000.ufs/by-name/pvmfw           /pvmfw                      emmc    defaults                 wait,slotselect,avb=pvmfw,first_stage_mount
+/dev/block/platform/14700000.ufs/by-name/metadata        /metadata                   ext4    noatime,nosuid,nodev,data=journal,commit=1    wait,check,formattable,first_stage_mount,metadata_csum
+/dev/block/platform/14700000.ufs/by-name/pvmfw           /pvmfw                      emmc    defaults                 wait,slotselect,first_stage_mount
 /dev/block/platform/14700000.ufs/by-name/userdata        /data                       f2fs    noatime,nosuid,nodev,discard,reserve_root=32768,resgid=1065,fsync_mode=nobarrier,inlinecrypt,atgc,checkpoint_merge,compress_cache    latemount,wait,check,quota,formattable,sysfs_path=/dev/sys/block/bootdevice,checkpoint=fs,reservedsize=128M,fileencryption=aes-256-xts,metadata_encryption=aes-256-xts,keydirectory=/metadata/vold/metadata_encryption,fscompress,readahead_size_kb=128
 /dev/block/platform/14700000.ufs/by-name/vbmeta          /vbmeta                     emmc    defaults                 slotselect,first_stage_mount
-/devices/platform/11210000.usb*                          auto                        vfat    defaults                 voldmanaged=usb:auto
+/devices/platform/11110000.usb*                          auto                        vfat    defaults                 voldmanaged=usb:auto
