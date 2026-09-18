@@ -1,8 +1,8 @@
 # Android fstab file.
 #
 #<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>
-/dev/block/platform/3c400000.ufs/by-name/boot            /boot                       emmc    defaults                 slotselect,avb=boot,first_stage_mount
-/dev/block/platform/3c400000.ufs/by-name/init_boot       /init_boot                  emmc    defaults                 slotselect,avb=init_boot,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/boot            /boot                       emmc    defaults                 slotselect,first_stage_mount
+/dev/block/platform/3c400000.ufs/by-name/init_boot       /init_boot                  emmc    defaults                 slotselect,first_stage_mount
 /dev/block/platform/3c400000.ufs/by-name/misc            /misc                       emmc    defaults                 wait
 #/dev/block/platform/3c400000.ufs/by-name/pvmfw           /pvmfw                      emmc    defaults                 wait,slotselect,avb=pvmfw,first_stage_mount
 /dev/block/platform/3c400000.ufs/by-name/vbmeta          /vbmeta                     emmc    defaults                 slotselect,first_stage_mount
@@ -13,14 +13,21 @@
 # specify MF_CHECK, and must come before any filesystems that do specify MF_CHECK
 #
 #<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>
-system                                                   /system                     ext4    noatime,ro               wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
+system                                                   /system                     ext4    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system                                                   /system                     erofs    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
 # During compliance testing, the previous line would fail (because GSI is ext4), and the next line would be used to mount GSI.
-system                                                   /system                     ext4    noatime,ro,barrier=1     wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
-system_dlkm                                              /system_dlkm                ext4    noatime,ro               wait,slotselect,avb=vbmeta_system,avb_keys=no_such_key,logical,first_stage_mount,readahead_size_kb=128
-system_ext                                               /system_ext                 ext4    noatime,ro               wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
-product                                                  /product                    ext4    noatime,ro               wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,readahead_size_kb=128
-vendor                                                   /vendor                     ext4    noatime,ro               wait,slotselect,avb=vbmeta_vendor,logical,first_stage_mount,readahead_size_kb=128
-vendor_dlkm                                              /vendor_dlkm                ext4    noatime,ro               wait,slotselect,avb=vbmeta,avb_keys=no_such_key,logical,first_stage_mount,readahead_size_kb=128
+system                                                   /system                     ext4    noatime,ro,barrier=1     wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system                                                   /system                     erofs    noatime,ro,barrier=1     wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system_dlkm                                              /system_dlkm                ext4    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system_dlkm                                              /system_dlkm                erofs    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext                 ext4    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+system_ext                                               /system_ext                 erofs    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product                    ext4    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+product                                                  /product                    erofs    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor                     ext4    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor                                                   /vendor                     erofs    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor_dlkm                                              /vendor_dlkm                ext4    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
+vendor_dlkm                                              /vendor_dlkm                erofs    noatime,ro               wait,slotselect,logical,first_stage_mount,readahead_size_kb=128
 # Android fstab file.
 #
 #<src>                                                   <mnt_point>                 <type>  <mnt_flags and options>  <fs_mgr_flags>

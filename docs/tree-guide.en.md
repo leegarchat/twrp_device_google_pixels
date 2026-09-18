@@ -35,7 +35,7 @@ Paths are relative to `device/google/pixels/`.
 | `families/<fam>/family.conf` | Shell SoC facts for scripts: `FAMILY`, `UFS_ADDR`, `EARLYCON_ADDR`, `USBCTRL` |
 | `families/<fam>/family.json` | Same + `keymint` (rust\|cpp), common `props`, `default_kernel`, `kernels` cmdline profiles |
 | `families/<fam>/family.mk` | SoC build fragment (no cmdline — it comes from `.gen_kernel.mk`) |
-| `families/<fam>/fstab/` + `recovery.fstab` | Pre-rendered fstabs for vendor_ramdisk and recovery fstab |
+| `families/<fam>/fstab/` + `recovery.fstab` | Pre-rendered fstabs for vendor_ramdisk and recovery fstab. RO partitions go as ext4+erofs twins (first-stage walks same-mountpoint duplicates; order: ext4, erofs); no AVB flags (`avb=`, `avb_keys=`) in first-stage by design — recovery mounts without verity; `recovery.fstab` stays ext4-only — TWRP detects erofs itself via blkid |
 | `families/<fam>/recovery/` | Family ramdisk overlay (rc stubs) |
 | `families/<fam>/twrp.flags` | Family `twrp.flags` (UFS paths etc.) on top of the default |
 | `families/<fam>/etc/` | VINTF fragments (keymint manifests schema 2.0) |

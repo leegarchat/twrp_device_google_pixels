@@ -35,7 +35,7 @@
 | `families/<fam>/family.conf` | Shell-факты SoC для скриптов: `FAMILY`, `UFS_ADDR`, `EARLYCON_ADDR`, `USBCTRL` |
 | `families/<fam>/family.json` | То же + `keymint` (rust\|cpp), общие `props`, `default_kernel`, `kernels`-профили cmdline |
 | `families/<fam>/family.mk` | SoC-фрагмент сборки (без cmdline — он из `.gen_kernel.mk`) |
-| `families/<fam>/fstab/` + `recovery.fstab` | Пре-рендеренные fstab под vendor_ramdisk и fstab рекавери |
+| `families/<fam>/fstab/` + `recovery.fstab` | Пре-рендеренные fstab под vendor_ramdisk и fstab рекавери. ro-разделы — дублями ext4+erofs (first-stage перебирает дубли одного mountpoint, порядок: ext4, erofs); AVB-флагов (`avb=`, `avb_keys=`) в first-stage нет сознательно — рекавери монтирует без verity; `recovery.fstab` — только ext4, erofs TWRP детектит сам через blkid |
 | `families/<fam>/recovery/` | Family-оверлей рамдиска (rc-стабы) |
 | `families/<fam>/twrp.flags` | `twrp.flags` семьи (UFS-пути и т.д.) поверх дефолта |
 | `families/<fam>/etc/` | VINTF-фрагменты (keymint-манифесты schema 2.0) |
