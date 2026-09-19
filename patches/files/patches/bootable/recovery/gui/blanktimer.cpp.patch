@@ -1,0 +1,41 @@
+--- a/bootable/recovery/gui/blanktimer.cpp
++++ b/bootable/recovery/gui/blanktimer.cpp
+@@ -20,6 +20,7 @@
+ */
+ 
+ #include <string>
++#include <cstdlib>
+ #include <pthread.h>
+ #include <sys/time.h>
+ #include <time.h>
+@@ -41,6 +42,21 @@
+ 	orig_brightness = getBrightness();
+ }
+ 
++// Anything at or below the dim level ("5") is not a valid "screen on"
++// brightness -- dim writes "5", off writes "0", and the brightness slider
++// can never persist such a low value. If the captured value is unusable
++// (empty, or a dim/off leftover), fall back to the configured brightness,
++// then to the panel max. This guarantees unblank always restores a
++// visible level instead of leaving the panel black.
++static std::string usable_restore_brightness(const std::string& captured) {
++	if (!captured.empty() && atoi(captured.c_str()) > 5)
++		return captured;
++	std::string cfg = DataManager::GetStrValue("tw_brightness");
++	if (!cfg.empty() && atoi(cfg.c_str()) > 5)
++		return cfg;
++	return DataManager::GetStrValue("tw_brightness_max");
++}
++
+ bool blanktimer::isScreenOff() {
+ 	return state >= kOff;
+ }
+@@ -109,6 +125,8 @@
+ 			gui_forceRender();
+ 			// No break here, we want to keep going
+ 		case kDim:
++			orig_brightness = usable_restore_brightness(orig_brightness);
++			LOGINFO("blanktimer: unblank, restoring brightness %s\n", orig_brightness.c_str());
+ 			if (!orig_brightness.empty())
+ 				TWFunc::Set_Brightness(orig_brightness);
+ 			state = kOn;
