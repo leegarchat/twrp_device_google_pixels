@@ -25,7 +25,7 @@
 | `reflash_twrp.sh` | Перепрошивка изнутри рекавери (ниже) |
 | `siw`, `iw` | Чтение разделов без монтирования + DM-маппинг, LP-инструменты |
 | `nboot.lz4` | Сжатый компонент загрузки (в LGZ-исключениях) |
-| `Magisk-*.zip`, `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Пейлоады для установки из GUI |
+| `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Пейлоады для установки из GUI |
 
 ## `system/etc/` и `vendor/etc/`
 

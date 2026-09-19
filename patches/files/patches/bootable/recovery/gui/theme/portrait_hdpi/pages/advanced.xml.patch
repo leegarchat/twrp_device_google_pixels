@@ -5,7 +5,7 @@
  				<action function="queueclear"/>
  				<action function="set">fox_m_author=topjohnwu</action>
 -				<action function="set">fox_m_name={@module_install} Magisk %magisk_ver%</action>
-+					<action function="set">fox_m_name={@module_install} Magisk v30.7</action>
++					<action function="set">fox_m_name={@module_install} Magisk %magisk_ver%</action>
  				<action function="set">tw_file=%fox_magisk_zip_installer%</action>
  				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_zip_installer%</action>
  				<action function="set">tw_filecheck=%tw_filename%</action>
@@ -14,19 +14,10 @@
  				<action function="queueclear"/>
  				<action function="set">fox_m_author=topjohnwu</action>
 -				<action function="set">fox_m_name={@module_uninstall} Magisk</action>
-+					<action function="set">fox_m_name={@module_uninstall} Magisk v30.7</action>
++					<action function="set">fox_m_name={@module_uninstall} Magisk</action>
  				<action function="set">tw_file=%fox_magisk_uninstaller%</action>
  				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_uninstaller%</action>
  				<action function="set">tw_filecheck=%tw_filename%</action>
-@@ -424,7 +424,7 @@
- 
- 			<listbox style="group_list">
- 				<placement x="0" y="%row1_2_y%" w="%screen_w%" h="%bl_h2%"/>
--				<listitem name="{@module_install} Magisk %magisk_ver%">
-+				<listitem name="{@module_install} Magisk v30.7">
- 					<icon res="archive"/>
- 					<action function="page">mod_magisk</action>
- 				</listitem>
 @@ -665,6 +665,36 @@
  					<icon res="terminal"/>
  					<action function="page">terminal</action>

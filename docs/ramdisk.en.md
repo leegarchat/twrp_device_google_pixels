@@ -26,7 +26,7 @@ Only overlays of **its own family** go into the image (`device.mk` filters
 | `reflash_twrp.sh` | Reflash from inside recovery (below) |
 | `siw`, `iw` | Partition reads without mounting + DM mapping, LP tools |
 | `nboot.lz4` | Compressed boot component (in LGZ exclusions) |
-| `Magisk-*.zip`, `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Payloads for installation from the GUI |
+| `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Payloads for installation from the GUI |
 
 ## `system/etc/` and `vendor/etc/`
 

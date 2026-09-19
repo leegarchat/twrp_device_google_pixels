@@ -242,6 +242,11 @@ export FOX_BASH_TO_SYSTEM_BIN=1
 # --- App & Features ---
 export FOX_ENABLE_APP_MANAGER=1
 export FOX_DELETE_AROMAFM=1
+# Magisk root zip is out of the build (decrypt is native, size matters):
+# vendor skips Magisk.zip/uninstall.zip copy and neuters the addon UI.
+# magiskboot TOOL support (TW_INCLUDE_REPACKTOOLS) is untouched — 3rd-party
+# zips still flash fine.
+export FOX_DELETE_MAGISK_ADDON=1
 
 # --- Storage ---
 export OF_QUICK_BACKUP_LIST="/boot;/vendor_boot;/data;"

@@ -68,7 +68,7 @@
 | `system/bin/runatboot.sh` | Пустой хук OFox (дёргает `twrp.cpp`; точка для аддонов) |
 | `system/bin/reflash_twrp.sh` | Перепрошивка рекавери изнутри рекавери |
 | `system/bin/{siw,iw}` | Чтение разделов без монтирования + DM-маппинг, LP-утилиты |
-| `system/bin/*.zip` | Пейлоады: Magisk, FIXBACKUPKSU, EXPANDPARTITIONS |
+| `system/bin/*.zip` | Пейлоады: FIXBACKUPKSU, EXPANDPARTITIONS |
 | `system/bin/nboot.lz4` | Сжатый компонент загрузки (в LGZ-исключениях) |
 | `system/etc/{fox_kdf.conf,task_profiles.json}` | KDF-пайплайны, профили задач |
 | `system/etc/vintf/` + `vendor/etc/vintf/` | VINTF-матрицы и манифесты в образе |

@@ -83,7 +83,7 @@
 				<condition var1="of_magisk_in_queue" var2="0"/>
 				<condition var1="tw_zip_queue_count" var2="1"/>
 				<placement x="%btn_raised_left_x%" y="%row_btn2_y%"/>
-				<text>Add Magisk v30.7</text>
+				<text>{@install_queue_magisk_btn}</text>
 				<action function="set">tw_file=%fox_magisk_zip_installer%</action>
 				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_zip_installer%</action>
 				<action function="set">tw_zip_location=%fox_magisk_path%</action>
@@ -96,7 +96,7 @@
 				<condition var1="of_magisk_in_queue" var2="0"/>
 				<condition var1="tw_zip_queue_count" op="&gt;=" var2="2"/>
 				<placement x="%btn_raised_left_x%" y="%row_btn3_y%"/>
-				<text>Add Magisk v30.7</text>
+				<text>{@install_queue_magisk_btn}</text>
 				<action function="set">tw_file=%fox_magisk_zip_installer%</action>
 				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_zip_installer%</action>
 				<action function="set">tw_zip_location=%fox_magisk_path%</action>
