@@ -4,7 +4,7 @@
   "is_fold": 1,
   "front_display": {
     "w": 1080,
-    "h": 2424
+    "h": 2342
   },
   "touch_modules": [
     "cl_dsp-core",
@@ -74,7 +74,7 @@
     "ro.product.model": "Pixel 11 Pro Fold"
   },
   "inner_display": {
-    "w": 2076,
+    "w": 1080,
     "h": 2152
   }
 }

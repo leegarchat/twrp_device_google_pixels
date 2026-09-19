@@ -3,7 +3,7 @@
   "soc_family": "gs101",
   "is_fold": 0,
   "front_display": {
-    "w": 1440,
+    "w": 1080,
     "h": 3120
   },
   "touch_modules": [

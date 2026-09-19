@@ -4,7 +4,7 @@
   "is_fold": 0,
   "front_display": {
     "w": 1080,
-    "h": 2400
+    "h": 2992
   },
   "touch_modules": [
     "focal_touch",

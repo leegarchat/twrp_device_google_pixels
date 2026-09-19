@@ -4,7 +4,7 @@
   "is_fold": 1,
   "front_display": {
     "w": 1080,
-    "h": 2364
+    "h": 2424
   },
   "touch_modules": [
     "goodixfp",
@@ -69,7 +69,7 @@
     "ro.product.model": "Pixel 10 Pro Fold"
   },
   "inner_display": {
-    "w": 2076,
+    "w": 1080,
     "h": 2152
   }
 }
