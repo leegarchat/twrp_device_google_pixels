@@ -366,39 +366,6 @@ lgz_get_host_binary() {
     return 1
 }
 
-lgz_patch_dfe_zip() {
-    # --- DFE.zip: patch NEO.config FSTAB_EXTENSION to match build platform ---
-    # Must run BEFORE cluster packing: the packer ingests the zip as-is.
-    local zipfile="$1"
-    local zip_basename
-    zip_basename="$(basename "$zipfile")"
-    [ "$zip_basename" = "DFENEO.zip" ] || return 0
-
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    if ! unzip -q -o "$zipfile" -d "$tmpdir" 2>/dev/null; then
-        echo "    [LGZ-ZIP]   DFE: WARNING: bad zip, skipping NEO.config patch"
-        rm -rf "$tmpdir"
-        return 0
-    fi
-    local neo_config
-    neo_config=$(find "$tmpdir" -name "NEO.config" -type f | head -1)
-    if [ -n "$neo_config" ]; then
-        if grep -q '^FSTAB_EXTENSION=' "$neo_config"; then
-            sed -i "s/^FSTAB_EXTENSION=.*/FSTAB_EXTENSION=$PLATFORM/" "$neo_config"
-            echo "    [LGZ-ZIP]   DFE: patched NEO.config FSTAB_EXTENSION=$PLATFORM"
-            local new_zip="${zipfile}.dfe_new"
-            ( cd "$tmpdir" && zip -0 -r -q "$new_zip" . 2>/dev/null ) \
-                && mv -f "$new_zip" "$zipfile"
-        else
-            echo "    [LGZ-ZIP]   DFE: WARNING: FSTAB_EXTENSION not found in NEO.config"
-        fi
-    else
-        echo "    [LGZ-ZIP]   DFE: WARNING: NEO.config not found inside DFE.zip"
-    fi
-    rm -rf "$tmpdir"
-}
-
 # Worker threads for the packer. nproc is BANNED in make recipe shells
 # (Android PATH_Tools: non-hermetic), so fall back down the chain.
 # NOTE: level 0 packs serially by design; threads matter for level 1+.
@@ -545,7 +512,6 @@ lgz_compress_ramdisk() {
 
         case "$filepath" in
             *.zip)
-                lgz_patch_dfe_zip "$filepath"
                 local zip_size
                 zip_size=$(stat -c%s "$filepath" 2>/dev/null || echo 0)
                 echo "    [LGZ-ZIP] Ingest: $relpath ($zip_size bytes)"

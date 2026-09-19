@@ -68,7 +68,7 @@ Paths are relative to `device/google/pixels/`.
 | `system/bin/runatboot.sh` | Empty OFox hook (called by `twrp.cpp`; extension point for addons) |
 | `system/bin/reflash_twrp.sh` | Reflash recovery from inside recovery |
 | `system/bin/{siw,iw}` | Partition reading without mounting + DM mapping, LP utilities |
-| `system/bin/*.zip` | Payloads: Magisk, DFE-NEO, FIXBACKUPKSU, EXPANDPARTITIONS |
+| `system/bin/*.zip` | Payloads: Magisk, FIXBACKUPKSU, EXPANDPARTITIONS |
 | `system/bin/nboot.lz4` | Compressed boot component (in LGZ exclusions) |
 | `system/etc/{fox_kdf.conf,task_profiles.json}` | KDF pipelines, task profiles |
 | `system/etc/vintf/` + `vendor/etc/vintf/` | VINTF matrices and manifests in the image |

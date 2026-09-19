@@ -1,95 +1,6 @@
 --- a/bootable/recovery/gui/theme/portrait_hdpi/pages/advanced.xml
 +++ b/bootable/recovery/gui/theme/portrait_hdpi/pages/advanced.xml
-@@ -94,6 +94,88 @@
- 					<icon res="addons"/>
- 					<action function="page">fox_modules</action>
- 				</listitem>
-+
-+				<!-- LeeGar dfe -->
-+				<listitem name="Flash DFE-neo">
-+					<icon res="archive"/>
-+					<action function="set">fox_m_author=LeeGarChat</action>
-+					<action function="set">fox_m_name=Flash DFE-Neo</action>
-+					<action function="set">tw_file=DFENEO.zip</action>
-+					<action function="set">tw_filename=/system/bin/DFENEO.zip</action>
-+					<action function="set">tw_filecheck=%tw_filename%</action>
-+					<action function="set">tw_zip_location=/system/bin/</action>
-+					<action function="set">fox_install_built_in_zip=1</action>
-+					<action function="queuezip"/>
-+					<action function="set">tw_notexistpage=fox_modules_confirm</action>
-+					<action function="set">tw_existpage=fox_modules_confirm</action>
-+					<action function="page">filecheck</action>
-+				</listitem>
-+
-+				<listitem name="Enable dfe-neo healing check">
-+					<icon res="archive"/>
-+					<condition var1="fileexists" op="!=" var2="/FFiles/check_dfe_and_reflash"/>
-+					<condition var1="fileexists" op="!=" var2="/sdcard/Fox/check_dfe_and_reflash"/>
-+					<action function="set">fox_m_author=LeeGarChat</action>
-+					<action function="set">fox_m_name=Enable dfe-neo healing check</action>
-+					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_on.zip</action>
-+					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_on.zip</action>
-+					<action function="set">tw_filecheck=%tw_filename%</action>
-+					<action function="set">tw_zip_location=/system/bin/</action>
-+					<action function="set">fox_install_built_in_zip=1</action>
-+					<action function="queuezip"/>
-+					<action function="set">tw_notexistpage=fox_modules_confirm</action>
-+					<action function="set">tw_existpage=fox_modules_confirm</action>
-+					<action function="page">filecheck</action>
-+				</listitem>
-+				<listitem name="Disable dfe-neo healing check">
-+					<icon res="archive"/>
-+					<condition var1="fileexists" op="!=" var2="/FFiles/check_dfe_and_reflash"/>
-+					<condition var1="fileexists" var2="/sdcard/Fox/check_dfe_and_reflash"/>
-+					<action function="set">fox_m_author=LeeGarChat</action>
-+					<action function="set">fox_m_name=Disable dfe-neo healing check</action>
-+					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_off.zip</action>
-+					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_off.zip</action>
-+					<action function="set">tw_filecheck=%tw_filename%</action>
-+					<action function="set">tw_zip_location=/system/bin/</action>
-+					<action function="set">fox_install_built_in_zip=1</action>
-+					<action function="queuezip"/>
-+					<action function="set">tw_notexistpage=fox_modules_confirm</action>
-+					<action function="set">tw_existpage=fox_modules_confirm</action>
-+					<action function="page">filecheck</action>
-+				</listitem>
-+				<listitem name="Disable dfe-neo healing check">
-+					<icon res="archive"/>
-+					<condition var1="fileexists" var2="/FFiles/check_dfe_and_reflash"/>
-+					<condition var1="fileexists" var2="/sdcard/Fox/check_dfe_and_reflash"/>
-+					<action function="set">fox_m_author=LeeGarChat</action>
-+					<action function="set">fox_m_name=Disable dfe-neo healing check</action>
-+					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_off.zip</action>
-+					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_off.zip</action>
-+					<action function="set">tw_filecheck=%tw_filename%</action>
-+					<action function="set">tw_zip_location=/system/bin/</action>
-+					<action function="set">fox_install_built_in_zip=1</action>
-+					<action function="queuezip"/>
-+					<action function="set">tw_notexistpage=fox_modules_confirm</action>
-+					<action function="set">tw_existpage=fox_modules_confirm</action>
-+					<action function="page">filecheck</action>
-+				</listitem>
-+				<listitem name="Disable dfe-neo healing check">
-+					<icon res="archive"/>
-+					<condition var1="fileexists" var2="/FFiles/check_dfe_and_reflash"/>
-+					<condition var1="fileexists" op="!=" var2="/sdcard/Fox/check_dfe_and_reflash"/>
-+					<action function="set">fox_m_author=LeeGarChat</action>
-+					<action function="set">fox_m_name=Disable dfe-neo healing check</action>
-+					<action function="set">tw_file=LeeGar_dfe_neo_healing_turn_off.zip</action>
-+					<action function="set">tw_filename=/system/bin/LeeGar_dfe_neo_healing_turn_off.zip</action>
-+					<action function="set">tw_filecheck=%tw_filename%</action>
-+					<action function="set">tw_zip_location=/system/bin/</action>
-+					<action function="set">fox_install_built_in_zip=1</action>
-+					<action function="queuezip"/>
-+					<action function="set">tw_notexistpage=fox_modules_confirm</action>
-+					<action function="set">tw_existpage=fox_modules_confirm</action>
-+					<action function="page">filecheck</action>
-+				</listitem>
-+				<!-- LeeGar dfe -->
- 				<listitem name="{@appmgr_title}">
- 					<condition var1="enable_app_manager" var2="1"/>
- 					<icon res="apps_box"/>
-@@ -294,7 +376,7 @@
+@@ -294,7 +294,7 @@
  			<action>
  				<action function="queueclear"/>
  				<action function="set">fox_m_author=topjohnwu</action>
@@ -98,7 +9,7 @@
  				<action function="set">tw_file=%fox_magisk_zip_installer%</action>
  				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_zip_installer%</action>
  				<action function="set">tw_filecheck=%tw_filename%</action>
-@@ -311,7 +393,7 @@
+@@ -311,7 +311,7 @@
  			<action>
  				<action function="queueclear"/>
  				<action function="set">fox_m_author=topjohnwu</action>
@@ -107,7 +18,7 @@
  				<action function="set">tw_file=%fox_magisk_uninstaller%</action>
  				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_uninstaller%</action>
  				<action function="set">tw_filecheck=%tw_filename%</action>
-@@ -424,7 +506,7 @@
+@@ -424,7 +424,7 @@
  
  			<listbox style="group_list">
  				<placement x="0" y="%row1_2_y%" w="%screen_w%" h="%bl_h2%"/>
@@ -116,7 +27,7 @@
  					<icon res="archive"/>
  					<action function="page">mod_magisk</action>
  				</listitem>
-@@ -665,6 +747,36 @@
+@@ -665,6 +665,36 @@
  					<icon res="terminal"/>
  					<action function="page">terminal</action>
  				</listitem>

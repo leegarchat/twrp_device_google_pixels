@@ -90,32 +90,15 @@ else
     _log "WARNING: kernel_bootcfg fallback to nboot default"
 fi
 
-if ! [ -f /FFiles/check_dfe_and_reflash ] && ! [ -f /sdcard/Fox/check_dfe_and_reflash ]; then
-    for f in "$SNAP/first_stage_ramdisk/system/etc"/fstab*; do
-        [ -f "$f" ] || continue
-        if grep -q "/vendor/etc/init/hw" "$f"; then
-            echo "- Patching fstab: $(basename "$f")"
-            sed -i '/\/vendor\/etc\/init\/hw/d' "$f" || _die "fstab patch failed: $f"
-        fi
-    done
-fi
-
-if [ -f /sdcard/Fox/check_dfe_and_reflash ]; then
-    mkdir -p "$SNAP/FFiles"
-    touch "$SNAP/FFiles/check_dfe_and_reflash"
-    grep -q "FFiles/check_dfe_and_reflash" "$RECOVERY_LIST" 2>/dev/null \
-        || echo "FFiles/check_dfe_and_reflash" >> "$RECOVERY_LIST"
-fi
-
-if [ -f /FFiles/check_dfe_and_reflash ]; then
-    mkdir -p "$SNAP/FFiles"
-    cp /FFiles/check_dfe_and_reflash "$SNAP/FFiles/" \
-        || _die "Cannot copy check_dfe_and_reflash to snapshot"
-    grep -q "FFiles/check_dfe_and_reflash" "$RECOVERY_LIST" 2>/dev/null \
-        || echo "FFiles/check_dfe_and_reflash" >> "$RECOVERY_LIST"
-else
-    sed -i '/FFiles\/check_dfe_and_reflash/d' "$RECOVERY_LIST" 2>/dev/null
-fi
+# DFE is gone (decrypt works natively): the hw-init fstab lines are always
+# stripped for the reflashed image, no marker files involved.
+for f in "$SNAP/first_stage_ramdisk/system/etc"/fstab*; do
+    [ -f "$f" ] || continue
+    if grep -q "/vendor/etc/init/hw" "$f"; then
+        echo "- Patching fstab: $(basename "$f")"
+        sed -i '/\/vendor\/etc\/init\/hw/d' "$f" || _die "fstab patch failed: $f"
+    fi
+done
 
 umount -fl /vendor 2>/dev/null
 umount -fl /system_root 2>/dev/null

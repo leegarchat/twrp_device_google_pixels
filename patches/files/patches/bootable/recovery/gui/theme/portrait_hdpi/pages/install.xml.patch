@@ -1,32 +1,6 @@
 --- a/bootable/recovery/gui/theme/portrait_hdpi/pages/install.xml
 +++ b/bootable/recovery/gui/theme/portrait_hdpi/pages/install.xml
-@@ -77,13 +77,33 @@
- 					<data variable="tw_inject_after_zip"/>
- 				</listitem>
- 			</listbox>
-+			<!-- leegar - dfe -->
-+			<!-- <button style="btn_raised">
-+				<condition var1="fileexists" var2="/system/bin/DFENEO.zip"/>
-+				<placement x="%btn_raised_right_x%" y="%row_btn3_y%" placement="1"/>
-+				<text>DFE Healing Enabled (button inactive)</text>
-+			</button> -->
-+			<button style="btn_raised">
-+				<condition var1="fileexists" var2="/system/bin/DFENEO.zip"/>
-+				<condition var1="leegar_DFE_in_queue" op="!=" var2="1"/>
-+				<placement x="%btn_raised_right_x%" y="%row_btn3_y%" placement="1"/>
-+				<text>Add DFE-Neo</text>
-+				<action function="set">leegar_DFE_in_queue=1</action>
-+				<action function="set">tw_file=DFENEO.zip</action>
-+				<action function="set">tw_filename=/system/bin/DFENEO.zip</action>
-+				<action function="set">tw_zip_location=/system/bin/</action>
-+				<action function="queuezip"/>
-+				<action function="page">flash_confirm</action>
-+			</button>
-+			<!-- leegar - dfe -->
-+
- 
- 			<button style="btn_raised">
- 				<condition var1="fileexists" var2="%fox_magisk_path%/%fox_magisk_zip_installer%"/>
+@@ -83,7 +83,7 @@
  				<condition var1="of_magisk_in_queue" var2="0"/>
  				<condition var1="tw_zip_queue_count" var2="1"/>
  				<placement x="%btn_raised_left_x%" y="%row_btn2_y%"/>
@@ -35,7 +9,7 @@
  				<action function="set">tw_file=%fox_magisk_zip_installer%</action>
  				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_zip_installer%</action>
  				<action function="set">tw_zip_location=%fox_magisk_path%</action>
-@@ -96,7 +116,7 @@
+@@ -96,7 +96,7 @@
  				<condition var1="of_magisk_in_queue" var2="0"/>
  				<condition var1="tw_zip_queue_count" op="&gt;=" var2="2"/>
  				<placement x="%btn_raised_left_x%" y="%row_btn3_y%"/>
@@ -44,57 +18,3 @@
  				<action function="set">tw_file=%fox_magisk_zip_installer%</action>
  				<action function="set">tw_filename=%fox_magisk_path%/%fox_magisk_zip_installer%</action>
  				<action function="set">tw_zip_location=%fox_magisk_path%</action>
-@@ -126,6 +146,7 @@
- 				<placement x="%btn_raised_right_x%" y="%row_btn2_y%" placement="1"/>
- 				<text>{@raised_clearqueue_btn}</text>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">%install_back%</action>
- 			</button>
- 
-@@ -144,12 +165,14 @@
- 			<action>
- 				<touch key="back"/>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">%install_back%</action>
- 			</action>
- 
- 			<action>
- 				<touch key="home"/>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">main</action>
- 			</action>
- 		</page>
-@@ -266,12 +289,14 @@
- 			<action>
- 				<touch key="back"/>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">%install_back%</action>
- 			</action>
- 
- 			<action>
- 				<touch key="home"/>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">main</action>
- 			</action>
- 		</page>
-@@ -426,6 +451,7 @@
- 				<placement x="%btn_raised_left_x%" y="%row_btn1_y%"/>
- 				<text>{@raised_clearqueue_btn}</text>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">%install_back%</action>
- 			</button>
- 
-@@ -454,6 +480,7 @@
- 			<action>
- 				<touch key="home"/>
- 				<action function="queueclear"/>
-+				<action function="set">leegar_DFE_in_queue=0</action>
- 				<action function="page">main</action>
- 			</action>
- 		</page>
