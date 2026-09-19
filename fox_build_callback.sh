@@ -743,20 +743,24 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM]   + swap kit manifest: system/etc/aio/families.txt"
         fi
         # --- Per-family recovery.fstab swap kit (AIO only) ---
-        # The live /etc/recovery.fstab is the aio placeholder (zuma); every
-        # family's file ships as /etc/recovery.fstab.<fam> for the installer
-        # to select post-unpack (aio/aio_swap.sh).
+        # Root /etc is a symlink to /system/etc that may not exist yet at
+        # this stage, so stage into system/etc directly. The live file is
+        # system/etc/recovery.fstab (aio placeholder = zuma); every
+        # family's file ships as system/etc/recovery.fstab.<fam> for the
+        # installer to select post-unpack (aio/aio_swap.sh).
         if [ "$platform" = "aio" ]; then
+            mkdir -p "$TARGET_DIR/system/etc"
             for _fam_dir in "$SCRIPT_DIR"/families/*/; do
                 _fam=$(basename "$_fam_dir")
                 case "$_fam" in common|aio) continue ;; esac
                 if [ -f "$_fam_dir/recovery.fstab" ]; then
-                    cp -f "$_fam_dir/recovery.fstab" "$TARGET_DIR/etc/recovery.fstab.$_fam"
-                    echo "    [PLATFORM]   + swap kit: recovery.fstab.$_fam"
+                    cp -f "$_fam_dir/recovery.fstab" "$TARGET_DIR/system/etc/recovery.fstab.$_fam" \
+                        && echo "    [PLATFORM]   + swap kit: recovery.fstab.$_fam" \
+                        || return 1
                 fi
             done
         fi
-        # --- bootsmasher installer binary (reflash engine) ---
+        # --- Per-family keymint binary injection ---
         # Prebuilt static arm64 (small build: vboot + install only), same
         # binary the desktop/on-device installer uses. reflash_twrp.sh
         # calls it as /system/bin/bootsmasher-install for the per-slot
@@ -775,7 +779,22 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM] ERROR: bootsmasher prebuilt missing: include/bootsmasher-install-arm64"
             return 1
         fi
-        # --- Per-family keymint binary injection ---
+        # --- Per-family recovery.wipe swap kit (AIO only) ---
+        # Same layout as the fstab kit: the live system/etc/recovery.wipe
+        # is the aio placeholder, every family's file ships as
+        # system/etc/recovery.wipe.<fam> for the installer (aio_swap.sh).
+        if [ "$platform" = "aio" ]; then
+            mkdir -p "$TARGET_DIR/system/etc"
+            for _fam_dir in "$SCRIPT_DIR"/families/*/; do
+                _fam=$(basename "$_fam_dir")
+                case "$_fam" in common|aio) continue ;; esac
+                if [ -f "$_fam_dir/recovery.wipe" ]; then
+                    cp -f "$_fam_dir/recovery.wipe" "$TARGET_DIR/system/etc/recovery.wipe.$_fam" \
+                        && echo "    [PLATFORM]   + swap kit: recovery.wipe.$_fam" \
+                        || return 1
+                fi
+            done
+        fi
         # Both HALs are built from source and selected by families/<fam>/
         # family.json `keymint` (KEYMINT here): rust (system/core/trusty/keymint)
         # or cpp (system/core/trusty/keymaster). Soong places the vendor output

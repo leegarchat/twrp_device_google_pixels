@@ -1,0 +1,4 @@
+# recovery.wipe — zuma family (AIO swap-kit; keep in sync with common unless the family needs extra targets).
+# Wiped on factory reset by recovery.
+/dev/block/by-name/userdata
+/dev/block/by-name/metadata

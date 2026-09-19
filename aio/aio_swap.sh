@@ -54,11 +54,12 @@ USBCTRL="$(echo "$rec" | sed -n 's/.*:usbctrl=\(.*\)/\1/p')"
 echo "[aio-swap] family=$FAM keymint=$KM usbctrl=${USBCTRL:-<default 11210000.dwc3>}"
 
 # --- recovery.fstab (live file TWRP parses at boot) ---
-if [[ -f "$ROOT/etc/recovery.fstab.$FAM" ]]; then
-    cp -f "$ROOT/etc/recovery.fstab.$FAM" "$ROOT/etc/recovery.fstab"
+# Canonical location is system/etc (root /etc is a symlink to it).
+if [[ -f "$ROOT/system/etc/recovery.fstab.$FAM" ]]; then
+    cp -f "$ROOT/system/etc/recovery.fstab.$FAM" "$ROOT/system/etc/recovery.fstab"
     echo "[aio-swap]   recovery.fstab <- $FAM"
 else
-    echo "[aio-swap]   WARNING: no etc/recovery.fstab.$FAM, keeping placeholder" >&2
+    echo "[aio-swap]   WARNING: no system/etc/recovery.fstab.$FAM, keeping placeholder" >&2
 fi
 
 # --- twrp.flags (live file) ---
@@ -69,6 +70,13 @@ else
     echo "[aio-swap]   WARNING: no system/etc/twrp.flags.$FAM, keeping placeholder" >&2
 fi
 
+# --- recovery.wipe (factory-reset target list, same layout as fstab) ---
+if [[ -f "$ROOT/system/etc/recovery.wipe.$FAM" ]]; then
+    cp -f "$ROOT/system/etc/recovery.wipe.$FAM" "$ROOT/system/etc/recovery.wipe"
+    echo "[aio-swap]   recovery.wipe <- $FAM"
+else
+    echo "[aio-swap]   WARNING: no system/etc/recovery.wipe.$FAM, keeping placeholder" >&2
+fi
 # --- USB controller (rc files stay open in the cpio, sed is safe) ---
 if [[ -n "$USBCTRL" && "$USBCTRL" != "11210000.dwc3" ]]; then
     usb_base="${USBCTRL%.dwc3}"
