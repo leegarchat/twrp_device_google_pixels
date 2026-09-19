@@ -57,6 +57,46 @@ fastboot reboot recovery
 (`:default` или `:recovery` здесь НЕПРАВИЛЬНО — первое схлопывает всю
 таблицу и убивает стоковый dlkm, второе пишет не в тот фрагмент.)
 
+### Новое: AIO-пакет установки (рекомендуется для `-aio` сборок)
+
+Для AIO-тестов мейнтейнер отдаёт инсталлер-пакет вместо сырого `.img`:
+пейлоад recovery (`OrangeFox-*-aio.ramdisk.lz4`), `export.txt`, бинарники
+инсталлера и platform-tools в комплекте. Это умная замена — стоковый
+`vendor_boot` забирается с девайса, подменяется только recovery-фрагмент,
+оба слота пересобираются + побайтово проверяются, а датированный бэкап
+сохраняется (`backup/` на ПК, `/sdcard/backup_vendor_boot/` на девайсе).
+First_stage, cmdline ядра и dlkm всегда остаются стоковыми.
+
+Выбери один вариант (установка везде одинаковая):
+
+1. **ПК / Linux** — загрузи телефон в бутлоадер (классический fastboot,
+   НЕ fastbootd), затем:
+   ```
+   ./install-desktop.sh
+   ```
+   (или двойной клик по `install-desktop.AppImage`). Меню на стрелках,
+   бэкап в `backup/<дата-время>/`, в конце предложение ребутнуться в
+   recovery.
+2. **ПК / Windows** — то же самое, из бутлоадера:
+   ```
+   install-desktop.bat
+   ```
+3. **Magisk / KernelSU (из загруженной системы)** — прошей
+   `*OrangeFoxTensorUniversal.zip` в приложении Magisk или KernelSU как
+   модуль. Поставится с рутом, бэкап останется на userdata, затем модуль
+   сам себя удалит (только установщик, ничего постоянно не ставится).
+4. **Из recovery** — прошей тот же zip через Install в любом recovery
+   (TWRP/OrangeFox). Прогресс виден на консоли recovery.
+
+Настройки — в `export.txt` рядом с инсталлером:
+`SLOT=both|a|b|current`, `MIN_FREE_MB=7` (строго — вместо прошивки в
+переполненный раздел установка прервётся). Логи:
+`backup/<дата-время>/install.log` (ПК) или
+`/tmp/recovery_install/install.log` (на девайсе).
+
+Ручную прошивку `fastboot flash vendor_boot_X` ниже используй только
+когда мейнтейнер прямо сказал.
+
 Сначала бэкап (бутлоадер, рут не нужен) — оба слота:
 ```
 fastboot fetch vendor_boot_a ./vendor_boot_a.stock.img
@@ -317,6 +357,8 @@ fastboot getvar current-slot
 fastboot --set-active=a|b
 fastboot flash vendor_boot_a|b <файл>
 fastboot flash vendor_boot_a: <ramdisk.lz4>   # только Pixel 6 series (двоеточие!)
+./install-desktop.sh                              # AIO-инсталлер, Linux (из бутлоадера)
+install-desktop.bat                               # AIO-инсталлер, Windows (из бутлоадера)
 fastboot fetch vendor_boot_a|b ./backup.img   # бэкап без рута
 fastboot reboot recovery
 fastboot reboot

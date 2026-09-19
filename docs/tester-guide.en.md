@@ -57,6 +57,45 @@ fastboot reboot recovery
 whole table and kills stock dlkm, the second overwrites the wrong
 fragment.)
 
+### New: AIO installer package (recommended for `-aio` builds)
+
+For AIO test builds the maintainer ships an installer package instead
+of a raw `.img`: the recovery payload (`OrangeFox-*-aio.ramdisk.lz4`),
+`export.txt`, installer binaries and bundled platform-tools. It does a
+smart replace — your stock `vendor_boot` is fetched, only the recovery
+fragment is swapped in, both slots are rebuilt + byte-verified, and a
+dated backup is kept (`backup/` on PC, `/sdcard/backup_vendor_boot/`
+on-device). First_stage, kernel cmdline and dlkm always stay stock.
+
+Pick one variant (all perform the same install):
+
+1. **PC / Linux** — boot the phone into the bootloader (classic
+   fastboot, NOT fastbootd), then run:
+   ```
+   ./install-desktop.sh
+   ```
+   (or double-click `install-desktop.AppImage`). Arrow-key menus,
+   backup to `backup/<date-time>/`, reboot-to-recovery offer at the end.
+2. **PC / Windows** — same, from the bootloader:
+   ```
+   install-desktop.bat
+   ```
+3. **Magisk / KernelSU (from booted system)** — flash the
+   `*OrangeFoxTensorUniversal.zip` in the Magisk or KernelSU manager
+   app like a module. It installs as root, keeps a backup on userdata,
+   then removes itself (installer only, nothing stays installed).
+4. **From recovery** — flash the same zip via Install in any recovery
+   (TWRP/OrangeFox). Progress shows on the recovery console.
+
+Config lives in `export.txt` next to the installer:
+`SLOT=both|a|b|current`, `MIN_FREE_MB=7` (strict — the install aborts
+instead of flashing an over-full partition). Logs:
+`backup/<date-time>/install.log` (PC) or
+`/tmp/recovery_install/install.log` (on-device).
+
+Use the manual `fastboot flash vendor_boot_X` flow below only when the
+maintainer explicitly says so.
+
 Backup first (bootloader, no root needed) — both slots:
 ```
 fastboot fetch vendor_boot_a ./vendor_boot_a.stock.img
@@ -316,6 +355,8 @@ fastboot getvar current-slot
 fastboot --set-active=a|b
 fastboot flash vendor_boot_a|b <file>
 fastboot flash vendor_boot_a: <ramdisk.lz4>   # Pixel 6 series only (note the colon)
+./install-desktop.sh                              # AIO installer, Linux (from bootloader)
+install-desktop.bat                               # AIO installer, Windows (from bootloader)
 fastboot fetch vendor_boot_a|b ./backup.img   # backup without root
 fastboot reboot recovery
 fastboot reboot
