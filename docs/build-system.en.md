@@ -30,6 +30,8 @@ If you are an AI model working with this tree, follow these rules:
 | `-n TAG` | Tag in the image name |
 | `--list` | Show the family/device/kernel tree and exit (builds nothing; `[override]` — device-level `kernels`) |
 | `--build-type TYPE` | Build type, default `Stable` (details below) |
+| `-N, --no-first-stage` | Skip first-stage (vendor_ramdisk) components: no `fstab.*`, no linker/e2fs tools. The recovery ramdisk is unaffected. Reaches `device.mk` as `FOX_NO_FIRST_STAGE=1` |
+| `-c, --cpio-only` | Deliver only the ramdisk `cpio.lz4` (`lz4_legacy`), no `.img/.zip`: gs101 → platform fragment (flash with `fastboot flash vendor_boot:`), other families → recovery fragment (`fastboot flash vendor_boot:recovery`) |
 
 Do not use obsolete `-l` (LGZ level) mentions from the script header —
 this is the current flag set.

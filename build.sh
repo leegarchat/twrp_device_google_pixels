@@ -5,6 +5,7 @@
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
 #              [-k|--kernel VER] [--force] [--list] [--build-type TYPE]
+#              [-N|--no-first-stage] [-c|--cpio-only]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -38,6 +39,16 @@
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
+#   -N, --no-first-stage
+#                     Skip first-stage (vendor_ramdisk) components: no
+#                     fstab.*.vendor_ramdisk, no linker/e2fs vendor_ramdisk
+#                     tools (see device.mk). Recovery ramdisk is unaffected.
+#                     Exported as FOX_NO_FIRST_STAGE=1 for device.mk.
+#   -c, --cpio-only   Deliver only the ramdisk cpio.lz4 (lz4_legacy):
+#                     gs101 → platform fragment (`fastboot flash vendor_boot:`),
+#                     other families → recovery fragment
+#                     (`fastboot flash vendor_boot:recovery`). The .img/.zip
+#                     are NOT copied to builds/ in this mode.
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -141,6 +152,8 @@ LGZ_LEVEL="0"
 KERNEL_VER=""
 FOX_FORCE=false
 FOX_BUILD_TYPE="Stable"
+FOX_NO_FIRST_STAGE=""
+CPIO_ONLY=false
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -223,6 +236,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_FORCE=true
             shift
             ;;
+        -N|--no-first-stage)
+            FOX_NO_FIRST_STAGE=1
+            shift
+            ;;
         --build-type)
             shift
             FOX_BUILD_TYPE="${1:-}"
@@ -230,6 +247,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
                 echo "ERROR: --build-type requires a value (e.g., Stable, Beta)"
                 fox_safe_exit 1
             fi
+            shift
+            ;;
+        -c|--cpio-only)
+            CPIO_ONLY=true
             shift
             ;;
         --list)
@@ -242,7 +263,7 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             ;;
         -h|--help)
-            sed -n '2,42p' "${BASH_SOURCE[0]}"
+            sed -n '2,53p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
             ;;
         *)
@@ -261,6 +282,15 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
 fi
 export LGZ_LEVEL
 export FOX_BUILD_TYPE
+# First-stage kill-switch for device.mk (make imports env): set only when
+# -N/--no-first-stage was passed, so normal builds see an empty var.
+if [[ -n "$FOX_NO_FIRST_STAGE" ]]; then
+    export FOX_NO_FIRST_STAGE
+    echo "[build] First-stage components DISABLED (FOX_NO_FIRST_STAGE=1)"
+fi
+if [[ "$CPIO_ONLY" == true ]]; then
+    echo "[build] cpio-only delivery: .img/.zip will NOT be copied, only ramdisk cpio.lz4"
+fi
 
 # --- Kernel profile resolution (families/*/family.json `kernels`) ---
 # Engages only with a known family context (-f). Without -f the legacy
@@ -409,6 +439,8 @@ if [[ ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
 fi
 echo "  Name:          ${BUILD_NAME:-<auto>}"
 echo "  Patch Version: ${FOX_MAINTAINER_PATCH_VERSION:-<not set>}"
+echo "  First-stage:   ${FOX_NO_FIRST_STAGE:+skipped (no-first-stage)}${FOX_NO_FIRST_STAGE:-included}"
+echo "  Artifacts:     $([[ "$CPIO_ONLY" == true ]] && echo "cpio.lz4 only" || echo ".img/.zip")"
 echo "  Clean:         $CLEAN"
 echo "  Jobs:          $JOBS"
 echo "=============================================="
@@ -737,45 +769,71 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         ZIP_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.zip"
     fi
 
-    # Copy files
-    if [[ -n "$LATEST_IMG" ]]; then
-        cp "$LATEST_IMG" "$IMG_DEST"
-        echo "[build] Copied: $IMG_DEST"
-    fi
-    if [[ -n "$LATEST_ZIP" ]]; then
-        cp "$LATEST_ZIP" "$ZIP_DEST"
-        echo "[build] Copied: $ZIP_DEST"
+    # --- Artifact delivery: full image vs cpio-only ---
+    # --cpio-only: .img/.zip are NOT copied to builds/; only the ramdisk
+    # cpio.lz4 (extracted below) is delivered for fragment flashing.
+    if [[ "$CPIO_ONLY" == true ]]; then
+        echo "[build] --cpio-only: skipping .img/.zip copy"
+    else
+        # Copy files
+        if [[ -n "$LATEST_IMG" ]]; then
+            cp "$LATEST_IMG" "$IMG_DEST"
+            echo "[build] Copied: $IMG_DEST"
+        fi
+        if [[ -n "$LATEST_ZIP" ]]; then
+            cp "$LATEST_ZIP" "$ZIP_DEST"
+            echo "[build] Copied: $ZIP_DEST"
+        fi
+
+        if [[ -z "$LATEST_IMG" && -z "$LATEST_ZIP" ]]; then
+            echo "[build] WARNING: No OrangeFox artifacts found in $PRODUCT_OUT"
+        fi
     fi
 
-    if [[ -z "$LATEST_IMG" && -z "$LATEST_ZIP" ]]; then
-        echo "[build] WARNING: No OrangeFox artifacts found in $PRODUCT_OUT"
-    fi
-
-    # --- gs101: extract the platform ramdisk for `fastboot flash vendor_boot: <ramdisk>` ---
+    # --- Ramdisk cpio extract (gs101 always; other families on --cpio-only) ---
     # Tensor G1 has no vendor_kernel_boot partition; the device keeps its own
     # dtb + dlkm + bootloader, we replace only the platform fragment (empty
-    # name in the table). Host fastboot fetches the on-device vendor_boot,
-    # swaps that one entry and flashes back — so testers need just our
-    # ramdisk in stock lz4_legacy format, not the whole image.
-    if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" && -n "$LATEST_IMG" ]]; then
+    # name in the table). Other families replace only the recovery fragment.
+    # Host fastboot fetches the on-device vendor_boot, swaps that one entry
+    # and flashes back — so testers need just the ramdisk in stock
+    # lz4_legacy format, not the whole image.
+    #   gs101 → vendor_ramdisk/ramdisk.cpio,  flash: fastboot flash vendor_boot:
+    #   other → vendor_ramdisk/recovery.cpio, flash: fastboot flash vendor_boot:recovery
+    if [[ -n "$LATEST_IMG" ]] && [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || "$CPIO_ONLY" == true ]]; then
+        if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
+            FRAG_SRC="vendor_ramdisk/ramdisk.cpio"
+            FRAG_FLASH="fastboot flash vendor_boot:"
+        else
+            FRAG_SRC="vendor_ramdisk/recovery.cpio"
+            FRAG_FLASH="fastboot flash vendor_boot:recovery"
+        fi
+        FRAG_ALT="vendor_ramdisk_recovery.cpio"
         GS101_WORK="$SOURCE_ROOT/$PRODUCT_OUT/gs101_ramdisk"
         rm -rf "$GS101_WORK" && mkdir -p "$GS101_WORK"
         MAGISKBOOT_BIN="$SOURCE_ROOT/vendor/recovery/tools/magiskboot"
         if [[ ! -x "$MAGISKBOOT_BIN" ]]; then
-            echo "[build] WARNING: magiskboot missing, skipping gs101 ramdisk extract"
+            echo "[build] WARNING: magiskboot missing, skipping ramdisk extract"
         else
             "$MAGISKBOOT_BIN" unpack -h "$LATEST_IMG" | grep -E "VND_RAMDISK|DTB_SZ" || true
             (cd "$GS101_WORK" && "$MAGISKBOOT_BIN" unpack "$LATEST_IMG" >/dev/null 2>&1)
-            if [[ -f "$GS101_WORK/vendor_ramdisk/ramdisk.cpio" ]]; then
+            # magiskboot versions disagree on the recovery fragment path.
+            if [[ ! -f "$GS101_WORK/$FRAG_SRC" && -f "$GS101_WORK/$FRAG_ALT" ]]; then
+                FRAG_SRC="$FRAG_ALT"
+            fi
+            if [[ -f "$GS101_WORK/$FRAG_SRC" ]]; then
                 # magiskboot unpacks fragments decompressed; recompress to the
                 # stock lz4_legacy format for the fragment flash path.
-                lz4 -l -9 -f "$GS101_WORK/vendor_ramdisk/ramdisk.cpio" "$GS101_WORK/vendor_ramdisk.cpio.lz4"
+                lz4 -l -9 -f "$GS101_WORK/$FRAG_SRC" "$GS101_WORK/vendor_ramdisk.cpio.lz4"
                 RAMDISK_DEST="${IMG_DEST%.img}.ramdisk.lz4"
                 cp "$GS101_WORK/vendor_ramdisk.cpio.lz4" "$RAMDISK_DEST"
-                echo "[build] gs101 ramdisk: $RAMDISK_DEST (flash: fastboot flash vendor_boot: $RAMDISK_DEST)"
-                md5sum "$RAMDISK_DEST" "$IMG_DEST"
+                echo "[build] ramdisk cpio: $RAMDISK_DEST (flash: $FRAG_FLASH $RAMDISK_DEST)"
+                if [[ "$CPIO_ONLY" == true ]]; then
+                    md5sum "$RAMDISK_DEST"
+                else
+                    md5sum "$RAMDISK_DEST" "$IMG_DEST"
+                fi
             else
-                echo "[build] WARNING: no platform ramdisk in $LATEST_IMG, skipping gs101 extract"
+                echo "[build] WARNING: no $FRAG_SRC in $LATEST_IMG, skipping ramdisk extract"
             fi
         fi
         rm -rf "$GS101_WORK"

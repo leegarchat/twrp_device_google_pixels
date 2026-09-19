@@ -134,12 +134,16 @@ endif
 
 # Firstage ramdisk packages — static plain fstabs, no templates, no codegen.
 # Every family owns its fstab/ as prebuilt_etc (ext4+erofs twins, no AVB).
+# Skipped entirely with build.sh -N/--no-first-stage (FOX_NO_FIRST_STAGE=1
+# in env, imported by make): no fstab, no linker/e2fs vendor_ramdisk tools.
+# Recovery ramdisk (TARGET_RECOVERY_FSTAB, recovery/root) is unaffected.
 # families/zuma/fstab/    → fstab.zuma*                             (Tensor G3, UFS 13200000)
 # families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
 # families/gs201/fstab/   → fstab.gs201*                            (Tensor G2, UFS 14700000)
 # families/gs101/fstab/   → fstab.gs101*                            (Tensor G1, UFS 14700000 — stock-based, no /system_dlkm, USB 11110000)
 # families/malibu/fstab/  → fstab.malibu*                           (Tensor G6, UFS 3c2d0000)
 # families/laguna/fstab/  → fstab.laguna*                           (Tensor G5, UFS 3c400000)
+ifneq ($(FOX_NO_FIRST_STAGE),1)
 ifeq ($(DEVICE_BUILD_FLAG),zumapro)
 PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
@@ -173,3 +177,4 @@ PRODUCT_PACKAGES += \
     fsck.vendor_ramdisk \
     tune2fs.vendor_ramdisk \
     e2fsck.vendor_ramdisk
+endif # FOX_NO_FIRST_STAGE != 1

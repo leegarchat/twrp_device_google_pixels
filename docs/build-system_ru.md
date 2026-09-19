@@ -31,6 +31,8 @@
 | `-n TAG` | Тег в имя образа |
 | `--list` | Показать дерево семейств/девайсов/ядер и выйти (ничего не собирает; `[override]` — девайсный `kernels`) |
 | `--build-type TYPE` | Тип сборки, дефолт `Stable` (подробности ниже) |
+| `-N, --no-first-stage` | Не собирать first-stage (vendor_ramdisk): ни `fstab.*`, ни linker/e2fs-утилит. Рекавери-рамдиск не задет. Едет в `device.mk` как `FOX_NO_FIRST_STAGE=1` |
+| `-c, --cpio-only` | На выход — только рамдиск `cpio.lz4` (`lz4_legacy`), без `.img/.zip`: gs101 → platform-фрагмент (шьётся `fastboot flash vendor_boot:`), остальные семьи → recovery-фрагмент (`fastboot flash vendor_boot:recovery`) |
 
 Устаревших упоминаний `-l` (уровень LGZ) в шапке скрипта не использовать —
 актуальный набор флагов этот.
