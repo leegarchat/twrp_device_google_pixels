@@ -756,6 +756,25 @@ case "$CALL_TYPE" in
                 fi
             done
         fi
+        # --- bootsmasher installer binary (reflash engine) ---
+        # Prebuilt static arm64 (small build: vboot + install only), same
+        # binary the desktop/on-device installer uses. reflash_twrp.sh
+        # calls it as /system/bin/bootsmasher-install for the per-slot
+        # smart replace (`install --file`). Ships for every family
+        # (not just aio): the AIO reflash flow is family-agnostic.
+        # Like other system/bin files it rides the LGZ cluster; the
+        # reflashed image keeps working because the payload carries
+        # lgz_cluster.lgz (see reflash_twrp.sh).
+        if [ -f "$SCRIPT_DIR/include/bootsmasher-install-arm64" ]; then
+            mkdir -p "$TARGET_DIR/system/bin"
+            cp -f "$SCRIPT_DIR/include/bootsmasher-install-arm64" \
+                "$TARGET_DIR/system/bin/bootsmasher-install"
+            chmod 755 "$TARGET_DIR/system/bin/bootsmasher-install"
+            echo "    [PLATFORM]   + bootsmasher-install (reflash engine)"
+        else
+            echo "    [PLATFORM] ERROR: bootsmasher prebuilt missing: include/bootsmasher-install-arm64"
+            return 1
+        fi
         # --- Per-family keymint binary injection ---
         # Both HALs are built from source and selected by families/<fam>/
         # family.json `keymint` (KEYMINT here): rust (system/core/trusty/keymint)
