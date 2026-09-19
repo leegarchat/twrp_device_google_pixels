@@ -128,10 +128,14 @@ adb pull /tmp/recovery.log
 adb pull /tmp/weaver.log
 ```
 
-И слепок ядра/драйверов:
+И полные логи ядра + системы. Для любого хардверного разбора (тач,
+экран, USB, расшифровка, сенсоры) это самые важные файлы после самого
+`recovery.log` — всегда целиком, никаких выдержек:
 
 ```
-adb shell 'dmesg | grep -i -E "touch|keymint|trusty|gsc|sg1|error|fail" | head -30'
+adb shell 'dmesg > /tmp/dmesg.log; logcat -d -v time > /tmp/logcat.log'
+adb pull /tmp/dmesg.log
+adb pull /tmp/logcat.log
 ```
 
 ---
@@ -143,7 +147,8 @@ adb shell 'dmesg | grep -i -E "touch|keymint|trusty|gsc|sg1|error|fail" | head -
    `User 0 Decrypted`.
 3. Не работает тач — это **НЕ провал теста**, если не сказано обратное.
    Сообщи и продолжай через `adb`.
-4. Пришли: `recovery.log` (целиком), `weaver.log` и видно ли `/data/media`.
+4. Пришли: `recovery.log` (целиком), `weaver.log`, `dmesg.log`,
+   `logcat.log` и видно ли `/data/media`.
 
 ---
 
@@ -256,7 +261,7 @@ adb на пароле: был / не было (если девайс зашиф�
 расшифровка : ок / провал / не пробовал
 тач         : ок / мёртв / частично
 UI          : полосы (какие стороны) / растянуто / поворот / какой экран (фолд: сложен/раскрыт) + фото
-Приложено   : recovery.log, weaver.log, (ramoops_console.txt, ramoops_dmesg.txt, dmesg_boot.txt при исходе C)
+Приложено   : recovery.log, weaver.log, dmesg.log, logcat.log, (ramoops_console.txt, ramoops_dmesg.txt, dmesg_boot.txt при исходе C)
 Заметки     : <всё необычное: сколько грузилось, тексты ошибок, ...>
 ```
 
@@ -318,5 +323,8 @@ fastboot reboot
 adb devices -l
 adb pull /tmp/recovery.log
 adb pull /tmp/weaver.log
+adb shell 'dmesg > /tmp/dmesg.log; logcat -d -v time > /tmp/logcat.log'
+adb pull /tmp/dmesg.log
+adb pull /tmp/logcat.log
 adb shell 'dmesg | grep -i -E "touch|keymint|trusty|gsc|sg1" | head -30'
 ```

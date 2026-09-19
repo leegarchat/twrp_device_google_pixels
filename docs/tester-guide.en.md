@@ -128,10 +128,14 @@ adb pull /tmp/recovery.log
 adb pull /tmp/weaver.log
 ```
 
-And a kernel/driver snapshot:
+And the full kernel + system logs. For any hardware-level debugging
+(touch, display, USB, decrypt, sensors) these are the most important
+files after `recovery.log` itself — always full files, never excerpts:
 
 ```
-adb shell 'dmesg | grep -i -E "touch|keymint|trusty|gsc|sg1|error|fail" | head -30'
+adb shell 'dmesg > /tmp/dmesg.log; logcat -d -v time > /tmp/logcat.log'
+adb pull /tmp/dmesg.log
+adb pull /tmp/logcat.log
 ```
 
 ---
@@ -143,8 +147,8 @@ adb shell 'dmesg | grep -i -E "touch|keymint|trusty|gsc|sg1|error|fail" | head -
    contains `User 0 Decrypted`.
 3. If touch does not work: **that is NOT a test failure** unless the
    maintainer said otherwise. Report it, continue over `adb`.
-4. Send back: `recovery.log` (full file), `weaver.log`, and whether
-   `/data/media` is visible.
+4. Send back: `recovery.log` (full file), `weaver.log`, `dmesg.log`,
+   `logcat.log`, and whether `/data/media` is visible.
 
 ---
 
@@ -256,7 +260,7 @@ adb on password: present / absent (if device encrypted)
 decrypt    : ok / failed / not tried
 touch      : ok / dead / partial
 UI         : bars (which sides) / stretched / rotated / which screen (fold: folded/unfolded) + photo
-Attached   : recovery.log, weaver.log, (ramoops_console.txt, ramoops_dmesg.txt, dmesg_boot.txt if Outcome C)
+Attached   : recovery.log, weaver.log, dmesg.log, logcat.log, (ramoops_console.txt, ramoops_dmesg.txt, dmesg_boot.txt if Outcome C)
 Notes      : <anything unusual: how long boot took, error texts, ...>
 ```
 
@@ -318,5 +322,8 @@ fastboot reboot
 adb devices -l
 adb pull /tmp/recovery.log
 adb pull /tmp/weaver.log
+adb shell 'dmesg > /tmp/dmesg.log; logcat -d -v time > /tmp/logcat.log'
+adb pull /tmp/dmesg.log
+adb pull /tmp/logcat.log
 adb shell 'dmesg | grep -i -E "touch|keymint|trusty|gsc|sg1" | head -30'
 ```
