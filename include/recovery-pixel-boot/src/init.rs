@@ -266,12 +266,15 @@ fn apply_display_geometry(
     let _ = set_prop("DOF_SCREEN_W", &geom.w.to_string());
     let _ = set_prop("DOF_SCREEN_H", &geom.h.to_string());
     let _ = set_prop("DOF_PROGRESSIVE_SCALE", "1");
+    // Per-device status-bar height (pixel.json status_h): lets data.cpp drop
+    // the compile-time OF_STATUS_H default, same pattern as DOF_SCREEN_H.
+    let _ = set_prop("DOF_STATUS_H", &cfg.status_h.to_string());
     crate::ko_picker::log_msg(
         "boot",
         "INFO",
-        &format!("display: {which} canvas {}x{} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.is_fold),
+        &format!("display: {which} canvas {}x{} status_h={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, cfg.is_fold),
     );
-    dlog(log, &format!("display: {which} canvas {}x{}", geom.w, geom.h));
+    dlog(log, &format!("display: {which} canvas {}x{} status_h={}", geom.w, geom.h, cfg.status_h));
 }
 
 fn by_name_exists(part: &str) -> bool {

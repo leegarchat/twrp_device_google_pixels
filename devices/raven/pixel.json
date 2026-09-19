@@ -6,6 +6,7 @@
     "w": 1080,
     "h": 3120
   },
+  "status_h": 130,
   "touch_modules": [
     "touch_bus_negotiator",
     "heatmap",

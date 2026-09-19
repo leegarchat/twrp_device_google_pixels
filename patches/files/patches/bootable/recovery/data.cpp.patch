@@ -1,10 +1,20 @@
 --- a/bootable/recovery/data.cpp
 +++ b/bootable/recovery/data.cpp
-@@ -803,13 +803,41 @@
+@@ -802,16 +802,52 @@
+     	mConst.SetValue("fox_use_nano_editor", "0");
    #endif
  
-   int of_status_placement = (atoi(OF_STATUS_H) / 2) - 28;
+-  int of_status_placement = (atoi(OF_STATUS_H) / 2) - 28;
 -  int of_center_y = atoi(OF_SCREEN_H) / 2;
++  // Dynamic status-bar height override: if the DOF_STATUS_H property is set
++  // (recovery-pixel-boot init stamps per-device status_h from pixel.json
++  // before recovery starts), use it instead of the compile-time OF_STATUS_H
++  // default. Same pattern as DOF_SCREEN_H above; unset = legacy behavior.
++  char dof_status_h[PROPERTY_VALUE_MAX] = {0};
++  property_get("DOF_STATUS_H", dof_status_h, "");
++  const char* effective_status_h = (dof_status_h[0] != '\0') ? dof_status_h : OF_STATUS_H;
++
++  int of_status_placement = (atoi(effective_status_h) / 2) - 28;
 +
 +  // Dynamic screen height override: if the DOF_SCREEN_H property is set (by runatboot.sh),
 +  // use it instead of the compile-time OF_SCREEN_H default. This allows devices with
@@ -43,5 +53,8 @@
 +      mConst.SetValue("dof_progressive_scale", dof_progressive_scale);
 +  }
    
-   mConst.SetValue(OF_STATUS_H_S, OF_STATUS_H);
+-  mConst.SetValue(OF_STATUS_H_S, OF_STATUS_H);
++  mConst.SetValue(OF_STATUS_H_S, effective_status_h);
    mConst.SetValue(OF_HIDE_NOTCH_S, OF_HIDE_NOTCH);
+   mConst.SetValue(OF_STATUS_INDENT_LEFT_S, OF_STATUS_INDENT_LEFT);
+   mConst.SetValue(OF_STATUS_INDENT_RIGHT_S, OF_STATUS_INDENT_RIGHT);

@@ -47,6 +47,10 @@ pub struct DeviceConfig {    pub family: String,
     pub front_display: DisplayGeom,
     /// Inner display virtual canvas for folds; None when absent/incomplete.
     pub inner_display: Option<DisplayGeom>,
+    /// Status-bar area height for the OrangeFox theme (default 130;
+    /// zumapro devices use 150). Stamped as DOF_STATUS_H at early-init so
+    /// data.cpp can drop the compile-time OF_STATUS_H default.
+    pub status_h: u32,
 }
 
 /// Virtual display canvas (letterbox geometry) in pixels.
@@ -396,6 +400,10 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
         front_display: get_display_geom(pairs, "front_display")
             .unwrap_or(DisplayGeom { w: 1080, h: 2400 }),
         inner_display: get_display_geom(pairs, "inner_display"),
+        status_h: {
+            let v = get_int(pairs, "status_h");
+            if v > 0 { v as u32 } else { 130 }
+        },
     })
 }
 
@@ -532,6 +540,24 @@ mod tests {
         assert!(!l.is_fold);
         assert_eq!(l.front_display, DisplayGeom { w: 1080, h: 2400 });
         assert_eq!(l.inner_display, None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn status_h_parses_with_default() {
+        let d = std::env::temp_dir().join(format!("fox_test_statush_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"comet": {"family": "zumapro", "status_h": 150, "props": {}},
+            "shiba": {"family": "zuma", "props": {}}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_device_config_from(&f, "comet").unwrap().status_h, 150);
+        // Missing key keeps the legacy compile-time default (130).
+        assert_eq!(load_device_config_from(&f, "shiba").unwrap().status_h, 130);
         let _ = std::fs::remove_dir_all(&d);
     }
 

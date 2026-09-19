@@ -6,6 +6,7 @@
     "w": 1080,
     "h": 2424
   },
+  "status_h": 150,
   "touch_modules": [
     "stmvl53l1",
     "lwis",
