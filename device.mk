@@ -31,7 +31,13 @@ PRODUCT_USE_DYNAMIC_PARTITIONS := true
 # *instead of* (not in addition to) TARGET_DEVICE_DIR/recovery/root.
 _pixel_dev_family = $(shell . $(LOCAL_PATH)/devices/$(1)/device.conf 2>/dev/null; printf '%s' "$$FAMILY")
 TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH)
-ifeq ($(DEVICE_BUILD_FLAG),)
+ifeq ($(DEVICE_BUILD_FLAG),aio)
+# All-in-one: every device + every family overlay ships in one cpio.
+# The installer selects family files post-unpack (aio/aio_swap.sh); the rest
+# resolves at runtime via ro.hardware (recovery-pixel-boot).
+TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/devices/*)
+TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/families/*)
+else ifeq ($(DEVICE_BUILD_FLAG),)
 $(warning pixels: DEVICE_BUILD_FLAG empty, family scoping off - all device overlays included)
 TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/devices/*)
 else
@@ -113,11 +119,16 @@ PRODUCT_PACKAGES += \
     recovery-pixel-boot
 
 # KeyMint HAL from source, per-family type from families/*/family.json
-# `keymint` (rust|cpp), delivered as FOX_KEYMINT_TYPE by build.sh.
+# `keymint` (rust|cpp|both), delivered as FOX_KEYMINT_TYPE by build.sh.
 # Rust (zuma/zumapro, system/core/trusty/keymint) talks KeyMint AIDL to the
 # Trusty TA; C++ (gs201/gs101, system/core/trusty/keymaster) auto-negotiates
 # via GetVersion fallback for Keymaster 4.0 TAs. No prebuilt blobs.
-ifeq ($(FOX_KEYMINT_TYPE),cpp)
+# AIO (both): both HALs ship; both services start, the wrong one exits
+# harmlessly (or the installer pre-selects via ro.recovery.keymint).
+ifeq ($(FOX_KEYMINT_TYPE),both)
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
+PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
+else ifeq ($(FOX_KEYMINT_TYPE),cpp)
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
 else ifeq ($(FOX_KEYMINT_TYPE),rust)
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty

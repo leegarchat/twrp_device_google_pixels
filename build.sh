@@ -295,11 +295,22 @@ fi
 # --- Kernel profile resolution (families/*/family.json `kernels`) ---
 # Engages only with a known family context (-f). Without -f the legacy
 # path is kept (interactive vendorsetup owns device selection).
+# AIO (-f aio) skips this entirely: no kernel image is built, the stock
+# kernel (and its cmdline) is kept, so no profile is needed and -k is
+# rejected as meaningless.
 # Result: KERNEL_GROUPS entries "tag|gen_dev", KERNEL_MK path (or empty
 # for the legacy path), FOX_KERNEL_VER exported for the callback.
 KERNEL_GROUPS=()
 KERNEL_MK=""
-if [[ -n "$FAMILY" ]]; then
+if [[ "$FAMILY" == "aio" ]]; then
+    if [[ -n "$KERNEL_VER" ]]; then
+        echo "ERROR: -f aio builds no kernel image; -k/--kernel is meaningless here."
+        fox_safe_exit 2
+    fi
+    echo "[build] AIO mode: stock kernel kept, kernel profiles skipped"
+    FOX_KERNEL_VER="stock"
+    export FOX_KERNEL_VER
+elif [[ -n "$FAMILY" ]]; then
     KFAMILY="$FAMILY"
     KDEV="${_DEV:-}"
     if [[ -n "$KDEV" ]]; then
@@ -406,7 +417,12 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     fi
 fi
 
-if [[ -n "$FAMILY" ]]; then
+if [[ "$FAMILY" == "aio" ]]; then
+    # All-in-one: both KeyMint HALs ship in one cpio (see device.mk);
+    # the wrong one exits harmlessly at runtime.
+    FOX_KEYMINT_TYPE="both"
+    export FOX_KEYMINT_TYPE
+elif [[ -n "$FAMILY" ]]; then
     # KeyMint HAL type for device.mk (config-parse env, like DEVICE_BUILD_FLAG):
     # families/<fam>/family.json `keymint` (rust|cpp). Loud fail — without it
     # device.mk falls back to the family-name mapping, which must never happen
@@ -540,7 +556,8 @@ echo "[build] DEVICE_BUILD_FLAG=${DEVICE_BUILD_FLAG:-<not set>}"
 # (validated, loud on unknown), otherwise the family default with a loud notice
 # (this is the interactive path; scripts/CI must pass -f/-k). Mirrors the -f
 # resolution above, minus the device filter and the tty picker.
-if [[ -z "$KERNEL_MK" && -n "${DEVICE_BUILD_FLAG:-}" ]]; then
+# AIO never enters here (stock kernel kept, no profiles exist).
+if [[ -z "$KERNEL_MK" && -n "${DEVICE_BUILD_FLAG:-}" && "${DEVICE_BUILD_FLAG:-}" != "aio" ]]; then
     KFAMILY="$DEVICE_BUILD_FLAG"
     KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
         echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
@@ -640,6 +657,8 @@ BUILD_TARGETS="adbd vendorbootimage"
 # above); manual lunch without build.sh falls back to the family-name mapping
 # (same default as device.mk).
 case "${FOX_KEYMINT_TYPE:-}" in
+    both)
+        KEYMINT_MODULE="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty" ;;
     cpp) KEYMINT_MODULE="android.hardware.security.keymint-service.trusty" ;;
     rust) KEYMINT_MODULE="android.hardware.security.keymint-service.rust.trusty" ;;
     *)

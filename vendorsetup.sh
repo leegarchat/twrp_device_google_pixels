@@ -102,27 +102,42 @@ echo "=============================================="
 
 # --- Device list for this family (discovered + legacy quirks) ---
 # Computed once here; reused for TARGET_DEVICE_ALT and .build_platform.conf.
+# AIO covers every device in the tree (installer selects per target).
+if [ "$DEVICE_BUILD_FLAG" = "aio" ]; then
+    _ALL_DEVS="$(for conf in "$PIXEL_TREE"/devices/*/device.conf; do [ -f "$conf" ] || continue; _d=""; . "$conf"; printf '%s,' "$DEVICE"; done | sed 's/,$//')"
+else
 _FAM_DEVS="$(_pixel_family_devices "$DEVICE_BUILD_FLAG")"
 _FAM_EXTRA="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${ALT_EXTRA:-}")"
 _ALL_DEVS="$_FAM_DEVS${_FAM_EXTRA:+,$_FAM_EXTRA}"
+fi
 
 # --- Generate .build_platform.conf for build scripts (fox_build_callback.sh etc.) ---
 # Environment variables don't survive make/ninja recipe shells reliably
 # (ninja passes only an allowlisted env, so LGZ_LEVEL exported by build.sh
 # would never arrive) — persist everything scripts need into this file.
 # Family facts (UFS/earlycon) come from families/<fam>/family.conf;
-# keymint HAL type (rust|cpp) comes from families/<fam>/family.json
+# keymint HAL type (rust|cpp|both) comes from families/<fam>/family.json
 # (single source of truth, validated here).
+# AIO: nothing is baked — UFS/USBCTRL stay empty (installer domain),
+# KEYMINT=both (both HALs ship, wrong one exits harmlessly at runtime).
+# .build_platform.conf lives next to this file; gettop is valid here
+# (vendorsetup runs after envsetup sets TOP).
 _conf_file="$(gettop)/device/google/pixels/.build_platform.conf"
+if [ "$DEVICE_BUILD_FLAG" = "aio" ]; then
+    _FAM_UFS=""
+    _FAM_USBCTRL=""
+    _FAM_KEYMINT="both"
+else
 _FAM_UFS="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${UFS_ADDR:-}")"
 # DWC3 USB controller (11210000.dwc3 on older Tensors, a210000.dwc3 on
 # malibu). Empty = pre-USBCTRL family, keep the 11210000 default in the
 # recovery rc files untouched.
 _FAM_USBCTRL="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")"
 _FAM_KEYMINT="$(python3 -c "import json,sys; print(json.load(open('$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.json')).get('keymint',''))" 2>/dev/null)"
+fi
 case "$_FAM_KEYMINT" in
-    rust|cpp) ;;
-    *) echo "  ERROR: families/$DEVICE_BUILD_FLAG/family.json needs keymint 'rust' or 'cpp'"; return 1 ;;
+    rust|cpp|both) ;;
+    *) echo "  ERROR: families/$DEVICE_BUILD_FLAG/family.json needs keymint 'rust', 'cpp' or 'both'"; return 1 ;;
 esac
 echo "  Keymint HAL: $_FAM_KEYMINT (from family.json)"
 # LGZ cluster level from build.sh (-l/--level) or environment; validated 0-3.

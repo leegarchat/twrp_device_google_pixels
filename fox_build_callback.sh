@@ -43,13 +43,14 @@ case "$LGZ_LEVEL" in
 esac
 echo "    [CONFIG] LGZ_LEVEL=$LGZ_LEVEL"
 # Keymint HAL type arrives via .build_platform.conf (written by vendorsetup.sh
-# from families/<fam>/family.json `keymint`: rust|cpp). No prebuilt fallback:
+# from families/<fam>/family.json `keymint`: rust|cpp|both). No prebuilt fallback:
 # an unknown type fails the build loudly — shipping recovery without a
-# working keymint means no decrypt.
+# working keymint means no decrypt. AIO ships both HALs (wrong one exits
+# harmlessly at runtime, or the installer pre-selects via ro.recovery.keymint).
 : "${KEYMINT:=}"
 case "$KEYMINT" in
-    rust|cpp) ;;
-    *) echo "    [CONFIG] ERROR: bad KEYMINT='$KEYMINT', need rust|cpp from family.json"; return 1 ;;
+    rust|cpp|both) ;;
+    *) echo "    [CONFIG] ERROR: bad KEYMINT='$KEYMINT', need rust|cpp|both from family.json"; return 1 ;;
 esac
 echo "    [CONFIG] KEYMINT=$KEYMINT"
 # DWC3 USB controller override arrives via .build_platform.conf (USBCTRL
@@ -217,7 +218,10 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
         print(f'    [PIXELCFG] ERROR: bad device JSON {pixfile}: {e}')
         sys.exit(1)
     # Family-scoped image: only this platform's devices ship.
-    if pj.get('family') != platform:
+    # AIO image: every device ships; the installer selects family files
+    # post-unpack (aio/aio_swap.sh) and the engine resolves its section
+    # by ro.hardware at runtime.
+    if platform != 'aio' and pj.get('family') != platform:
         continue
     famprops = merged.get('_families', {}).get(pj['family'], {}).get('props', {})
     props = dict(famprops)
@@ -225,6 +229,10 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     pj['props'] = props
     merged[dev] = pj
     # Flat per-device kernel boot strings (author order, like VENDOR_CMDLINE).
+    # AIO builds no kernel image (stock kernel kept): no boot strings ship.
+    if platform == 'aio':
+        n += 1
+        continue
     fam = families.get(pj['family'], {})
     # Single record: the kernel THIS image is built with. Version comes
     # from families/<fam>/.gen_kernel.mk (FOX_KERNEL_VER, written by
@@ -683,6 +691,9 @@ case "$CALL_TYPE" in
         # --- Per-family twrp.flags injection ---
         # Every family ships its own families/<fam>/twrp.flags (UFS paths
         # differ per SoC); the ramdisk default is replaced unconditionally.
+        # AIO: the aio placeholder (zuma) becomes the default, and every
+        # family's flags ship as /system/etc/twrp.flags.<fam> for the
+        # installer to select post-unpack (aio/aio_swap.sh).
         platform="$PLATFORM"
         fam_flags="$SCRIPT_DIR/families/$platform/twrp.flags"
         default_flags="$TARGET_DIR/system/etc/twrp.flags"
@@ -691,6 +702,16 @@ case "$CALL_TYPE" in
             cp -f "$fam_flags" "$default_flags"
         else
             echo "    [PLATFORM] ERROR: family flags missing: $fam_flags"
+        fi
+        if [ "$platform" = "aio" ]; then
+            for _fam_dir in "$SCRIPT_DIR"/families/*/; do
+                _fam=$(basename "$_fam_dir")
+                case "$_fam" in common|aio) continue ;; esac
+                if [ -f "$_fam_dir/twrp.flags" ]; then
+                    cp -f "$_fam_dir/twrp.flags" "$TARGET_DIR/system/etc/twrp.flags.$_fam"
+                    echo "    [PLATFORM]   + swap kit: twrp.flags.$_fam"
+                fi
+            done
         fi
 
         # --- Per-device twrp.flags overrides ---
@@ -704,12 +725,46 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM]   + device override: ${dev}.twrp.flags"
         done
 
+        # --- AIO swap-kit manifest (AIO only) ---
+        # /system/etc/aio/families.txt maps every family to its keymint type
+        # and USB controller so aio_swap.sh (and the installer) can select
+        # family files post-unpack with no tree dependency:
+        #   <fam>:keymint=<rust|cpp>:usbctrl=<base>.dwc3 (empty = 11210000 default)
+        if [ "$platform" = "aio" ]; then
+            mkdir -p "$TARGET_DIR/system/etc/aio"
+            : > "$TARGET_DIR/system/etc/aio/families.txt"
+            for _fam_dir in "$SCRIPT_DIR"/families/*/; do
+                _fam=$(basename "$_fam_dir")
+                case "$_fam" in common|aio) continue ;; esac
+                _km=$(python3 -c "import json;print(json.load(open('$_fam_dir/family.json')).get('keymint',''))" 2>/dev/null)
+                _usb=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")
+                printf '%s:keymint=%s:usbctrl=%s\n' "$_fam" "$_km" "$_usb" >> "$TARGET_DIR/system/etc/aio/families.txt"
+            done
+            echo "    [PLATFORM]   + swap kit manifest: system/etc/aio/families.txt"
+        fi
+        # --- Per-family recovery.fstab swap kit (AIO only) ---
+        # The live /etc/recovery.fstab is the aio placeholder (zuma); every
+        # family's file ships as /etc/recovery.fstab.<fam> for the installer
+        # to select post-unpack (aio/aio_swap.sh).
+        if [ "$platform" = "aio" ]; then
+            for _fam_dir in "$SCRIPT_DIR"/families/*/; do
+                _fam=$(basename "$_fam_dir")
+                case "$_fam" in common|aio) continue ;; esac
+                if [ -f "$_fam_dir/recovery.fstab" ]; then
+                    cp -f "$_fam_dir/recovery.fstab" "$TARGET_DIR/etc/recovery.fstab.$_fam"
+                    echo "    [PLATFORM]   + swap kit: recovery.fstab.$_fam"
+                fi
+            done
+        fi
         # --- Per-family keymint binary injection ---
         # Both HALs are built from source and selected by families/<fam>/
         # family.json `keymint` (KEYMINT here): rust (system/core/trusty/keymint)
         # or cpp (system/core/trusty/keymaster). Soong places the vendor output
         # at $PRODUCT_OUT/vendor/bin/hw/; it is copied into the ramdisk and
         # later packed into the LGZ cluster. No prebuilt blobs.
+        # AIO (both): both binaries ship; both services start at boot and
+        # the wrong one exits harmlessly (or the installer pre-selects via
+        # ro.recovery.keymint, see the gated triggers in pixel_common.rc).
         # VINTF keymint fragments live in families/<platform>/etc/.
         family_dir="$SCRIPT_DIR/families/$platform"
         PRODUCT_OUT="${TARGET_DIR%/recovery/root}"
@@ -717,25 +772,42 @@ case "$CALL_TYPE" in
         echo "    [PLATFORM] Injecting keymint for: $platform (type $KEYMINT)"
 
         # --- Keymint binary ---
-        if [ "$KEYMINT" = "cpp" ]; then
-            km_bin_name="android.hardware.security.keymint-service.trusty"
+        if [ "$KEYMINT" = "both" ]; then
+            km_bin_names="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty"
+        elif [ "$KEYMINT" = "cpp" ]; then
+            km_bin_names="android.hardware.security.keymint-service.trusty"
         else
-            km_bin_name="android.hardware.security.keymint-service.rust.trusty"
+            km_bin_names="android.hardware.security.keymint-service.rust.trusty"
         fi
+        for km_bin_name in $km_bin_names; do
         src_bin="$PRODUCT_OUT/vendor/bin/hw/$km_bin_name"
         if [ -f "$src_bin" ]; then
             mkdir -p "$TARGET_DIR/vendor/bin/hw"
             cp -f "$src_bin" "$TARGET_DIR/vendor/bin/hw/"
             chmod 755 "$TARGET_DIR/vendor/bin/hw/$km_bin_name"
-            echo "    [PLATFORM]   + $KEYMINT keymint binary (source-built)"
+            echo "    [PLATFORM]   + $km_bin_name (source-built)"
         else
-            echo "    [PLATFORM] ERROR: $KEYMINT keymint binary not found at: $src_bin"
+            echo "    [PLATFORM] ERROR: keymint binary not found at: $src_bin"
             echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes $km_bin_name"
             return 1
         fi
+        done
 
         # --- VINTF keymint fragment (per family) ---
-        if [ -d "$family_dir/etc" ]; then
+        # AIO: every family's fragment ships renamed (keymint.<fam>.xml);
+        # the installer keeps the target one post-unpack (aio/aio_swap.sh).
+        if [ "$platform" = "aio" ]; then
+            for _fam_dir in "$SCRIPT_DIR"/families/*/; do
+                _fam=$(basename "$_fam_dir")
+                case "$_fam" in common|aio) continue ;; esac
+                if [ -f "$_fam_dir/etc/vintf/manifest/keymint.xml" ]; then
+                    mkdir -p "$TARGET_DIR/vendor/etc/vintf/manifest"
+                    cp -f "$_fam_dir/etc/vintf/manifest/keymint.xml" \
+                        "$TARGET_DIR/vendor/etc/vintf/manifest/keymint.$_fam.xml"
+                    echo "    [PLATFORM]   + VINTF fragment: keymint.$_fam.xml"
+                fi
+            done
+        elif [ -d "$family_dir/etc" ]; then
             cp -af "$family_dir/etc" "$TARGET_DIR/vendor/"
             echo "    [PLATFORM]   + VINTF keymint fragment"
         fi
@@ -754,8 +826,11 @@ case "$CALL_TYPE" in
         fi
 
         # --- Disable the keymint service that doesn't match this family ---
+        # AIO (both): both starts stay enabled; the HAL whose Trusty TA is
+        # absent exits harmlessly (or the installer pre-selects one via
+        # ro.recovery.keymint + the gated triggers in pixel_common.rc).
         rc_file="$TARGET_DIR/init.recovery.pixel_common.rc"
-        if [ -f "$rc_file" ]; then
+        if [ -f "$rc_file" ] && [ "$KEYMINT" != "both" ]; then
             if [ "$KEYMINT" = "cpp" ]; then
                 # C++ family: disable Rust keymint start (no Rust binary)
                 sed -i 's/^\(    start vendor\.keymint\.rust-trusty\)/#\1  # disabled ('"$KEYMINT"' family)/' "$rc_file"

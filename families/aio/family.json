@@ -1,0 +1,15 @@
+{
+  "family": "aio",
+  "soc_family": "aio",
+  "keymint": "both",
+  "post_remove_ramdisk": [],
+  "props": {
+    "ro.recovery.soc_family": "aio",
+    "ro.recovery.aio": "1",
+    "ro.hardware.keystore": "trusty",
+    "ro.hardware.gatekeeper": "trusty",
+    "vendor.usb.use_ffs_mtp": "1"
+  },
+  "default_kernel": "",
+  "kernels": {}
+}

@@ -1,0 +1,4 @@
+# init.recovery.aio.rc — all-in-one (universal) build stub.
+# Loaded by init when ro.hardware=aio (never on real hardware; real devices
+# resolve to their codename/family stub). Imports the shared init code.
+import /init.recovery.pixel_common.rc
