@@ -40,12 +40,13 @@ Stage protocol: argv + stdout (result) + `/tmp/recovery.log`
 |---|---|---|
 | `props-apply <family> k=v...` | `resetprop`, `setenforce` | `ro.*` props (the bionic API blocks them), gs201 flags |
 | `slot-detect` | `bootctl` | Slot suffix to stdout |
-| `ko-fetch <part> <sfx> <slot>` | `siw read` → `iw read` | All `*.ko` into `/dev/ko_stage/`; fallback `lptools+mount`. Depth guard: only `lib/modules/*.ko` — pagesize subdirectories (`16k-mode/`) are skipped (duplicates with foreign CRCs shadowed the flat modules and broke touch/haptics on 6.12) |
+| `ko-fetch <part> <sfx> <slot>` | `siw read` → `iw read` | All `*.ko` into `/dev/ko_stage/`; fallback `siw map`+mount. Depth guard: only `lib/modules/*.ko` — pagesize subdirectories (`16k-mode/`) are skipped (duplicates with foreign CRCs shadowed the flat modules and broke touch/haptics on 6.12) |
 | `fw-fetch <part> <sfx> <slot>` | `siw`/`iw`, fallback mount | Firmware → `/vendor/firmware/` |
 | `magiskboot-unpack <zip>` | `unzip`, `busybox` | boot/busybox into `/system/bin` |
 | `meta-fix` | `mount` | Cleanup of `/metadata/ota` (waiting for the block node) |
 
 `siw`/`iw` are static arm64 utilities (1.1M/1.4M): streaming
-partition reads without mounting. `lptools_new` is the fallback extraction
-path. Stock `runatboot.sh` is an empty OFox hook (invoked by `twrp.cpp`); an
-extension point for addons.
+partition reads without mounting (`siw read`) plus DM mapping
+(`siw map`, replacing `lptools_new --map`: `/dev/block/mapper/<name>`
+via DM ioctl). Stock `runatboot.sh` is an empty OFox hook (invoked by
+`twrp.cpp`); an extension point for addons.

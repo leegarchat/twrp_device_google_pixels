@@ -14,7 +14,6 @@
 LOGF="/tmp/recovery.log"
 SIW="/system/bin/siw"
 IW="/system/bin/iw"
-LPTOOLS="/system/bin/lptools_new"
 SUPER="/dev/block/by-name/super"
 
 plog() {
@@ -22,7 +21,7 @@ plog() {
 }
 
 # Tools may arrive from the cluster without the exec bit — best effort.
-chmod 755 "$SIW" "$IW" "$LPTOOLS" 2>/dev/null
+chmod 755 "$SIW" "$IW" 2>/dev/null
 
 # --- siw read <partbase> <suffix> <slotnum> > <outfile> -------------------
 # Streams one LP partition to a file. Returns 0 on success.
@@ -50,7 +49,7 @@ _siw_stream() {
 # Prints staged full paths to stdout, one per line. Returns 0 if >=1 staged.
 # `iw read -f <pattern>` does NOT glob (errors out), so we take the bare
 # recursive listing and filter in shell. Non-files fail the -c fetch and
-# are skipped. An empty result triggers the caller's classic fallback.
+# are skipped. An empty result triggers the caller's map+mount fallback.
 _iw_extract() {
     local _img="$1" _filt="$2" _outdir="$3"
     local _hit _base _n
@@ -83,22 +82,39 @@ _iw_extract() {
     [ "$_n" -gt 0 ]
 }
 
-# --- classic fallback: lptools map + mount + copy -------------------------
-# _classic_copy <partbase> <slotsuffix(_a)> <slotnum> <mangle> <outdir> <findname>
+# --- siw map <partbase> <suffix-letter> <slotnum> ---------------------------
+# Device-mapper mapping, Android/Recovery only (DM ioctl): creates
+# /dev/block/mapper/<partbase>[_suffix]. Same selector shape as _siw_stream
+# (-p base --suffix letter --slot num). Returns 0 on success.
+_siw_map() {
+    local _part="$1" _sfx="$2" _slot="$3"
+    if [ ! -x "$SIW" ]; then
+        plog "siw-map" "binary missing: $SIW"
+        return 1
+    fi
+    if "$SIW" map "$SUPER" -p "$_part" --suffix "$_sfx" -s "$_slot" >>"$LOGF" 2>&1; then
+        return 0
+    fi
+    plog "siw-map" "map failed: ${_part} suffix=${_sfx} slot=${_slot}"
+    return 1
+}
+
+# --- map + mount + copy fallback ------------------------------------------
+# _siw_map_copy <partbase> <slotsuffix(_a)> <slotnum> <mangle> <outdir> <findname>
 # Copies matching files to outdir, prints staged paths. Returns 0 if >=1.
-_classic_copy() {
+_siw_map_copy() {
     local _part="$1" _sfxname="$2" _slot="$3" _subdir="$4" _outdir="$5" _fname="$6"
     local _node _mnt _n _f _base
     _node="/dev/block/mapper/${_part}${_sfxname}"
     if [ ! -b "$_node" ]; then
-        plog "classic" "$_node absent, mapping"
-        "$LPTOOLS" --slot "$_slot" --suffix "$_sfxname" --map "${_part}${_sfxname}" >>"$LOGF" 2>&1 \
-            || { plog "classic" "map failed: ${_part}${_sfxname}"; return 1; }
+        plog "map-copy" "$_node absent, mapping via siw"
+        _siw_map "$_part" "${_sfxname#_}" "$_slot" \
+            || { plog "map-copy" "map failed: ${_part}${_sfxname}"; return 1; }
     fi
     _mnt="/dev/stage_mnt_$$"
     mkdir -p "$_mnt"
     if ! mount -r "$_node" "$_mnt" 2>>"$LOGF"; then
-        plog "classic" "mount failed: $_node"
+        plog "map-copy" "mount failed: $_node"
         rmdir "$_mnt" 2>/dev/null
         return 1
     fi
@@ -164,11 +180,11 @@ case "$1" in
                 rm -f "$_img"
                 exit 0
             fi
-            plog "ko-fetch" "iw parse empty, classic fallback"
+            plog "ko-fetch" "iw parse empty, map+mount fallback"
             rm -f "$_img"
         fi
-        # Fallback: lptools map + mount + find + cp.
-        if _classic_copy "$_part" "_${_sfx}" "$_slot" "" "$_out" '*.ko'; then
+        # Fallback: siw map + mount + find + cp.
+        if _siw_map_copy "$_part" "_${_sfx}" "$_slot" "" "$_out" '*.ko'; then
             exit 0
         fi
         plog "ko-fetch" "all methods failed: ${_part}_${_sfx}"
@@ -188,7 +204,8 @@ case "$1" in
         _n=0
         _node="/dev/block/mapper/${_part}_${_sfx}"
         if [ ! -b "$_node" ]; then
-            "$LPTOOLS" --slot "$_slot" --suffix "_${_sfx}" --map "${_part}_${_sfx}" >>"$LOGF" 2>&1
+            _siw_map "$_part" "$_sfx" "$_slot" \
+                || plog "fw-fetch" "siw map failed: ${_part}_${_sfx}"
         fi
         _mnt="/dev/stage_mnt_$$"
         mkdir -p "$_mnt"

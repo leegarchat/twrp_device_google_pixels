@@ -24,7 +24,7 @@ Only overlays of **its own family** go into the image (`device.mk` filters
 | `pixelrunatboot.sh` | Engine shell stages |
 | `runatboot.sh` | Empty OFox hook |
 | `reflash_twrp.sh` | Reflash from inside recovery (below) |
-| `siw`, `iw`, `lptools_new`, `lpdump` | Partition reads without mounting, LP tools |
+| `siw`, `iw` | Partition reads without mounting + DM mapping, LP tools |
 | `nboot.lz4` | Compressed boot component (in LGZ exclusions) |
 | `Magisk-*.zip`, `DFENEO.zip`, `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip`, `LeeGar_dfe_neo_healing_*.zip` | Payloads for installation from the GUI |
 

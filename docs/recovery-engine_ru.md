@@ -39,12 +39,13 @@
 |---|---|---|
 | `props-apply <family> k=v...` | `resetprop`, `setenforce` | `ro.*`-пропсы (bionic API их блокирует), gs201-флаги |
 | `slot-detect` | `bootctl` | Суффикс слота в stdout |
-| `ko-fetch <part> <sfx> <slot>` | `siw read` → `iw read` | Все `*.ko` в `/dev/ko_stage/`; fallback `lptools+mount`. Depth-guard: только `lib/modules/*.ko` — подкаталоги pagesize (`16k-mode/`) пропускаются (близнецы с чужими CRC затеняли плоские модули и ломали тач/хаптику на 6.12) |
+| `ko-fetch <part> <sfx> <slot>` | `siw read` → `iw read` | Все `*.ko` в `/dev/ko_stage/`; fallback `siw map`+mount. Depth-guard: только `lib/modules/*.ko` — подкаталоги pagesize (`16k-mode/`) пропускаются (близнецы с чужими CRC затеняли плоские модули и ломали тач/хаптику на 6.12) |
 | `fw-fetch <part> <sfx> <slot>` | `siw`/`iw`, fallback mount | Firmware → `/vendor/firmware/` |
 | `magiskboot-unpack <zip>` | `unzip`, `busybox` | boot/busybox в `/system/bin` |
 | `meta-fix` | `mount` | Чистка `/metadata/ota` (с ожиданием блочной ноды) |
 
 `siw`/`iw` — статические arm64-утилиты (1.1M/1.4M): потоковое чтение
-разделов без монтирования. `lptools_new` — fallback-путь извлечения.
+разделов без монтирования (`siw read`) и DM-маппинг (`siw map`,
+замена `lptools_new --map`: `/dev/block/mapper/<имя>` через DM ioctl).
 Стоковый `runatboot.sh` — пустой хук OFox (дёргает `twrp.cpp`); точка
 для аддонов.

@@ -23,7 +23,7 @@
 | `pixelrunatboot.sh` | Шелл-стадии движка |
 | `runatboot.sh` | Пустой хук OFox |
 | `reflash_twrp.sh` | Перепрошивка изнутри рекавери (ниже) |
-| `siw`, `iw`, `lptools_new`, `lpdump` | Чтение разделов без монтирования, LP-инструменты |
+| `siw`, `iw` | Чтение разделов без монтирования + DM-маппинг, LP-инструменты |
 | `nboot.lz4` | Сжатый компонент загрузки (в LGZ-исключениях) |
 | `Magisk-*.zip`, `DFENEO.zip`, `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip`, `LeeGar_dfe_neo_healing_*.zip` | Пейлоады для установки из GUI |
 
