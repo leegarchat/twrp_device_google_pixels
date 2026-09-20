@@ -27,8 +27,12 @@
 
 #define RC_COMMON "/init.recovery.pixel_common.rc"
 #define RC_USB "/init.recovery.usb.rc"
-#define USB_DEFAULT_BASE "11210000"
-#define USB_DEFAULT "11210000.dwc3"
+/* AIO images ship the rc files with blanked controller markers (the
+ * build replaces the 11210000 default with these); the swap fills in
+ * the detected family. Never matches real hardware, so an unswapped
+ * boot fails visibly instead of silently acting like zuma. */
+#define USB_BLANK_BASE "00000000"
+#define USB_BLANK "UNKNOWN.dwc3"
 
 #define VINTF_DIR "/vendor/etc/vintf/manifest"
 #define HW_DIR "/vendor/bin/hw"
@@ -386,23 +390,27 @@ swapped_family:
         }
     }
 
-    /* USB controller in rc files (parsed by init AFTER us). */
-    if (usbctrl[0] != '\0' && strcmp(usbctrl, USB_DEFAULT) != 0) {
+    /* USB controller in rc files (parsed by init AFTER us). The build
+     * blanks the default to UNKNOWN markers; empty manifest usbctrl
+     * means the 11210000 default. Always written: an unswapped boot
+     * must fail visibly, never silently act like zuma. */
+    {
+        const char* uc = usbctrl[0] != '\0' ? usbctrl : "11210000.dwc3";
         char base[32];
-        char* dot = strchr(usbctrl, '.');
-        size_t n = dot != NULL ? (size_t)(dot - usbctrl) : strlen(usbctrl);
+        const char* dot = strchr(uc, '.');
+        size_t n = dot != NULL ? (size_t)(dot - uc) : strlen(uc);
         int r1, r2;
         if (n >= sizeof(base)) n = sizeof(base) - 1;
-        memcpy(base, usbctrl, n);
+        memcpy(base, uc, n);
         base[n] = '\0';
         {
             /* sed twice: "<base>.usb" then full controller name. */
             char from_usb[48];
             char to_usb[48];
-            snprintf(from_usb, sizeof(from_usb), "%s.usb", USB_DEFAULT_BASE);
+            snprintf(from_usb, sizeof(from_usb), "%s.usb", USB_BLANK_BASE);
             snprintf(to_usb, sizeof(to_usb), "%s.usb", base);
             r1 = sed_file(RC_COMMON, from_usb, to_usb);
-            r2 = sed_file(RC_COMMON, USB_DEFAULT, usbctrl);
+            r2 = sed_file(RC_COMMON, USB_BLANK, uc);
             {
                 char msg[128];
                 snprintf(msg, sizeof(msg), "usbctrl pixel_common: %d+%d\n",
@@ -410,7 +418,7 @@ swapped_family:
                 aio_log(msg);
             }
             r1 = sed_file(RC_USB, from_usb, to_usb);
-            r2 = sed_file(RC_USB, USB_DEFAULT, usbctrl);
+            r2 = sed_file(RC_USB, USB_BLANK, uc);
             {
                 char msg[128];
                 snprintf(msg, sizeof(msg), "usbctrl usb.rc: %d+%d\n",
@@ -418,8 +426,6 @@ swapped_family:
                 aio_log(msg);
             }
         }
-    } else {
-        aio_log("usbctrl default stands\n");
     }
 
     /* KeyMint: drop sibling fragments, keep one binary. Only when the

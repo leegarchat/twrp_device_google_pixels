@@ -865,7 +865,17 @@ case "$CALL_TYPE" in
         # The recovery rc files bake in 11210000 (shared by gs201/zuma/zumapro);
         # families with a different controller (malibu: a210000.dwc3) substitute
         # both the .usb platform dir and the .dwc3 controller name.
-        if [ -n "$USBCTRL" ] && [ "$USBCTRL" != "11210000.dwc3" ]; then
+        # AIO instead blanks the default to UNKNOWN markers: the stub swap
+        # fills in the detected family BEFORE init parses these files. No
+        # zuma defaults on purpose — an unswapped boot fails visibly (dead
+        # USB) instead of silently pretending to be zuma.
+        if [ "$platform" = "aio" ]; then
+            for usb_rc in "$TARGET_DIR/init.recovery.pixel_common.rc" "$TARGET_DIR/init.recovery.usb.rc"; do
+                [ -f "$usb_rc" ] || continue
+                sed -i "s/11210000\.usb/00000000.usb/g; s/11210000\.dwc3/UNKNOWN.dwc3/g" "$usb_rc"
+                echo "    [PLATFORM]   + USB default blanked to UNKNOWN ($(basename "$usb_rc"))"
+            done
+        elif [ -n "$USBCTRL" ] && [ "$USBCTRL" != "11210000.dwc3" ]; then
             usb_base="${USBCTRL%.dwc3}"
             for usb_rc in "$TARGET_DIR/init.recovery.pixel_common.rc" "$TARGET_DIR/init.recovery.usb.rc"; do
                 [ -f "$usb_rc" ] || continue

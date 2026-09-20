@@ -84,16 +84,16 @@ else
     echo "[aio-swap]   WARNING: no system/etc/recovery.wipe.$FAM, keeping placeholder" >&2
 fi
 # --- USB controller (rc files stay open in the cpio, sed is safe) ---
-if [[ -n "$USBCTRL" && "$USBCTRL" != "11210000.dwc3" ]]; then
-    usb_base="${USBCTRL%.dwc3}"
-    for rc in "$ROOT/init.recovery.pixel_common.rc" "$ROOT/init.recovery.usb.rc"; do
-        [[ -f "$rc" ]] || continue
-        sed -i "s/11210000\.usb/${usb_base}.usb/g; s/11210000\.dwc3/${USBCTRL}/g" "$rc"
-        echo "[aio-swap]   USB controller -> $USBCTRL ($(basename "$rc"))"
-    done
-else
-    echo "[aio-swap]   USB controller: default 11210000.dwc3 stands"
-fi
+# New images carry UNKNOWN markers (no zuma defaults); older ones still
+# have the baked 11210000 default — substitute both spellings. Empty
+# manifest usbctrl means the 11210000 default, always written.
+if [[ -z "$USBCTRL" ]]; then USBCTRL="11210000.dwc3"; fi
+usb_base="${USBCTRL%.dwc3}"
+for rc in "$ROOT/init.recovery.pixel_common.rc" "$ROOT/init.recovery.usb.rc"; do
+    [[ -f "$rc" ]] || continue
+    sed -i "s/00000000\.usb/${usb_base}.usb/g; s/UNKNOWN\.dwc3/${USBCTRL}/g; s/11210000\.usb/${usb_base}.usb/g; s/11210000\.dwc3/${USBCTRL}/g" "$rc"
+    echo "[aio-swap]   USB controller -> $USBCTRL ($(basename "$rc"))"
+done
 
 # --- VINTF keymint fragments: keep the target one, drop siblings ---
 shopt -s nullglob

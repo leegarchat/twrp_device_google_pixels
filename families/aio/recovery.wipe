@@ -1,4 +1,6 @@
-# recovery.wipe — aio family (AIO swap-kit; keep in sync with common unless the family needs extra targets).
-# Wiped on factory reset by recovery.
-/dev/block/by-name/userdata
-/dev/block/by-name/metadata
+# recovery.wipe — AIO LIVE placeholder (intentionally empty).
+# The stub-time swap (aioswap.c, post LGZ unpack, pre init) replaces this
+# file with families/<fam>/recovery.wipe for the detected device. Empty
+# is the safe direction (factory reset wipes nothing). If you read this
+# text in a booted image, the swap did not run.
+# Swap kit: system/etc/recovery.wipe.<fam> (shipped alongside).
