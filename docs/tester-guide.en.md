@@ -44,6 +44,13 @@ fastboot reboot recovery
 
 ### Pixel 6 series (gs101: oriole/raven/bluejay) — special procedure
 
+> ⚠️ APPLIES TO PRE-AIO BUILDS ONLY (e.g. `test_1-gs101`). For `-aio`
+> builds, NEVER flash the raw cpio with fastboot — the image is
+> family-neutral and needs the installer swap (USB controller, fstab,
+> keymint manifests) before it can boot correctly on gs101. Use the AIO
+> installer package above; raw-flashed AIO on Pixel 6 boots with broken
+> USB (no adb) and wrong display geometry.
+
 Pixel 6 has no `vendor_kernel_boot` partition, so you do **NOT** flash
 the `.img` — you flash the `.ramdisk.lz4` **ramdisk** into the platform
 fragment (note the trailing colon = empty fragment name):
