@@ -857,6 +857,24 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         fi
         rm -rf "$GS101_WORK"
     fi
+
+    # --- Installer zip (AIO): pack the fresh payload via installer/ ---
+    # The universal installer bundles the just-built ramdisk payload;
+    # OFOX_PAYLOAD refreshes installer/ + export.txt RECOVERY_IMG so the
+    # tree tracks the latest payload. Tag/family mirror the ramdisk
+    # artifact naming above. Non-fatal: a pack failure must never fail
+    # the build (the payload itself is already delivered).
+    if [[ "$FAMILY_TAG" == "aio" && -n "${RAMDISK_DEST:-}" && -f "$RAMDISK_DEST" ]]; then
+        echo "[build] packing installer zip for $FAMILY_TAG ..."
+        OFOX_PAYLOAD="$RAMDISK_DEST" \
+        OFOX_NAME="OrangeFox" \
+        OFOX_TYPE="$(echo "$OFOX_PREFIX" | cut -d'-' -f2)" \
+        OFOX_TAG="${BUILD_NAME:-Beta}" \
+        OFOX_FAMILY="$FAMILY_TAG" \
+        OFOX_BUILDS_DIR="$BUILDS_DIR" \
+        bash "$SCRIPT_DIR/installer/pack-module-zip.sh" \
+        || echo "[build] WARNING: installer pack failed (payload is fine: $RAMDISK_DEST)"
+    fi
 done
 
 # Stale generated overrides would silently reconfigure later manual builds
