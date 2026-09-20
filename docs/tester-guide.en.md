@@ -64,25 +64,93 @@ fragment is swapped in, both slots are rebuilt + byte-verified, and a
 dated backup is kept (`backup/` on PC, `/sdcard/backup_vendor_boot/`
 on-device). First_stage, kernel cmdline and dlkm always stay stock.
 
-Pick one variant (all perform the same install):
+Pick one variant (all perform the same install — the phone ends up with
+OrangeFox in recovery; only the starting point differs):
 
-1. **PC / Linux** — boot the phone into the bootloader (classic
-   fastboot, NOT fastbootd), then run:
+#### Step 0 — to unpack or not to unpack
+
+The downloaded file looks like `OrangeFox-R12.0-test6-aio.zip` (~47 MB).
+
+- **Desktop install (Variants A/B below): UNPACK FIRST.** You need real
+  files on disk, not an archive preview.
+  - Windows: right-click the zip → **Extract All…** into a folder.
+  - Linux: `unzip OrangeFox-*.zip -d ofox-install && cd ofox-install`.
+  - After unpacking you must see: `install-desktop.sh`,
+    `install-desktop.bat`, `install-recovery.sh`, `export.txt`,
+    `module.prop`, `customize.sh`, `bin/`, `META-INF/` and one
+    `*.ramdisk.lz4` payload. If you don't see these — you didn't unpack.
+  - ⚠️ The #1 beginner mistake: double-clicking the zip and running
+    things from inside the archiver window. That never works.
+- **Magisk / KernelSU / recovery install (Variants C/D below): do NOT
+  unpack.** Flash the downloaded `.zip` file as-is.
+
+Nothing needs installing on the PC: platform-tools travel inside the
+package (`bin/`), the scripts use the bundled ones.
+
+#### Variant A — PC / Linux (from the bootloader)
+
+1. Unpack the zip (see Step 0), open a terminal **in that folder**.
+2. Put the phone into classic fastboot (bootloader) mode: power off,
+   then hold **Volume-Down + Power** until the fastboot screen appears
+   (it says `FASTBOOT MODE` / `START` — NOT fastbootd, which looks like
+   a recovery menu). Alternative from a booted system:
+   `adb reboot bootloader`.
+3. Connect the USB cable and run:
    ```
    ./install-desktop.sh
    ```
-   (or double-click `install-desktop.AppImage`). Arrow-key menus,
-   backup to `backup/<date-time>/`, reboot-to-recovery offer at the end.
-2. **PC / Windows** — same, from the bootloader:
-   ```
-   install-desktop.bat
-   ```
-3. **Magisk / KernelSU (from booted system)** — flash the
-   `*OrangeFoxTensorUniversal.zip` in the Magisk or KernelSU manager
-   app like a module. It installs as root, keeps a backup on userdata,
-   then removes itself (installer only, nothing stays installed).
-4. **From recovery** — flash the same zip via Install in any recovery
-   (TWRP/OrangeFox). Progress shows on the recovery console.
+   (or double-click `install-desktop.AppImage`).
+4. Answer the arrow-key menus (which slots — default `both` is the
+   safest; it keeps a backup). Watch the lines: snapshot → backup →
+   rebuild → flash → byte-compare proof.
+5. At the end accept the offer to reboot to recovery.
+
+Backup lands in `backup/<date-time>/` next to the script (with
+`install.log` inside). Success = `RESULT: OK` on screen.
+
+#### Variant B — PC / Windows (from the bootloader)
+
+Same as Variant A, but after unpacking just double-click
+`install-desktop.bat` (a console window opens). Notes for Windows:
+
+- First time ever: install the **Google USB driver** or the phone will
+  not appear in fastboot (`fastboot devices` empty).
+- If the `.bat` flashes and closes instantly — run it from `cmd` in that
+  folder to see the error text.
+- The end-of-install reboot-to-recovery offer works the same.
+
+#### Variant C — Magisk / KernelSU (from a booted, rooted system)
+
+1. Do NOT unpack. Get the `.zip` onto the phone (download it there or
+   copy via MTP/`adb push`).
+2. Open the Magisk (or KernelSU) app → **Modules** → **Install from
+   storage** → pick the zip → wait until it prints install OK.
+3. The module **deletes itself** afterwards — nothing stays installed,
+   this was a one-shot installer (backup stays in
+   `/sdcard/backup_vendor_boot/`).
+4. Reboot to recovery yourself: hold **Volume-Down + Power** → choose
+   **Recovery mode** in the bootloader menu (or `adb reboot recovery`).
+
+Requirements: Android actually booted + root (that's what the manager
+is for). `SLOT=` in `export.txt` decides the slots (default `both`).
+
+#### Variant D — from recovery (no PC, no root needed)
+
+1. Do NOT unpack. Get the `.zip` onto the phone (MTP/`adb push`/
+   downloaded, e.g. into Downloads).
+2. In any recovery (TWRP/OrangeFox) → **Install** → pick the zip →
+   swipe to confirm. Flashing the recovery you are currently sitting in
+   is fine — it runs from RAM.
+3. Watch the console for `RESULT: OK` and the backup path
+   (`/sdcard/backup_vendor_boot/` or `/tmp/recovery_install/`).
+4. **Reboot → Recovery** (not System) to boot straight into the new build.
+
+#### After any variant
+
+- First boot to recovery can take up to 60 seconds — continue with
+  [§2](#2-first-boot--the-60-second-checklist).
+- Keep the `backup/` (PC) or `/sdcard/backup_vendor_boot/` (device)
+  copy until testing is over — that is your rollback.
 
 Config lives in `export.txt` next to the installer:
 `SLOT=both|a|b|current`, `MIN_FREE_MB=7` (strict — the install aborts
