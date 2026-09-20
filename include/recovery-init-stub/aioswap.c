@@ -252,7 +252,44 @@ static int cmdline_value(const char* key, char* out, size_t cap) {
     return n > 0 ? 0 : -1;
 }
 
+/* <key> from /proc/bootconfig (Android bootconfig format:
+ * `androidboot.hardware = "shiba"`). Pixel vendor_boot carries the
+ * bootloader params here, NOT on /proc/cmdline (which has no
+ * androidboot.* at all on the recovery boot path), so bootconfig is
+ * the primary source and cmdline the fallback. */
+static int bootconfig_value(const char* key, char* out, size_t cap) {
+    static char bc[16384];
+    ssize_t len;
+    char* p;
+    size_t n;
+    size_t klen = strlen(key);
+    len = read_file("/proc/bootconfig", bc, sizeof(bc));
+    if (len <= 0) return -1;
+    p = bc;
+    for (;;) {
+        p = strstr(p, key);
+        if (p == NULL) return -1;
+        p += klen;
+        /* key must be followed by optional spaces then '=' (avoids
+         * matching androidboot.hardware.foo prefixes). */
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p != '=') continue;
+        p++;
+        while (*p == ' ' || *p == '\t' || *p == '"') p++;
+        n = 0;
+        while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' &&
+               *p != '"' && n + 1 < cap) {
+            out[n++] = *p++;
+        }
+        out[n] = '\0';
+        if (n == 0) return -1;
+        aio_log("hardware source: bootconfig\n");
+        return 0;
+    }
+}
+
 static int cmdline_hardware(char* out, size_t cap) {
+    if (bootconfig_value("androidboot.hardware", out, cap) == 0) return 0;
     return cmdline_value("androidboot.hardware=", out, cap);
 }
 
@@ -354,7 +391,7 @@ void aioswap_run(void) {
     }
     if (cmdline_hardware(device, sizeof(device)) != 0) {
         release_proc();
-        aio_log("FALLBACK: no androidboot.hardware, keeping placeholders\n");
+        aio_log("FALLBACK: no androidboot.hardware (bootconfig+cmdline), keeping placeholders\n");
         return;
     }
     {

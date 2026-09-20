@@ -249,7 +249,16 @@ fn switch_to_device(current: &mut String) {
     // already runs and covers the never-started race.
     let controller = resolve_udc();
     info(&format!("device mode: binding UDC {controller}"));
-    let _ = std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes());
+    match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
+        Ok(_) => {
+            // Cosmetic consistency: init's rc setprop used the blanked
+            // literal on unswapped trees. Nothing re-sets it afterwards
+            // (the per-second trigger only rewrites UDC + state), so a
+            // value set here sticks for getprop readers.
+            let _ = set_prop("sys.usb.controller", &controller);
+        }
+        Err(e) => info(&format!("device mode: UDC bind FAILED: {e}")),
+    }
     let _ = set_prop("ctl.start", "adbd");
     *current = "device".into();
 }
