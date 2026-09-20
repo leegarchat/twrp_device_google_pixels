@@ -49,35 +49,12 @@
 
 ## 1. Прошивка тестовой сборки
 
-Мейнтейнер скажет, **какой файл и в какой слот** шить. Процедура по
-умолчанию (пример — слот A):
+Мейнтейнер скажет, **какой файл и в какой слот** шить. Путь по умолчанию
+для всех актуальных сборок — **AIO-пакет установки** ниже. Ручные
+fastboot-процедуры — это legacy (до-AIO), они под спойлером в конце
+раздела — используй их только когда мейнтейнер прямо сказал.
 
-```
-fastboot flash vendor_boot_a OrangeFox-test-xxx.img
-fastboot reboot recovery
-```
-
-### Pixel 6 series (gs101: oriole/raven/bluejay) — особая процедура
-
-> ⚠️ ТОЛЬКО ДЛЯ ДО-AIO СБОРОК (напр. `test_1-gs101`). Для `-aio` сборок
-> НИКОГДА не шей сырой cpio через fastboot — образ семейно-нейтральный,
-> ему нужен своп инсталлера (USB-контроллер, fstab, keymint-манифесты),
-> иначе на gs101 загрузится. Используй AIO-пакет выше; сырой AIO на
-> Pixel 6 грузится с мёртвым USB (нет adb) и кривой геометрией экрана.
-
-У Pixel 6 нет раздела `vendor_kernel_boot`, поэтому шьётся **НЕ**
-`.img`, а **рамдиск** `.ramdisk.lz4` в platform-фрагмент (обрати
-внимание на висячее двоеточие = пустое имя фрагмента):
-
-```
-fastboot flash vendor_boot_a: OrangeFox-test-xxx-gs101.ramdisk.lz4
-fastboot reboot recovery
-```
-
-(`:default` или `:recovery` здесь НЕПРАВИЛЬНО — первое схлопывает всю
-таблицу и убивает стоковый dlkm, второе пишет не в тот фрагмент.)
-
-### Новое: AIO-пакет установки (рекомендуется для `-aio` сборок)
+### AIO-пакет установки (рекомендуется)
 
 Для AIO-тестов мейнтейнер отдаёт инсталлер-пакет вместо сырого `.img`:
 пейлоад recovery (`OrangeFox-*-aio.ramdisk.lz4`), `export.txt`, бинарники
@@ -114,8 +91,40 @@ First_stage, cmdline ядра и dlkm всегда остаются стоков
 `backup/<дата-время>/install.log` (ПК) или
 `/tmp/recovery_install/install.log` (на девайсе).
 
-Ручную прошивку `fastboot flash vendor_boot_X` ниже используй только
-когда мейнтейнер прямо сказал.
+Ручную прошивку `fastboot flash vendor_boot_X` из legacy-спойлера ниже
+используй только когда мейнтейнер прямо сказал.
+
+<details>
+<summary>Legacy: ручная прошивка через fastboot (только до-AIO сборки — нажми чтобы развернуть)</summary>
+
+Процедура по умолчанию (пример — слот A):
+
+```
+fastboot flash vendor_boot_a OrangeFox-test-xxx.img
+fastboot reboot recovery
+```
+
+#### Pixel 6 series (gs101: oriole/raven/bluejay) — особая процедура
+
+> ⚠️ ТОЛЬКО ДЛЯ ДО-AIO СБОРОК (напр. `test_1-gs101`). Для `-aio` сборок
+> НИКОГДА не шей сырой cpio через fastboot — образ семейно-нейтральный,
+> ему нужен своп инсталлера (USB-контроллер, fstab, keymint-манифесты),
+> иначе на gs101 загрузится. Используй AIO-пакет выше; сырой AIO на
+> Pixel 6 грузится с мёртвым USB (нет adb) и кривой геометрией экрана.
+
+У Pixel 6 нет раздела `vendor_kernel_boot`, поэтому шьётся **НЕ**
+`.img`, а **рамдиск** `.ramdisk.lz4` в platform-фрагмент (обрати
+внимание на висячее двоеточие = пустое имя фрагмента):
+
+```
+fastboot flash vendor_boot_a: OrangeFox-test-xxx-gs101.ramdisk.lz4
+fastboot reboot recovery
+```
+
+(`:default` или `:recovery` здесь НЕПРАВИЛЬНО — первое схлопывает всю
+таблицу и убивает стоковый dlkm, второе пишет не в тот фрагмент.)
+
+</details>
 
 Сначала бэкап (бутлоадер, рут не нужен) — оба слота:
 ```
@@ -433,8 +442,8 @@ fastboot flash vendor_boot_a vendor_boot_a.stock.img   # или _b
 ```
 fastboot getvar current-slot
 fastboot --set-active=a|b
-fastboot flash vendor_boot_a|b <файл>
-fastboot flash vendor_boot_a: <ramdisk.lz4>   # только Pixel 6 series (двоеточие!)
+fastboot flash vendor_boot_a|b <файл>   # legacy, ручной путь (до-AIO)
+fastboot flash vendor_boot_a: <ramdisk.lz4>   # legacy, только Pixel 6 series (двоеточие!)
 ./install-desktop.sh                              # AIO-инсталлер, Linux (из бутлоадера)
 install-desktop.bat                               # AIO-инсталлер, Windows (из бутлоадера)
 fastboot fetch vendor_boot_a|b ./backup.img   # бэкап без рута

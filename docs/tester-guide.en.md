@@ -49,36 +49,12 @@ follow this guide exactly and you will always have a way back.
 ## 1. Flashing a test build
 
 The maintainer will tell you **which file to flash and into which slot**.
-Default procedure (example: slot A):
+The default path for all current builds is the **AIO installer package**
+below. Manual fastboot flows are legacy (pre-AIO) and live under the
+spoiler at the end of this section — use them only when the maintainer
+explicitly says so.
 
-```
-fastboot flash vendor_boot_a OrangeFox-test-xxx.img
-fastboot reboot recovery
-```
-
-### Pixel 6 series (gs101: oriole/raven/bluejay) — special procedure
-
-> ⚠️ APPLIES TO PRE-AIO BUILDS ONLY (e.g. `test_1-gs101`). For `-aio`
-> builds, NEVER flash the raw cpio with fastboot — the image is
-> family-neutral and needs the installer swap (USB controller, fstab,
-> keymint manifests) before it can boot correctly on gs101. Use the AIO
-> installer package above; raw-flashed AIO on Pixel 6 boots with broken
-> USB (no adb) and wrong display geometry.
-
-Pixel 6 has no `vendor_kernel_boot` partition, so you do **NOT** flash
-the `.img` — you flash the `.ramdisk.lz4` **ramdisk** into the platform
-fragment (note the trailing colon = empty fragment name):
-
-```
-fastboot flash vendor_boot_a: OrangeFox-test-xxx-gs101.ramdisk.lz4
-fastboot reboot recovery
-```
-
-(`:default` or `:recovery` are WRONG here — the first collapses the
-whole table and kills stock dlkm, the second overwrites the wrong
-fragment.)
-
-### New: AIO installer package (recommended for `-aio` builds)
+### AIO installer package (recommended)
 
 For AIO test builds the maintainer ships an installer package instead
 of a raw `.img`: the recovery payload (`OrangeFox-*-aio.ramdisk.lz4`),
@@ -114,8 +90,42 @@ instead of flashing an over-full partition). Logs:
 `backup/<date-time>/install.log` (PC) or
 `/tmp/recovery_install/install.log` (on-device).
 
-Use the manual `fastboot flash vendor_boot_X` flow below only when the
-maintainer explicitly says so.
+Use the manual `fastboot flash vendor_boot_X` flow from the legacy spoiler
+below only when the maintainer explicitly says so.
+
+<details>
+<summary>Legacy: manual fastboot flashing (pre-AIO builds only — click to expand)</summary>
+
+Default procedure (example: slot A):
+
+```
+fastboot flash vendor_boot_a OrangeFox-test-xxx.img
+fastboot reboot recovery
+```
+
+#### Pixel 6 series (gs101: oriole/raven/bluejay) — special procedure
+
+> ⚠️ APPLIES TO PRE-AIO BUILDS ONLY (e.g. `test_1-gs101`). For `-aio`
+> builds, NEVER flash the raw cpio with fastboot — the image is
+> family-neutral and needs the installer swap (USB controller, fstab,
+> keymint manifests) before it can boot correctly on gs101. Use the AIO
+> installer package above; raw-flashed AIO on Pixel 6 boots with broken
+> USB (no adb) and wrong display geometry.
+
+Pixel 6 has no `vendor_kernel_boot` partition, so you do **NOT** flash
+the `.img` — you flash the `.ramdisk.lz4` **ramdisk** into the platform
+fragment (note the trailing colon = empty fragment name):
+
+```
+fastboot flash vendor_boot_a: OrangeFox-test-xxx-gs101.ramdisk.lz4
+fastboot reboot recovery
+```
+
+(`:default` or `:recovery` are WRONG here — the first collapses the
+whole table and kills stock dlkm, the second overwrites the wrong
+fragment.)
+
+</details>
 
 Backup first (bootloader, no root needed) — both slots:
 ```
@@ -433,8 +443,8 @@ fastboot flash vendor_boot_a vendor_boot_a.stock.img   # or _b
 ```
 fastboot getvar current-slot
 fastboot --set-active=a|b
-fastboot flash vendor_boot_a|b <file>
-fastboot flash vendor_boot_a: <ramdisk.lz4>   # Pixel 6 series only (note the colon)
+fastboot flash vendor_boot_a|b <file>   # legacy manual flow (pre-AIO)
+fastboot flash vendor_boot_a: <ramdisk.lz4>   # legacy, Pixel 6 series only (note the colon)
 ./install-desktop.sh                              # AIO installer, Linux (from bootloader)
 install-desktop.bat                               # AIO installer, Windows (from bootloader)
 fastboot fetch vendor_boot_a|b ./backup.img   # backup without root
