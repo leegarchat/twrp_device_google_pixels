@@ -903,6 +903,30 @@ case "$CALL_TYPE" in
             fi
         fi
 
+        # --- Recovery core rc rename: hw/init.rc -> recovery-core.rc ---
+        # LoadBootScripts parses /system/etc/init/hw/init.rc by exact path
+        # (return value ignored when absent) and then the whole
+        # /system/etc/init/ directory — so a verbatim move keeps every
+        # trigger/service with identical semantics, just under a new name.
+        # The old path is a kill-switch for KSU-likes: their init.rc hook
+        # (is_init_rc: exact dpath match on /system/etc/init/hw/init.rc)
+        # fires when second-stage init opens it and unconditionally dups
+        # the live sepolicy — which is NULL in recovery boot -> panic
+        # before the OFox UI (Pixel 8 husky ramoops, backslashxx KSU
+        # v3.3.0-39 LKM). With the path gone the hook cannot fire, for
+        # every KSU-like sharing that hook base. Must run BEFORE
+        # lgz_compress_ramdisk + manifest/file-list generation below so
+        # all packaging sees final names.
+        if [ -f "$TARGET_DIR/system/etc/init/hw/init.rc" ]; then
+            mv -f "$TARGET_DIR/system/etc/init/hw/init.rc" \
+                "$TARGET_DIR/system/etc/init/recovery-core.rc" \
+                && echo "    [PLATFORM]   + hw/init.rc -> recovery-core.rc (KSU hook evasion)" \
+                || return 1
+            rmdir "$TARGET_DIR/system/etc/init/hw" 2>/dev/null || true
+        else
+            echo "    [PLATFORM] WARNING: system/etc/init/hw/init.rc missing, rename skipped"
+        fi
+
         # --- Pixel device config: merge per-device JSON for the Rust engine ---
         echo "    [PIXELCFG] Merging device configs..."
         merge_pixel_config "$TARGET_DIR" "$PLATFORM" || return 1
