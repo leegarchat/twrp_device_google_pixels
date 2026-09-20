@@ -1,6 +1,12 @@
 #!/bin/bash
 # aio_swap.sh — reference post-unpack family swap for the all-in-one cpio.
 #
+# NOTE: on-device boots do NOT need this script — recovery-init-stub
+# (aioswap.c) performs the same swap at boot time, post LGZ unpack and
+# pre init, driven by androidboot.hardware (plus the ofx_swap=<fam>
+# cmdline test hook). This script mirrors that logic for EXTERNAL use
+# (installer tooling operating on an unpacked cpio on host/PC).
+#
 # The AIO ramdisk ships family-neutral defaults (zuma placeholders) plus a
 # swap kit: /etc/recovery.fstab.<fam>, /system/etc/twrp.flags.<fam>,
 # /vendor/etc/vintf/manifest/keymint.<fam>.xml, both keymint HAL binaries,

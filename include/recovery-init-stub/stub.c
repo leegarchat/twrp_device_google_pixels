@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "snapshot.h"
+#include "aioswap.h"
 
 static const char kInitReal[] = "/system/bin/init.real";
 static const char kCluster[] = "/lgz_cluster.lgz";
@@ -100,6 +101,12 @@ int main(int argc, char** argv, char** envp) {
         };
         if (run_child(kLgzBin, lgz_argv) != 0 && recovery_mode) reboot_bootloader();
     }
+
+    /* AIO family swap (aioswap.c): the tree is fully unpacked here and the
+     * real init has not parsed anything yet, so family files (fstab,
+     * flags, wipe, USB controller in rc, KeyMint set, selector prop) can
+     * still be swapped. Best-effort, never fatal. */
+    aioswap_run();
 
     exec_real(argc, argv, envp);
     return 127;

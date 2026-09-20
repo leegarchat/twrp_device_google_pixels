@@ -264,6 +264,17 @@ merged['kernel_bootcfg'] = bootcfg
 out.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + '\n')
 print(f'    [PIXELCFG] merged {n} devices (family {platform}) -> /pixelrunatboot.json')
 print(f'    [PIXELCFG] kernel_bootcfg for {len(bootcfg)} devices')
+# Flat device->family map for the stub-time AIO swap (aioswap.c reads it
+# pre-init, no JSON parser needed there): system/etc/aio/devices.txt,
+# "<device>:<family>" per line. Stays open (never packed).
+aiodir = out.parent / 'system' / 'etc' / 'aio'
+aiodir.mkdir(parents=True, exist_ok=True)
+with open(aiodir / 'devices.txt', 'w') as f:
+    for dev in sorted(merged):
+        if dev.startswith('_') or dev == 'kernel_bootcfg':
+            continue
+        f.write(f"{dev}:{merged[dev].get('family', '')}\n")
+print(f'    [PIXELCFG] device map -> /system/etc/aio/devices.txt')
 PYEOF
 }
 

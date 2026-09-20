@@ -42,6 +42,16 @@ for _l in /tmp/reflash_recovery/install-*.log; do
     cp -f "$_l" "$DEST/" 2>/dev/null && echo "flog: + $(basename "$_l")"
 done
 
+# --- early-boot engine logs (stub swap + rust init stages) ---
+for _f in /tmp/aio_stub.log /dev/logs/runatinit.log; do
+    _b=$(basename "$_f")
+    if [ -f "$_f" ]; then cp -f "$_f" "$DEST/aio_$_b" 2>/dev/null \
+        && echo "flog: + aio_$_b"
+    else
+        echo "flog: - missing: $_f"
+    fi
+done
+
 # --- kernel + system logs ---
 if command -v dmesg >/dev/null 2>&1 && dmesg > "$DEST/dmesg.log" 2>/dev/null \
     && [ -s "$DEST/dmesg.log" ]; then
