@@ -43,10 +43,13 @@ for _l in /tmp/reflash_recovery/install-*.log; do
 done
 
 # --- early-boot engine logs (stub swap + rust init stages) ---
-for _f in /tmp/aio_stub.log /dev/logs/runatinit.log; do
-    _b=$(basename "$_f")
-    if [ -f "$_f" ]; then cp -f "$_f" "$DEST/aio_$_b" 2>/dev/null \
-        && echo "flog: + aio_$_b"
+# The stub mirrors its log to /aio_stub.log (rootfs "/" is never
+# over-mounted; /tmp gets a tmpfs over it and the copy is lost).
+for _pair in /tmp/aio_stub.log:aio_stub_tmp.log /aio_stub.log:aio_stub.log /dev/logs/runatinit.log:aio_runatinit.log; do
+    _f="${_pair%%:*}"
+    _b="${_pair##*:}"
+    if [ -f "$_f" ]; then cp -f "$_f" "$DEST/$_b" 2>/dev/null \
+        && echo "flog: + $_b"
     else
         echo "flog: - missing: $_f"
     fi
@@ -110,6 +113,12 @@ fi
 for _f in /system/etc/aio/families.txt /pixelrunatboot.json; do
     [ -f "$_f" ] && cp -f "$_f" "$DEST/$(basename "$_f")" 2>/dev/null
 done
+
+# --- permissions: cp inherits the source mode (recovery.log is 0600),
+# which MTP/PC readers cannot open. Force world-readable copies. ---
+chmod 755 "$DEST" 2>/dev/null
+chmod 644 "$DEST"/* 2>/dev/null
+echo "flog: perms forced to 644"
 
 echo ""
 echo "flog: DONE -> $DEST"

@@ -247,11 +247,45 @@ fn switch_to_device(current: &mut String) {
     // usb.rc bind trigger. Writing the controller explicitly re-binds the
     // gadget regardless of edge state; starting adbd is a no-op when it
     // already runs and covers the never-started race.
-    let controller = get_prop("sys.usb.controller");
-    let controller = if controller.is_empty() { UDC_NAME } else { controller.as_str() };
+    let controller = resolve_udc();
+    info(&format!("device mode: binding UDC {controller}"));
     let _ = std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes());
     let _ = set_prop("ctl.start", "adbd");
     *current = "device".into();
+}
+
+/// Resolve the UDC name to bind. sysfs is hardware ground truth: the
+/// sys.usb.controller prop wins only when it names a real sysfs UDC
+/// (properly swapped tree). On an unswapped tree the prop holds the
+/// blanked "UNKNOWN.dwc3" literal (or garbage) and must NOT be written
+/// to g1/UDC — the bind would fail and the gadget stays dead. Pure over
+/// inputs (testable); sysfs/prop reads live in the caller.
+fn pick_controller(prop: &str, sysfs: &[String]) -> String {
+    let p = prop.trim();
+    if !p.is_empty() && !p.contains("UNKNOWN") && sysfs.iter().any(|e| e == p) {
+        return p.to_string();
+    }
+    if let Some(first) = sysfs.first() {
+        return first.clone();
+    }
+    if !p.is_empty() && !p.contains("UNKNOWN") {
+        return p.to_string();
+    }
+    UDC_NAME.to_string()
+}
+
+/// Live UDC resolution: sorted sysfs entries + current prop value.
+fn resolve_udc() -> String {
+    let mut sysfs: Vec<String> = std::fs::read_dir("/sys/class/udc")
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    sysfs.sort();
+    pick_controller(&get_prop("sys.usb.controller"), &sysfs)
 }
 
 /// otg-auto: default HOST, PC detected by external VBUS -> DEVICE. Never exits.
@@ -343,5 +377,36 @@ pub fn run_otg_auto() -> ! {
         // ffs.ready is polled for parity with shell dump_state logging.
         let _ = get_prop("sys.usb.ffs.ready");
         sleep(Duration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn udc_prefers_valid_prop() {
+        let sys = vec!["11210000.dwc3".to_string()];
+        // Swapped tree: prop names the real UDC -> prop wins.
+        assert_eq!(pick_controller("11210000.dwc3", &sys), "11210000.dwc3");
+        assert_eq!(pick_controller("11210000.dwc3\n", &sys), "11210000.dwc3");
+    }
+
+    #[test]
+    fn udc_rejects_blanked_literal() {
+        let sys = vec!["11210000.dwc3".to_string()];
+        // Unswapped tree: blanked literal must never reach g1/UDC.
+        assert_eq!(pick_controller("UNKNOWN.dwc3", &sys), "11210000.dwc3");
+        assert_eq!(pick_controller("", &sys), "11210000.dwc3");
+        assert_eq!(pick_controller("garbage.dwc3", &sys), "11210000.dwc3");
+    }
+
+    #[test]
+    fn udc_no_sysfs_falls_back() {
+        let empty: Vec<String> = Vec::new();
+        // No sysfs: valid prop still usable, blanked -> compiled default.
+        assert_eq!(pick_controller("c400000.dwc3", &empty), "c400000.dwc3");
+        assert_eq!(pick_controller("UNKNOWN.dwc3", &empty), UDC_NAME);
+        assert_eq!(pick_controller("", &empty), UDC_NAME);
     }
 }

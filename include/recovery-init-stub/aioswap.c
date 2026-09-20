@@ -23,6 +23,11 @@
 #define AIO_FAMILIES "/system/etc/aio/families.txt"
 #define AIO_ETC "/system/etc"
 #define AIO_LOG "/tmp/aio_stub.log"
+/* Primary early log. Rootfs "/" is never over-mounted (unlike /tmp, which
+ * the real init mounts tmpfs over, shadowing anything the stub wrote
+ * there), so this copy always survives until flog collects it. /tmp is
+ * kept as a mirror for chroot tests and compat. */
+#define AIO_LOG_ROOT "/aio_stub.log"
 #define KMSG "/dev/kmsg"
 
 #define RC_COMMON "/init.recovery.pixel_common.rc"
@@ -46,6 +51,7 @@ static const char* const kFamilies[] = {
 
 static int kmsg_fd = -1;
 static int log_fd = -1;
+static int log_root_fd = -1;
 
 /* write-all, result intentionally unchecked (best-effort logging). */
 static void aio_write(int fd, const char* s, size_t len) {
@@ -77,6 +83,14 @@ static void aio_log(const char* s) {
     if (log_fd >= 0) {
         aio_write(log_fd, "ofx-aio: ", 9);
         aio_write(log_fd, s, len);
+    }
+    if (log_root_fd < 0) {
+        log_root_fd =
+            open(AIO_LOG_ROOT, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+    }
+    if (log_root_fd >= 0) {
+        aio_write(log_root_fd, "ofx-aio: ", 9);
+        aio_write(log_root_fd, s, len);
     }
 }
 
@@ -198,10 +212,16 @@ static int proc_ours = 0;
 
 static void ensure_proc(void) {
     char probe[16];
-    if (read_file("/proc/cmdline", probe, sizeof(probe)) >= 0) return;
+    if (read_file("/proc/cmdline", probe, sizeof(probe)) >= 0) {
+        aio_log("proc: pre-mounted\n");
+        return;
+    }
     if (mount("proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV,
               NULL) == 0) {
         proc_ours = 1;
+        aio_log("proc: mounted by stub\n");
+    } else {
+        aio_log("proc: mount FAILED, cmdline reads will fail\n");
     }
 }
 

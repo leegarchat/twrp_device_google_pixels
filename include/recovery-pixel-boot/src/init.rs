@@ -3,6 +3,14 @@
 //! Runs on `early-init` via exec, BEFORE USB gadget configfs and TWRP
 //! data.cpp: family/device props, twrp.flags fix, LGZ zip payload restore,
 //! magiskboot extraction. Called as `recovery-pixel-boot init`.
+//!
+//! Also the AIO second-pass family swap: the C stub swaps
+//! recovery.fstab/twrp.flags/recovery.wipe pre-init, but its log sinks
+//! are unreliable that early (tmpfs over /tmp, wrapped kmsg). When the
+//! stub missed (or the image predates it), the live files are still the
+//! AIO placeholders here — and the recovery process (which parses them)
+//! has not started yet (`exec` blocks init), so re-doing the swap now is
+//! safe and idempotent. Same for the USB gadget UDC rescue below.
 
 use crate::config::load_device_config;
 use crate::props::{get_prop, set_prop};
@@ -13,6 +21,14 @@ use std::path::{Path, PathBuf};
 const TAG: &str = "runatinit";
 const DBGLOG: &str = "/dev/logs/runatinit.log";
 const FLAGS_FILE: &str = "/system/etc/twrp.flags";
+const ETC_DIR: &str = "/system/etc";
+/// Marker in the shipped AIO live placeholders (recovery.fstab,
+/// twrp.flags, recovery.wipe). A live file still carrying it means the
+/// stub-time swap did not happen — redo it here.
+const PLACEHOLDER_MARK: &str = "AIO LIVE placeholder";
+const SWAP_NAMES: [&str; 3] = ["recovery.fstab", "twrp.flags", "recovery.wipe"];
+const UDC_SYSFS: &str = "/sys/class/udc";
+const GADGET_UDC: &str = "/config/usb_gadget/g1/UDC";
 
 fn dlog(log: &mut Option<std::fs::File>, msg: &str) {
     if let Some(f) = log.as_mut() {
@@ -57,6 +73,131 @@ pub fn patch_otg_line(line: &str, next: char) -> String {
         }
     }
     out
+}
+
+/// True when a live AIO file is still the unswapped placeholder.
+fn needs_swap(content: &str) -> bool {
+    content.contains(PLACEHOLDER_MARK)
+}
+
+/// Swap one live file from its family kit when still a placeholder.
+/// Returns a short status token for the caller to log.
+fn swap_one_file(etc: &Path, live: &str, family: &str) -> &'static str {
+    let dst = etc.join(live);
+    let cur = std::fs::read_to_string(&dst).unwrap_or_default();
+    if !cur.is_empty() && !needs_swap(&cur) {
+        return "already-swapped";
+    }
+    let src = etc.join(format!("{live}.{family}"));
+    if !src.is_file() {
+        return "no-kit";
+    }
+    match std::fs::copy(&src, &dst) {
+        Ok(_) => "swapped",
+        Err(_) => "copy-failed",
+    }
+}
+
+/// AIO second-pass family swap (idempotent; the stub is the first pass).
+/// Must run before fix_twrp_flags consumes twrp.flags and before the
+/// recovery process parses recovery.fstab.
+fn ensure_family_swap(log: &mut Option<std::fs::File>, family: &str) {
+    if family.is_empty() {
+        dlog(log, "family-swap: unknown family, skipped");
+        crate::ko_picker::log_msg("boot", "WARN", "family-swap: unknown family, skipped");
+        return;
+    }
+    let etc = Path::new(ETC_DIR);
+    for name in SWAP_NAMES {
+        match swap_one_file(etc, name, family) {
+            "already-swapped" => dlog(log, &format!("family-swap: {name} already swapped, kept")),
+            "swapped" => {
+                dlog(log, &format!("family-swap: {name} <- {family} (rust second-pass)"));
+                crate::ko_picker::log_msg(
+                    "boot",
+                    "INFO",
+                    &format!("family-swap: {name} <- {family} (stub missed, rust fixed)"),
+                );
+            }
+            "no-kit" => dlog(log, &format!("family-swap: no kit {name}.{family}, kept")),
+            _ => dlog(log, &format!("family-swap: {name} copy FAILED")),
+        }
+    }
+}
+
+/// Pick the UDC to bind: None when `current` is already a real sysfs UDC
+/// (nothing to do), else the first sysfs UDC. Pure (testable).
+fn pick_udc(entries: &[String], current: &str) -> Option<String> {
+    let cur = current.trim();
+    if !cur.is_empty() && entries.iter().any(|e| e == cur) {
+        return None;
+    }
+    entries.first().cloned()
+}
+
+/// USB gadget UDC rescue. init's parsed rc carries the blanked
+/// "UNKNOWN.dwc3" literal (only a pre-init stub sed could change it), so
+/// without a stub swap the gadget never binds and adb/MTP stay dead.
+/// Binding the real sysfs UDC here restores enumeration; init's later
+/// literal writes then fail EBUSY (already bound) instead of breaking it.
+/// Waits briefly for configfs (g1 appears on a later early-init step).
+fn ensure_usb_gadget(log: &mut Option<std::fs::File>) {
+    let mut udcs: Vec<String> = std::fs::read_dir(UDC_SYSFS)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty() && n != "." && n != "..")
+                .collect()
+        })
+        .unwrap_or_default();
+    udcs.sort();
+    if udcs.is_empty() {
+        dlog(log, "usb-rescue: no UDC in sysfs, skipped");
+        crate::ko_picker::log_msg("boot", "WARN", "usb-rescue: no UDC in sysfs, skipped");
+        return;
+    }
+    // Wait up to 5s for the gadget node (created by init's usb rc).
+    let mut current = String::new();
+    let mut seen = false;
+    for _ in 0..6 {
+        if let Ok(c) = std::fs::read_to_string(GADGET_UDC) {
+            current = c;
+            seen = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    if !seen {
+        dlog(log, "usb-rescue: g1/UDC absent after 5s, skipped");
+        crate::ko_picker::log_msg("boot", "WARN", "usb-rescue: g1/UDC absent after 5s, skipped");
+        return;
+    }
+    match pick_udc(&udcs, &current) {
+        None => dlog(log, &format!("usb-rescue: UDC already bound to {}", current.trim())),
+        Some(real) => {
+            match std::fs::write(GADGET_UDC, &real) {
+                Ok(_) => {
+                    dlog(log, &format!("usb-rescue: UDC '{}' -> '{real}'", current.trim()));
+                    crate::ko_picker::log_msg(
+                        "boot",
+                        "INFO",
+                        &format!("usb-rescue: UDC bound to {real} (stub missed)"),
+                    );
+                    // Cosmetic: init's rc setprop used the blanked literal.
+                    // Best-effort only (init may overwrite later; harmless).
+                    let _ = set_prop("sys.usb.controller", &real);
+                }
+                Err(e) => {
+                    dlog(log, &format!("usb-rescue: UDC bind FAILED: {e}"));
+                    crate::ko_picker::log_msg(
+                        "boot",
+                        "WARN",
+                        &format!("usb-rescue: UDC bind FAILED: {e}"),
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Device override: /system/etc/<device>.twrp.flags (placed by the builder
@@ -459,6 +600,12 @@ pub fn run_init() -> Result<(), String> {
         }
     }
 
+    // AIO second-pass family swap (stub is the first pass): placeholders
+    // still live here mean the stub missed. Idempotent — a swapped tree
+    // is detected per file and left alone. Must precede everything that
+    // consumes twrp.flags / recovery.fstab below.
+    ensure_family_swap(&mut log, &cfg.family);
+
     // Display geometry: earliest race-free point (early-init exec, before
     // twrp.cpp SetDefaultValues reads DOF_* and before minui opens DRM).
     // Re-load config under the corrected code so folds resolve geometry.
@@ -480,6 +627,12 @@ pub fn run_init() -> Result<(), String> {
     }
 
     fix_twrp_flags(&mut log);
+
+    // USB gadget UDC rescue: with an unswapped tree init's rc still holds
+    // the blanked UNKNOWN.dwc3 literal and the gadget never binds (no
+    // adb/MTP). Bind the real sysfs UDC so the gadget enumerates; init's
+    // later literal writes then fail EBUSY instead of breaking it.
+    ensure_usb_gadget(&mut log);
     // NOTE: no lgz_decompress_zips step. The solid UCOMP02 cluster ingests
     // *.zip transparently at build time and `lgz decompress` (init.cpp)
     // restores them; the old /lgz_zip_manifest.txt flow is dead (the build
@@ -529,6 +682,46 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    #[test]
+    fn family_swap_marker() {
+        assert!(needs_swap("# recovery.fstab — AIO LIVE placeholder (intentionally empty).\n"));
+        assert!(!needs_swap("# recovery.fstab — Partition layout for Zuma SoC\n"));
+        // Empty/missing live file has no marker, but swap_one_file still
+        // attempts the kit copy (the `is_empty` branch) — covered below.
+        assert!(!needs_swap(""));
+        assert!(!needs_swap(&std::fs::read_to_string("/nonexistent-fox").unwrap_or_default()));
+    }
+
+    #[test]
+    fn family_swap_roundtrip() {
+        let d = std::env::temp_dir().join(format!("fox_test_famswap_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("recovery.fstab"), b"# AIO LIVE placeholder\n").unwrap();
+        std::fs::write(d.join("recovery.fstab.zuma"), b"REAL-KIT").unwrap();
+        assert_eq!(swap_one_file(&d, "recovery.fstab", "zuma"), "swapped");
+        assert_eq!(std::fs::read(&d.join("recovery.fstab")).unwrap(), b"REAL-KIT");
+        // Second pass is a no-op.
+        assert_eq!(swap_one_file(&d, "recovery.fstab", "zuma"), "already-swapped");
+        // Missing kit keeps the placeholder.
+        std::fs::write(d.join("twrp.flags"), b"# AIO LIVE placeholder\n").unwrap();
+        assert_eq!(swap_one_file(&d, "twrp.flags", "zuma"), "no-kit");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn udc_pick() {
+        let udcs = vec!["11210000.dwc3".to_string()];
+        // Already bound to a real UDC -> nothing to do.
+        assert_eq!(pick_udc(&udcs, "11210000.dwc3"), None);
+        assert_eq!(pick_udc(&udcs, "11210000.dwc3\n"), None);
+        // Blanked literal / empty / garbage -> bind the real one.
+        assert_eq!(pick_udc(&udcs, "UNKNOWN.dwc3"), Some("11210000.dwc3".to_string()));
+        assert_eq!(pick_udc(&udcs, ""), Some("11210000.dwc3".to_string()));
+        // No sysfs UDCs -> no rescue possible.
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(pick_udc(&empty, "UNKNOWN.dwc3"), None);
+    }
     #[test]
     fn otg_letter_steps() {
         assert_eq!(next_otg_letter('a'), Some('b'));
