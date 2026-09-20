@@ -69,7 +69,7 @@ OrangeFox in recovery; only the starting point differs):
 
 #### Step 0 — to unpack or not to unpack
 
-The downloaded file looks like `OrangeFox-R12.0-test6-aio.zip` (~47 MB).
+The downloaded file looks like `OrangeFox-<version>-<tag>-aio.zip` (tens of MB).
 
 - **Desktop install (Variants A/B below): UNPACK FIRST.** You need real
   files on disk, not an archive preview.
