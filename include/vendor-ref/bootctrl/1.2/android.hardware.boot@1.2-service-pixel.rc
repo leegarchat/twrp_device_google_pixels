@@ -1,0 +1,8 @@
+service vendor.boot-hal-1-2 /system/bin/hw/android.hardware.boot@1.2-service-pixel
+    interface android.hardware.boot@1.0::IBootControl default
+    interface android.hardware.boot@1.1::IBootControl default
+    interface android.hardware.boot@1.2::IBootControl default
+    class early_hal
+    user root
+    group root drmrpc
+    seclabel u:r:recovery:s0

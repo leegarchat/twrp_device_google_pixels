@@ -1,0 +1,27 @@
+# bootsmasher install paths (read by `bootsmasher install`).
+#
+# KEY=VALUE lines, # comments, blank lines ignored; values may be
+# quoted ("..." or '...'). Relative paths resolve against the directory
+# holding THIS file. Lookup order: --export FILE, export.txt next to
+# the binary, ./export.txt. Unknown keys are ignored.
+#
+# The binary picks the platform-tools dir by OS (PLATFORM_TOOLS_LINUX
+# on Linux, PLATFORM_TOOLS_WINDOWS on Windows); a bare FASTBOOT_BIN /
+# ADB_BIN value on Windows means the .exe. Paths are relative to the
+# directory holding THIS file; the tools live under bin/<os>/ next to
+# the installer binaries.
+
+RECOVERY_IMG=OrangeFox-R12.0-test6-aio.ramdisk.lz4
+BACKUP_DIR=backup
+PLATFORM_TOOLS_LINUX=bin/linux/platform-tools
+PLATFORM_TOOLS_WINDOWS=bin/windows/platform-tools
+FASTBOOT_BIN=fastboot
+ADB_BIN=adb
+# Minimum free space (MiB) a flashed image must leave in the
+# partition. Enforced by the desktop installer (waivable with --force)
+# and by install-recovery.sh (strict, no bypass).
+MIN_FREE_MB=7
+# SLOT is used by install-recovery.sh (on-device install, no menus):
+# both (default) | a | b | 0 (=a) | 1 (=b) | current (active slot
+# from the ro.boot.slot_suffix property).
+SLOT=both

@@ -133,7 +133,7 @@ fox_print_tree() {
             dfam=$(FAMILY=""; DEVICE=""; . "$dev_conf" 2>/dev/null; printf '%s' "$FAMILY")
             [ "$dfam" = "$fam" ] || continue
             any_dev=true
-            klist=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$fam" "$dev" 2>/dev/null) || klist="(error)"
+            klist=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$fam" "$dev" 2>/dev/null) || klist="(error)"
             over=""
             python3 -c "import json,sys; sys.exit(0 if 'kernels' in json.load(open(sys.argv[1])) else 1)" "$SCRIPT_DIR/devices/$dev/pixel.json" 2>/dev/null && over=" [override]"
             echo "  $dev [kernels=${klist}${over}]"
@@ -314,13 +314,13 @@ elif [[ -n "$FAMILY" ]]; then
     KFAMILY="$FAMILY"
     KDEV="${_DEV:-}"
     if [[ -n "$KDEV" ]]; then
-        KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" "$KDEV" 2>&1) || {
+        KLIST_RAW=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$KFAMILY" "$KDEV" 2>&1) || {
             echo "ERROR: kernel profile list crashed for $KFAMILY/$KDEV (not 'no kernels' — the script itself failed):"
             echo "$KLIST_RAW" >&2
             fox_safe_exit 2
         }
     else
-        KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
+        KLIST_RAW=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
             echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
             echo "$KLIST_RAW" >&2
             fox_safe_exit 2
@@ -351,7 +351,7 @@ elif [[ -n "$FAMILY" ]]; then
             fox_safe_exit 2
         fi
         if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-            FP_JSON=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
+            FP_JSON=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
                 echo "$FP_JSON" >&2
                 fox_safe_exit 2
             }
@@ -402,7 +402,7 @@ print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))'
             # mka (make re-reads BoardConfig every invocation).
             if [[ "$SAFE_EXIT_REQUESTED" == false && ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
                 _pre_gen="${KERNEL_GROUPS[0]#*|}"
-                python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate \
+                python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate \
                     "$KFAMILY" "${_pre_gen:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
                     || fox_safe_exit 2
             fi
@@ -508,7 +508,7 @@ if [[ -z "$KERNEL_MK" ]]; then
         [ "$_fam" = "common" ] && continue
         _def=$(python3 -c "import json;print(json.load(open('$_fam_json')).get('default_kernel',''))" 2>/dev/null)
         [ -n "$_def" ] || continue
-        python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate "$_fam" "-" "$_def" "$SCRIPT_DIR/families/$_fam/.gen_kernel.mk" >/dev/null 2>&1 || true
+        python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate "$_fam" "-" "$_def" "$SCRIPT_DIR/families/$_fam/.gen_kernel.mk" >/dev/null 2>&1 || true
     done
     echo "[build] Pre-generated default kernel profiles for lunch (family selected interactively)"
 fi
@@ -520,7 +520,7 @@ fi
 if [[ -n "${KERNEL_MK:-}" ]]; then
     if [[ ! -s "$KERNEL_MK" ]] || ! grep -q '^VENDOR_CMDLINE := "[^"]' "$KERNEL_MK"; then
         echo "ERROR: kernel profile missing/empty: $KERNEL_MK"
-        echo "  Regenerate: python3 $SCRIPT_DIR/gen_kernel_mk.py --generate $KFAMILY ${KDEV:--} ${FOX_KERNEL_VER:-VER} $KERNEL_MK"
+        echo "  Regenerate: python3 $SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py --generate $KFAMILY ${KDEV:--} ${FOX_KERNEL_VER:-VER} $KERNEL_MK"
         fox_safe_exit 2
     fi
     if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
@@ -559,7 +559,7 @@ echo "[build] DEVICE_BUILD_FLAG=${DEVICE_BUILD_FLAG:-<not set>}"
 # AIO never enters here (stock kernel kept, no profiles exist).
 if [[ -z "$KERNEL_MK" && -n "${DEVICE_BUILD_FLAG:-}" && "${DEVICE_BUILD_FLAG:-}" != "aio" ]]; then
     KFAMILY="$DEVICE_BUILD_FLAG"
-    KLIST_RAW=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
+    KLIST_RAW=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
         echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
         echo "$KLIST_RAW" >&2
         fox_safe_exit 2
@@ -583,7 +583,7 @@ if [[ -z "$KERNEL_MK" && -n "${DEVICE_BUILD_FLAG:-}" && "${DEVICE_BUILD_FLAG:-}"
         fi
     fi
     if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-        FP_JSON=$(python3 "$SCRIPT_DIR/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
+        FP_JSON=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
             echo "$FP_JSON" >&2
             fox_safe_exit 2
         }
@@ -622,7 +622,7 @@ print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))'
         fi
         export FOX_KERNEL_VER
         _pre_gen="${KERNEL_GROUPS[0]#*|}"
-        python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate \
+        python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate \
             "$KFAMILY" "${_pre_gen:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
             || fox_safe_exit 2
         # KeyMint HAL type for device.mk (same contract as the -f path above).
@@ -690,7 +690,7 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
     GROUP_TAG="${GROUP_ENTRY%%|*}"
     GROUP_GEN="${GROUP_ENTRY#*|}"
     if [[ -n "$KERNEL_MK" ]]; then
-        python3 "$SCRIPT_DIR/gen_kernel_mk.py" --generate \
+        python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate \
             "$KFAMILY" "${GROUP_GEN:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
             || fox_safe_exit 2
         if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then

@@ -33,7 +33,7 @@ _pixel_dev_family = $(shell . $(LOCAL_PATH)/devices/$(1)/device.conf 2>/dev/null
 TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH)
 ifeq ($(DEVICE_BUILD_FLAG),aio)
 # All-in-one: every device + every family overlay ships in one cpio.
-# The installer selects family files post-unpack (aio/aio_swap.sh); the rest
+# The installer selects family files post-unpack (include/aio/aio_swap.sh); the rest
 # resolves at runtime via ro.hardware (recovery-pixel-boot).
 TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/devices/*)
 TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/families/*)

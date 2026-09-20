@@ -1,2 +1,0 @@
-tools/bazel build //customDriverForDwc3:otg_host_shim
-file bazel-bin/customDriverForDwc3/otg_host_shim/otg_host_shim.ko

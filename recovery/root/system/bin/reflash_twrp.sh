@@ -5,7 +5,7 @@
 #
 # Unlike the legacy script (magiskboot full-image repack with first_stage
 # rebuild + kernel cmdline stamping), this follows the on-device installer
-# structure (bootsmasher recovery_install_components/install-recovery.sh):
+# structure (installer/install-recovery.sh):
 #
 #   1. snapshot vendor_boot_a/b blocks -> work dir
 #   2. backup snapshots -> /sdcard/backup_vendor_boot/ (best effort;

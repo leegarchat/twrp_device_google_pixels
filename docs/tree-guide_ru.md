@@ -11,11 +11,11 @@
 |---|---|---|
 | `build.sh` | Единственная точка входа сборки. Резолв `-f` (семья или девайс), `-k` (профиль ядра), группировка образов, lunch, `mka`, вызов колбэка. AI-моделям не запускать (см. `build-system_ru.md`). | разработчик |
 | `vendorsetup.sh` | Lunch-хук: меню выбора, `TARGET_DEVICE_ALT`/`FOX_TARGET_DEVICES`, все `FOX_*`/`OF_*`/`TW_*` флаги, `OF_FL_PATH1`, пишет `.build_platform.conf` | build-система, `build.sh` |
-| `fox_build_callback.sh` | `--second-call` пост-обработка готового рамдиска: мердж конфига, хирургия rc, LGZ-пакование, манифесты для reflash | `build.sh` |
-| `gen_kernel_mk.py` | Резолв kernel-профилей из JSON в `.gen_kernel.mk` (`--list/--fingerprint/--generate`) | `build.sh`, разработчик |
+| `include/prebuilt/fox_build_callback.sh` | `--second-call` пост-обработка готового рамдиска: мердж конфига, хирургия rc, LGZ-пакование, манифесты для reflash | `build.sh` |
+| `include/prebuilt/gen_kernel_mk.py` | Резолв kernel-профилей из JSON в `.gen_kernel.mk` (`--list/--fingerprint/--generate`) | `build.sh`, разработчик |
 | `sync_tree.py` | Умный `repo sync` с сохранением локальных правок + менеджер снапшотов/патчей (`-s/-d/-c/-f`) | разработчик |
 | `patches/apply_patches.py` | Применение `patches/files/*.patch` к дереву исходников (`--check` / `--apply`) | `build.sh` |
-| `check_keymint.sh` | Ручная проверка keymint на девайсе (md5 HAL, статус сервисов) | разработчик |
+| `include/prebuilt/check_keymint.sh` | Ручная проверка keymint на девайсе (md5 HAL, статус сервисов) | разработчик |
 
 ## Описание продукта
 
@@ -53,10 +53,10 @@
 | `include/recovery-tensor-daemon/` | Rust-демон: storageproxy + weaver для FBE (см. `decrypt_ru.md`) |
 | `include/recovery-init-stub/` | Статический PID 1 (`stub.c` + `snapshot.c`, см. `boot-chain_ru.md`) |
 | `include/ramdisk_snapshot/` | Rust-фолбэк снапшота рамдиска (штатно вшит в стаб) |
-| `include/lgz_compress_full_x64` / `lgz_compress_lean_arm64` | Хост-паковщик / девайс-распаковщик LGZ-кластера (пребилды-утилиты) |
-| `include/otg_host_shim/` + `recovery/root/system/lib64/modules/otg/` | Исходники и готовые `.ko` OTG-шима под все ядра |
-| `include/susfs_rename_fix/` + `.ko` | Фикс переименований susfs |
-| `fbe_kdf/` (`fox_fbe_kdf.c`) | KDF-плейграунд для FBE-исследований + `recovery/root/system/etc/fox_kdf.conf` (пайплайны) |
+| `include/prebuilt/lgz_compress_full_x64` / `lgz_compress_lean_arm64` | Хост-паковщик / девайс-распаковщик LGZ-кластера (пребилды-утилиты) |
+| `include/source/otg_host_shim/` + `recovery/root/system/lib64/modules/otg/` | Исходники и готовые `.ko` OTG-шима под все ядра |
+| `include/source/susfs_rename_fix/` + `.ko` | Фикс переименований susfs |
+| `include/fbe_kdf/` (`fox_fbe_kdf.c`) | KDF-плейграунд для FBE-исследований + `recovery/root/system/etc/fox_kdf.conf` (пайплайны) |
 
 ## Рамдиск (`recovery/root/`)
 
@@ -79,7 +79,7 @@
 | Путь | Назначение |
 |---|---|
 | `docs/` | Эта документация + гайды тестера + `FOX_FLAGS` |
-| `vendor-ref/bootctrl/` | Исходники bootctrl HAL 1.2 (собираются из исходников через Soong-неймспейс) |
+| `include/vendor-ref/bootctrl/` | Исходники bootctrl HAL 1.2 (собираются из исходников через Soong-неймспейс) |
 | `screenshots/` | Скриншоты GUI для постов и гайдов |
 | `test_/` | Распакованные образы для анализа (gitignore) |
 | `test_ai_handoff.md`, `test_static_init.md` | Исторические заметки сессий (не гайды) |

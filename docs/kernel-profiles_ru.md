@@ -49,9 +49,9 @@ build.sh -k VER
 ## Команды
 
 ```bash
-./gen_kernel_mk.py --list zuma                  # версии + (default: …)
-./gen_kernel_mk.py --fingerprint zuma 6.12      # группы: device/hash/source
-./gen_kernel_mk.py --generate zuma shiba 6.12 out.mk  # профиль в файл (сверка со стоком)
+./include/prebuilt/gen_kernel_mk.py --list zuma                  # версии + (default: …)
+./include/prebuilt/gen_kernel_mk.py --fingerprint zuma 6.12      # группы: device/hash/source
+./include/prebuilt/gen_kernel_mk.py --generate zuma shiba 6.12 out.mk  # профиль в файл (сверка со стоком)
 ```
 
 `default_kernel` в `family.json` — версия без `-k` в интерактиве.

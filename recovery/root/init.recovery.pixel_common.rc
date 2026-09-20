@@ -133,7 +133,7 @@ service recovery_weaver /system/bin/sh -c "exec /system/bin/recovery-tensor-daem
     seclabel u:r:recovery:s0
 
 # AIO keymint pre-selection (set by the installer post-unpack, see
-# aio/aio_swap.sh, via ro.recovery.keymint=rust|cpp in prop.default).
+# include/aio/aio_swap.sh, via ro.recovery.keymint=rust|cpp in prop.default).
 # Starts the matching HAL the moment the property appears — earlier than the
 # unconditional starts in `on init` above (which stay as fallback so a
 # directly-flashed cpio without the property still brings up decrypt; the

@@ -51,7 +51,7 @@ alias set. Our patches:
 - fstabs: pre-rendered for vendor_ramdisk in `families/<fam>/fstab/`,
   recovery fstab is `recovery.fstab`.
 
-## KDF playground (`fbe_kdf/`)
+## KDF playground (`include/fbe_kdf/`)
 
 `fox_fbe_kdf <secret-hex> "<pipeline>"` — research into the FBE
 synthetic-password KDF: `slice`/`hex`/`unhex`/`ph512`/`ph256`/

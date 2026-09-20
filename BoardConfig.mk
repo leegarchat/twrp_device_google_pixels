@@ -276,7 +276,7 @@ TW_VERSION := LeeGarChat
 LC_ALL := C
 TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.0/lun.%d/file
 
-BOARD_RECOVERY_IMAGE_PREPARE = bash $(DEVICE_PATH)/fox_build_callback.sh $(TARGET_RECOVERY_ROOT_OUT) --second-call
+BOARD_RECOVERY_IMAGE_PREPARE = bash $(DEVICE_PATH)/include/prebuilt/fox_build_callback.sh $(TARGET_RECOVERY_ROOT_OUT) --second-call
 
 # Workaround
 TARGET_COPY_OUT_VENDOR := vendor

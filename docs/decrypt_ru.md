@@ -50,7 +50,7 @@ alias-набор. Наши патчи:
 - fstab'ы: пре-рендеренные под vendor_ramdisk в `families/<fam>/fstab/`,
   рекавери-fstab — `recovery.fstab`.
 
-## KDF-плейграунд (`fbe_kdf/`)
+## KDF-плейграунд (`include/fbe_kdf/`)
 
 `fox_fbe_kdf <secret-hex> "<pipeline>"` — исследование FBE
 synthetic-password KDF: стадии `slice`/`hex`/`unhex`/`ph512`/`ph256`/

@@ -1,0 +1,6 @@
+id=ofx_vb_installer
+name=OrangeFox vendor_boot installer
+version=v1.0
+versionCode=1
+author=OrangeFox Pixel group
+description=Installs OrangeFox vendor_boot (both slots by default, SLOT= in export.txt), keeps a backup on userdata, then removes itself. Installer only, no persistent module.

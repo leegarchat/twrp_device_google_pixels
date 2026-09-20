@@ -286,14 +286,14 @@ export FOX_ENABLE_KERNELSU_NEXT_SUPPORT=1
 export FOX_DELETE_INITD_ADDON=1
 
 # --- Custom build callback: LGZ cluster pack, platform injection (fox_build_callback.sh) ---
-export FOX_LOCAL_CALLBACK_SCRIPT="$(gettop)/device/google/pixels/fox_build_callback.sh"
+export FOX_LOCAL_CALLBACK_SCRIPT="$(gettop)/device/google/pixels/include/prebuilt/fox_build_callback.sh"
 
 # --- LGZ (Rust): prebuilt static binaries, no compilation ---
 # Host compressor (x86_64, full flavor) and device decompressor (arm64,
-# lean flavor) live in include/. The callback installs the latter as
+# lean flavor) live in include/prebuilt/. The callback installs the latter as
 # /system/bin/lgz and packs the ramdisk with the former.
-LGZ_HOST_BIN="$(gettop)/device/google/pixels/include/lgz_compress_full_x64"
-LGZ_DEVICE_BIN="$(gettop)/device/google/pixels/include/lgz_compress_lean_arm64"
+LGZ_HOST_BIN="$(gettop)/device/google/pixels/include/prebuilt/lgz_compress_full_x64"
+LGZ_DEVICE_BIN="$(gettop)/device/google/pixels/include/prebuilt/lgz_compress_lean_arm64"
 if [ -x "$LGZ_HOST_BIN" ]; then
     echo "[LGZ]   Host compressor OK: $LGZ_HOST_BIN"
 else

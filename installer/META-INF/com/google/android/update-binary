@@ -1,0 +1,41 @@
+#!/sbin/sh
+# Recovery entry point: unpacks this zip and runs install-recovery.sh.
+# Args from recovery: $1 version, $2 console fd, $3 zip file.
+OUTFD="$2"
+ZIPFILE="$3"
+TMP="/tmp/ofx_vb"
+
+# Recovery console when the fd is usable, plain echo otherwise
+# (e.g. manual runs for debugging).
+if echo "ui_print " > "/proc/self/fd/$OUTFD" 2>/dev/null; then
+    UI_FD_OK=1
+else
+    UI_FD_OK=0
+fi
+ui_print() {
+    if [ "$UI_FD_OK" = 1 ]; then
+        echo "ui_print $1" > "/proc/self/fd/$OUTFD"
+    else
+        echo "$1"
+    fi
+}
+
+ui_print "OrangeFox vendor_boot installer"
+rm -rf "$TMP"
+mkdir -p "$TMP" || { ui_print "cannot create $TMP"; exit 1; }
+if ! command -v unzip >/dev/null 2>&1; then
+    ui_print "no unzip in this recovery, aborting"
+    exit 1
+fi
+unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$TMP" >/dev/null 2>&1 || { ui_print "cannot unpack installer zip"; exit 1; }
+chmod +x "$TMP/install-recovery.sh" "$TMP"/bin/linux/* 2>/dev/null || true
+sh "$TMP/install-recovery.sh" >"$TMP/console.log" 2>&1
+rc=$?
+tail -n 20 "$TMP/console.log" 2>/dev/null | while IFS= read -r l; do ui_print "$l"; done
+if [ "$rc" -eq 0 ]; then
+    ui_print "Done"
+else
+    ui_print "Failed (log: /tmp/recovery_install/install.log)"
+fi
+rm -rf "$TMP"
+exit "$rc"

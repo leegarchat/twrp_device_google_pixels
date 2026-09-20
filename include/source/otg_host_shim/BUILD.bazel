@@ -1,0 +1,12 @@
+load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
+
+kernel_module(
+    name = "otg_host_shim",
+    srcs = [
+        "otg_host_shim.c",
+        "Makefile",
+        "Kbuild",
+    ],
+    outs = ["otg_host_shim.ko"],
+    kernel_build = "//common:kernel_aarch64",
+)

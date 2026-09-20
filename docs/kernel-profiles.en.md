@@ -49,9 +49,9 @@ build.sh -k VER
 ## Commands
 
 ```bash
-./gen_kernel_mk.py --list zuma                  # versions + (default: …)
-./gen_kernel_mk.py --fingerprint zuma 6.12      # groups: device/hash/source
-./gen_kernel_mk.py --generate zuma shiba 6.12 out.mk  # profile to file (compare with stock)
+./include/prebuilt/gen_kernel_mk.py --list zuma                  # versions + (default: …)
+./include/prebuilt/gen_kernel_mk.py --fingerprint zuma 6.12      # groups: device/hash/source
+./include/prebuilt/gen_kernel_mk.py --generate zuma shiba 6.12 out.mk  # profile to file (compare with stock)
 ```
 
 `default_kernel` in `family.json` — version without `-k` in interactive mode.
