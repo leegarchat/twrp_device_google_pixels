@@ -4,6 +4,20 @@ This guide is for testers of **experimental (test) OrangeFox builds**.
 Test builds can fail to boot, break decryption, or leave a slot unbootable —
 follow this guide exactly and you will always have a way back.
 
+## Contents
+
+- [0. Prerequisites](#0-prerequisites)
+- [1. Flashing a test build](#1-flashing-a-test-build)
+- [2. First boot — the 60-second checklist](#2-first-boot--the-60-second-checklist)
+- [3. Collecting logs — flog.sh first](#3-collecting-logs--flogsh-first)
+- [4. Decryption test](#4-decryption-test)
+- [5. How the UI renders](#5-how-the-ui-renders-folds-and-tablets-especially)
+- [6. Outcomes A–D](#6-outcomes-ad)
+- [7. Report template](#7-report-template-copy-paste)
+- [8. Golden rules](#8-golden-rules)
+- [9. How to dump your factory vendor_boot](#9-how-to-dump-your-factory-vendor_boot-backup-before-testing)
+- [10. Fastboot/adb cheat sheet](#10-fastbootadb-cheat-sheet)
+
 ---
 
 ## 0. Prerequisites
@@ -165,40 +179,92 @@ What good looks like:
 | `uname -r` | kernel the build was made for (ask maintainer if unsure) |
 | slot suffix | the slot you flashed (`_a` / `_b`) |
 
-Then pull the two main logs — as soon as adb is available (right on the
-password screen if present, or after the PIN / leaving it — the files
-accumulate from boot, they are the most valuable artifact):
+Then collect the logs — [see §3](#3-collecting-logs--flogsh-first), `flog.sh`
+first. One command replaces all manual pulls below.
+
+---
+
+## 3. Collecting logs — flog.sh first
+
+`flog.sh` rides inside every current test build. One command collects the
+whole report bundle — **prefer it over manual `adb pull`**: it grabs
+strictly more (early-boot AIO logs, props, backlight state, pstore,
+installer logs) and forces world-readable permissions so MTP/PC readers
+can open every file.
+
+Run it from recovery — over adb **or** from the Fox terminal
+(Advanced → Terminal — no adb needed at all):
+
+```
+adb shell flog.sh
+```
+
+Output ends with the bundle location (remember the timestamp):
+
+```
+flog: DONE -> /data/media/0/fox_logs/20260920_110538
+```
+
+### 3.1. Where the bundle lands — userdata matrix
+
+| userdata state | destination | how to get it to the PC |
+|---|---|---|
+| Decrypted + writable (PIN entered, or no encryption) | `/data/media/0/fox_logs/<stamp>/` — **survives reboot** | `adb pull /data/media/0/fox_logs/<stamp>` any time later (even from booted system), or copy via MTP |
+| Locked / unwritable | `/tmp/fox_logs/<stamp>/` — RAM, **dies on reboot** | `adb pull` **immediately**, while still in recovery |
+
+### 3.2. What the bundle contains
+
+| File | Source | Proves |
+|---|---|---|
+| `recovery.log`, `weaver.log` | `/tmp/*.log` | recovery + decrypt flow |
+| `reflash_twrp.log`, `install-*.log` | on-device install | reflash/install path (if used) |
+| `aio_stub.log`, `aio_runatinit.log` | stub + Rust early-boot | family detection, swap, USB rescue |
+| `dmesg.log`, `logcat.log` | kernel + system | touch/display/USB/decrypt hardware |
+| `props.txt` | `getprop` + key props | slot, family, services, USB state |
+| `backlight.txt` | backlight sysfs | screen issues (values while broken) |
+| `pstore*` | `/sys/fs/pstore/` | kernel crashes (survive reboot) |
+| `families.txt`, `pixelrunatboot.json` | installer config | which payload/slot policy produced this boot |
+
+`- missing:` lines in the `flog.sh` output are also an answer — an absent
+`aio_stub.log`, for example, tells the developer the stub never logged.
+Do not delete them; send the console output too.
+
+### 3.3. No adb at all (dead USB)?
+
+1. Fox terminal → `flog.sh` → bundle lands on userdata if decrypted.
+2. Reboot to system, pull via `adb` or copy via MTP.
+3. If userdata is locked too — photograph the key screens and go to
+   [Outcome B/C](#6-outcomes-ad).
+
+### 3.4. Manual fallback (builds without flog.sh)
 
 ```
 adb pull /tmp/recovery.log
 adb pull /tmp/weaver.log
-```
-
-And the full kernel + system logs. For any hardware-level debugging
-(touch, display, USB, decrypt, sensors) these are the most important
-files after `recovery.log` itself — always full files, never excerpts:
-
-```
 adb shell 'dmesg > /tmp/dmesg.log; logcat -d -v time > /tmp/logcat.log'
 adb pull /tmp/dmesg.log
 adb pull /tmp/logcat.log
 ```
 
+For any hardware-level debugging (touch, display, USB, decrypt, sensors)
+`dmesg`/`logcat` are the most important files after `recovery.log`
+itself — always full files, never excerpts.
+
 ---
 
-## 3. Decryption test
+## 4. Decryption test
 
 1. If the device asks for PIN/password/pattern — enter it.
 2. Success = you see your files (Internal Storage) and `recovery.log`
    contains `User 0 Decrypted`.
 3. If touch does not work: **that is NOT a test failure** unless the
    maintainer said otherwise. Report it, continue over `adb`.
-4. Send back: `recovery.log` (full file), `weaver.log`, `dmesg.log`,
-   `logcat.log`, and whether `/data/media` is visible.
+4. Send back: the `flog.sh` bundle ([§3](#3-collecting-logs--flogsh-first)),
+   and whether `/data/media` is visible.
 
 ---
 
-## 4. How the UI renders (folds and tablets especially!)
+## 5. How the UI renders (folds and tablets especially!)
 
 On devices with the new display logic (folds, tablets) this is a separate
 report item — look closely and record:
@@ -223,7 +289,7 @@ If adb is available, add to the report:
 adb shell 'getprop DOF_SCREEN_W; getprop DOF_SCREEN_H; getprop DOF_PROGRESSIVE_SCALE'
 ```
 
-## 4.1. Feature tests (only if asked)
+### 5.1. Feature tests (only if asked)
 
 - **Touch**: works / partially / dead + `dmesg | grep -i touch`.
 - **Torch / haptics**: works or not.
@@ -234,18 +300,23 @@ adb shell 'getprop DOF_SCREEN_W; getprop DOF_SCREEN_H; getprop DOF_PROGRESSIVE_S
 
 ---
 
-## 5. Outcome A — boots, adb works
+## 6. Outcomes A–D
 
-Do sections 2–4 and send the report (see §8). You are done.
+### Outcome A — boots, adb works
 
-## 6. Outcome B — boots, but NO adb
+Do sections 2–5 and send the report ([see §7](#7-report-template-copy-paste)).
+You are done.
+
+### Outcome B — boots, but NO adb
 
 1. Wait a full 60 s, unplug/replug the cable, try another port / USB 2.0 hub.
-2. Check fastbootd: `fastboot devices`. If the device is visible in
+2. Then collect logs without adb: Fox terminal → `flog.sh`
+   ([§3.3](#33-no-adb-at-all-dead-usb)).
+3. Check fastbootd: `fastboot devices`. If the device is visible in
    fastbootd, the kernel is alive and it is a USB-gadget problem — report it.
-3. If completely silent, go to Outcome C (rollback).
+4. If completely silent, go to Outcome C (rollback).
 
-## 7. Outcome C — does NOT boot (logo / black screen / bootloop)
+### Outcome C — does NOT boot (logo / black screen / bootloop)
 
 **Do not panic. Do not flash random things.** Roll back:
 
@@ -267,7 +338,7 @@ Do sections 2–4 and send the report (see §8). You are done.
 4. Pull the files to PC (`adb pull /sdcard/ramoops_console.txt` …) and send
    **all of them** plus: which file was flashed, into which slot.
 
-### The boot → crash → switch-slot / boot-to-system trick
+#### The boot → crash → switch-slot / boot-to-system trick
 
 - If slot B with the test build bootloops, the bootloader may mark it
   unbootable and fall back to slot A by itself — check
@@ -277,24 +348,23 @@ Do sections 2–4 and send the report (see §8). You are done.
 - Key point: **pstore survives a reboot but not many** — always collect
   dumps on the FIRST successful boot after the crash, do not reboot twice.
 
-## 8. Outcome D — boots with adb, but decryption FAILS
+### Outcome D — boots with adb, but decryption FAILS
 
-Send:
+Send the `flog.sh` bundle ([§3](#3-collecting-logs--flogsh-first)) plus:
 
-1. Full `/tmp/recovery.log` (not excerpts).
-2. Output of a manual HAL run (run ~15 seconds, then Ctrl-C):
+1. Output of a manual HAL run (run ~15 seconds, then Ctrl-C):
    ```
    adb shell '/vendor/bin/hw/android.hardware.security.keymint-service.rust.trusty --dev /dev/trusty-ipc-dev0'
    ```
    (If your build uses the C++ HAL, the maintainer will give another path.)
-3. Service states:
+2. Service states:
    ```
    adb shell 'getprop init.svc.recovery_storageproxyd; getprop init.svc.recovery_weaver'
    ```
 
 ---
 
-## 9. Report template (copy-paste)
+## 7. Report template (copy-paste)
 
 ```
 Build file : <exact file name>
@@ -306,13 +376,16 @@ adb on password: present / absent (if device encrypted)
 decrypt    : ok / failed / not tried
 touch      : ok / dead / partial
 UI         : bars (which sides) / stretched / rotated / which screen (fold: folded/unfolded) + photo
-Attached   : recovery.log, weaver.log, dmesg.log, logcat.log, (ramoops_console.txt, ramoops_dmesg.txt, dmesg_boot.txt if Outcome C)
+Attached   : fox_logs/<stamp>/ (whole flog.sh bundle: recovery.log, weaver.log,
+             dmesg.log, logcat.log, aio_*.log, props.txt, …)
+             — or the same files pulled manually
+             (+ ramoops_console.txt, ramoops_dmesg.txt, dmesg_boot.txt if Outcome C)
 Notes      : <anything unusual: how long boot took, error texts, ...>
 ```
 
 ---
 
-## 10. Golden rules
+## 8. Golden rules
 
 1. One change at a time. Never combine a test build with other mods.
 2. Factory (known-good) images ready **before** flashing, not after.
@@ -322,7 +395,7 @@ Notes      : <anything unusual: how long boot took, error texts, ...>
 5. If something behaves unexpectedly — photograph/write down the exact
    text. “It didn't work” is not a report.
 
-## 11. How to dump your factory vendor_boot (backup before testing)
+## 9. How to dump your factory vendor_boot (backup before testing)
 
 No factory images at hand? Dump the known-good `vendor_boot` straight from
 the device **before** flashing the test build. Easiest — bootloader, no
@@ -355,7 +428,7 @@ Sanity check: size must be 67108864 bytes (64 MB). Flash it back with:
 fastboot flash vendor_boot_a vendor_boot_a.stock.img   # or _b
 ```
 
-## 12. Fastboot/adb cheat sheet
+## 10. Fastboot/adb cheat sheet
 
 ```
 fastboot getvar current-slot
@@ -368,6 +441,9 @@ fastboot fetch vendor_boot_a|b ./backup.img   # backup without root
 fastboot reboot recovery
 fastboot reboot
 adb devices -l
+adb shell flog.sh                                 # full report bundle (preferred)
+adb pull /data/media/0/fox_logs/<stamp>          # pull the bundle (userdata)
+adb pull /tmp/fox_logs/<stamp>                   # pull the bundle (no userdata, urgent)
 adb pull /tmp/recovery.log
 adb pull /tmp/weaver.log
 adb shell 'dmesg > /tmp/dmesg.log; logcat -d -v time > /tmp/logcat.log'
