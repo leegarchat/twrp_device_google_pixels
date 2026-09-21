@@ -303,21 +303,22 @@ fn detect_fold_state() -> FoldState {
 
 /// Picks the active virtual canvas: folds use hinge state (inner when open
 /// and inner geometry exists, else cover); slabs always use front. The
-/// progressive letterbox flag travels with the canvas: inner uses
-/// inner_progressive_scale, front/cover/slab use progressive_scale.
+/// progressive letterbox flag AND the theme variant travel with the
+/// canvas: inner uses inner_progressive_scale + inner_theme,
+/// front/cover/slab use progressive_scale + wide_theme.
 fn pick_display_geom(
     cfg: &crate::config::DeviceConfig,
     hinge: FoldState,
-) -> (crate::config::DisplayGeom, &'static str, u32) {
+) -> (crate::config::DisplayGeom, &'static str, u32, &str) {
     if cfg.is_fold {
         if hinge == FoldState::OpenInner {
             if let Some(g) = cfg.inner_display {
-                return (g, "inner", cfg.inner_progressive_scale);
+                return (g, "inner", cfg.inner_progressive_scale, &cfg.inner_theme);
             }
         }
-        return (cfg.front_display, "front", cfg.progressive_scale);
+        return (cfg.front_display, "front", cfg.progressive_scale, &cfg.wide_theme);
     }
-    (cfg.front_display, "front", cfg.progressive_scale)
+    (cfg.front_display, "front", cfg.progressive_scale, &cfg.wide_theme)
 }
 
 /// Applies display geometry before recovery UI starts (early-init stage):
@@ -328,15 +329,15 @@ fn apply_display_geometry(
     cfg: &crate::config::DeviceConfig,
     hinge: FoldState,
 ) {
-    let (geom, which, scale) = pick_display_geom(cfg, hinge);
+    let (geom, which, scale, theme) = pick_display_geom(cfg, hinge);
     let _ = set_prop("DOF_SCREEN_W", &geom.w.to_string());
     let _ = set_prop("DOF_SCREEN_H", &geom.h.to_string());
     let _ = set_prop("DOF_PROGRESSIVE_SCALE", &scale.to_string());
-    // Wide-panel theme variant (pixel.json wide_theme, e.g. "twres_1440"):
+    // Theme variant (pixel.json wide_theme/inner_theme, e.g. "twres_1440"):
     // TWRP's dynamic theme pick (gui.cpp) loads matching XML so all three
-    // scalers agree. Empty = base /twres (1080p panels, tablets, folds).
-    if !cfg.wide_theme.is_empty() {
-        let _ = set_prop("ro.recovery.theme", &cfg.wide_theme);
+    // scalers agree. Empty = base /twres.
+    if !theme.is_empty() {
+        let _ = set_prop("ro.recovery.theme", theme);
     }
     // Per-device status-bar height (pixel.json status_h): lets data.cpp drop
     // the compile-time OF_STATUS_H default, same pattern as DOF_SCREEN_H.
@@ -344,9 +345,9 @@ fn apply_display_geometry(
     crate::ko_picker::log_msg(
         "boot",
         "INFO",
-        &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, if cfg.wide_theme.is_empty() { "twres" } else { &cfg.wide_theme }, cfg.is_fold),
+        &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, if theme.is_empty() { "twres" } else { theme }, cfg.is_fold),
     );
-    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={}", geom.w, geom.h, cfg.status_h, if cfg.wide_theme.is_empty() { "twres" } else { &cfg.wide_theme }));
+    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={}", geom.w, geom.h, cfg.status_h, if theme.is_empty() { "twres" } else { theme }));
 }
 
 fn by_name_exists(part: &str) -> bool {
@@ -717,22 +718,26 @@ mod tests {
         cfg.front_display = DisplayGeom { w: 1080, h: 2424 };
         cfg.progressive_scale = 0;
         cfg.inner_progressive_scale = 1;
-        // Slab ignores hinge; front scale travels along.
-        assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner), (DisplayGeom { w: 1080, h: 2424 }, "front", 0));
+        cfg.wide_theme = String::new();
+        cfg.inner_theme = String::from("twres_2076");
+        // Slab ignores hinge; front scale + theme travel along.
+        assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner), (DisplayGeom { w: 1080, h: 2424 }, "front", 0, ""));
         // Fold without inner geometry falls back to cover.
         cfg.is_fold = true;
         assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner).1, "front");
-        // Fold open with inner geometry: inner scale travels along.
+        // Fold open with inner geometry: inner scale + theme travel along.
         cfg.inner_display = Some(DisplayGeom { w: 2076, h: 2152 });
-        let (g, which, scale) = pick_display_geom(&cfg, FoldState::OpenInner);
+        let (g, which, scale, theme) = pick_display_geom(&cfg, FoldState::OpenInner);
         assert_eq!(which, "inner");
         assert_eq!((g.w, g.h), (2076, 2152));
         assert_eq!(scale, 1);
-        // Fold closed -> cover with front scale.
-        let (g, which, scale) = pick_display_geom(&cfg, FoldState::ClosedCover);
+        assert_eq!(theme, "twres_2076");
+        // Fold closed -> cover with front scale + front theme.
+        let (g, which, scale, theme) = pick_display_geom(&cfg, FoldState::ClosedCover);
         assert_eq!(which, "front");
         assert_eq!((g.w, g.h), (1080, 2424));
         assert_eq!(scale, 0);
+        assert_eq!(theme, "");
     }
 
     #[test]

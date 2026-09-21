@@ -3,11 +3,12 @@
   "soc_family": "gs201",
   "is_fold": 0,
   "front_display": {
-    "w": 1440,
+    "w": 1600,
     "h": 2560
   },
   "status_h": 130,
-  "progressive_scale": 1,
+  "progressive_scale": 0,
+  "wide_theme": "twres_1600",
   "touch_modules": [
     "heatmap",
     "goog_touch_interface",

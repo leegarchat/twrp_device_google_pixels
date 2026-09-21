@@ -69,10 +69,11 @@
     "ro.product.model": "Pixel 10 Pro Fold"
   },
   "inner_display": {
-    "w": 1210,
+    "w": 2076,
     "h": 2152
   },
   "status_h": 130,
   "progressive_scale": 0,
-  "inner_progressive_scale": 1
+  "inner_progressive_scale": 0,
+  "inner_theme": "twres_2076"
 }

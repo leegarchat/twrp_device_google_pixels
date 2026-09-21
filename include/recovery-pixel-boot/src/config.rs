@@ -55,10 +55,12 @@ pub struct DeviceConfig {    pub family: String,
     /// Wide slabs name their pre-generated variant (e.g. "twres_1440",
     /// see tools/theme_wide.py); stamped as ro.recovery.theme at
     /// early-init so TWRP loads matching XML (gui.cpp dynamic pick).
-    /// Empty keeps the stock behavior on 1080p panels, tablets (their
-    /// 16:9 letterbox canvas already scales uniformly) and folds
-    /// (cover narrow, inner letterboxed).
+    /// Empty keeps the stock behavior on 1080p panels.
     pub wide_theme: String,
+    /// Same for the fold inner canvas (default empty): open folds stamp
+    /// e.g. "twres_2076" and render the inner panel natively instead of
+    /// the 16:9 letterbox. Closed folds use wide_theme (usually empty).
+    pub inner_theme: String,
     /// Vertical letterbox for the front/cover canvas (default 0 = stock
     /// vertical-stretch behavior): slabs and fold covers use real panel
     /// geometry with 0; tablets stamp 1 explicitly.
@@ -426,6 +428,7 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
             if v > 0 { v as u32 } else { 130 }
         },
         wide_theme: get_str(pairs, "wide_theme"),
+        inner_theme: get_str(pairs, "inner_theme"),
         progressive_scale: if has_key(pairs, "progressive_scale")
             && get_int(pairs, "progressive_scale") == 1
         {
@@ -668,12 +671,15 @@ mod tests {
         std::fs::write(
             &f,
             r#"{"husky": {"family": "zuma", "wide_theme": "twres_1344", "props": {}},
+            "comet": {"family": "zumapro", "is_fold": 1, "inner_theme": "twres_2076", "props": {}},
             "shiba": {"family": "zuma", "props": {}}}"#,
         )
         .unwrap();
         assert_eq!(load_device_config_from(&f, "husky").unwrap().wide_theme, "twres_1344");
+        assert_eq!(load_device_config_from(&f, "comet").unwrap().inner_theme, "twres_2076");
         // Missing key: base theme, empty string.
         assert_eq!(load_device_config_from(&f, "shiba").unwrap().wide_theme, "");
+        assert_eq!(load_device_config_from(&f, "shiba").unwrap().inner_theme, "");
         let _ = std::fs::remove_dir_all(&d);
     }
 

@@ -77,7 +77,13 @@ Displays are also in JSON; code knows no resolutions:
   see `tools/theme_wide.py`), stamped as `ro.recovery.theme` so TWRP's
   dynamic theme pick (gui.cpp) loads matching pages. With a matched
   theme all three scalers agree (~1.0), so text/images/boxes cannot
-  drift apart. Tablets and folds stay empty (uniform letterbox path).
+  drift apart. The tablet uses `twres_1600` the same way (native
+  full-bleed, no letterbox).
+- `inner_theme` (default empty): same for the fold inner canvas, picked
+  by hinge state at boot together with `inner_display` (native panel
+  dims, `inner_progressive_scale` 0). Closed folds use `wide_theme`
+  (usually empty). Note: hinge is read once at early-init — folding
+  mid-session does not re-pick canvas or theme (pre-existing limit).
 - Letterbox engine (`data.cpp` + `pages.cpp`): virtual canvas +
   centering, uniform scale instead of stretching. Without `DOF_SCREEN_W` —
   stock behavior.

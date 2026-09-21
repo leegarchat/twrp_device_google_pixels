@@ -7,12 +7,13 @@
     "h": 2092
   },
   "inner_display": {
-    "w": 1242,
+    "w": 1840,
     "h": 2208
   },
   "status_h": 130,
   "progressive_scale": 0,
-  "inner_progressive_scale": 1,
+  "inner_progressive_scale": 0,
+  "inner_theme": "twres_1840",
   "touch_modules": [
     "stmvl53l1",
     "lwis",
