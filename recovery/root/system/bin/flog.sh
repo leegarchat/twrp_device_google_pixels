@@ -5,26 +5,33 @@
 #   flog.sh
 #
 # Collects recovery.log, weaver.log, dmesg, logcat, props, slot info,
-# reflash/install logs and backlight state into
-#   /data/media/0/fox_logs/<timestamp>/
+# reflash/install logs and backlight state into ONE archive:
+#   /data/media/0/fox_logs/fox_logs_<timestamp>.tar.gz
 # (userdata decrypted + writable). When userdata is unavailable, falls
-# back to /tmp/fox_logs/<timestamp>/ and prints an `adb pull` hint.
+# back to /tmp/fox_logs/fox_logs_<timestamp>.tar.gz and prints an
+# `adb pull` hint. The staging dir is removed after packing, so the
+# tester sends a single file.
 # stdout doubles as the "what to send" checklist for the tester.
 
 DEST_BASE_CANDS="/data/media/0/fox_logs /tmp/fox_logs"
 STAMP="$(date '+%Y%m%d_%H%M%S' 2>/dev/null)"
 [ -n "$STAMP" ] || STAMP="unknown_time"
+ARCH="fox_logs_$STAMP.tar.gz"
 
-DEST=""
+BASE=""
 for _cand in $DEST_BASE_CANDS; do
-    if [ -d "$(dirname "$_cand")" ] && mkdir -p "$_cand/$STAMP" 2>/dev/null \
-        && touch "$_cand/$STAMP/.w" 2>/dev/null; then
-        rm -f "$_cand/$STAMP/.w"
-        DEST="$_cand/$STAMP"
+    if [ -d "$(dirname "$_cand")" ] && mkdir -p "$_cand" 2>/dev/null \
+        && touch "$_cand/.w" 2>/dev/null; then
+        rm -f "$_cand/.w"
+        BASE="$_cand"
         break
     fi
 done
-[ -n "$DEST" ] || { echo "flog: nowhere writable, aborting"; exit 1; }
+[ -n "$BASE" ] || { echo "flog: nowhere writable, aborting"; exit 1; }
+
+DEST="$BASE/$STAMP"
+rm -rf "$DEST" 2>/dev/null
+mkdir -p "$DEST" 2>/dev/null || { echo "flog: cannot create $DEST, aborting"; exit 1; }
 
 echo "flog: collecting to $DEST"
 
@@ -120,15 +127,35 @@ chmod 755 "$DEST" 2>/dev/null
 chmod 644 "$DEST"/* 2>/dev/null
 echo "flog: perms forced to 644"
 
-echo ""
-echo "flog: DONE -> $DEST"
-ls -la "$DEST" | awk '$9 != "." && $9 != ".." {print "  "$9" "$5}'
-case "$DEST" in
+# --- pack everything into ONE timestamped archive, drop the staging dir ---
+if command -v tar >/dev/null 2>&1 \
+    && tar -czf "$BASE/$ARCH" -C "$BASE" "$STAMP" 2>/dev/null \
+    && [ -f "$BASE/$ARCH" ]; then
+    chmod 644 "$BASE/$ARCH" 2>/dev/null
+    rm -rf "$DEST" 2>/dev/null
+    echo ""
+    echo "flog: DONE -> $BASE/$ARCH ($(du -h "$BASE/$ARCH" 2>/dev/null | cut -f1))"
+else
+    echo "flog: ! tar failed, leaving loose files in $DEST"
+    echo ""
+    echo "flog: DONE -> $DEST"
+    ls -la "$DEST" | awk '$9 != "." && $9 != ".." {print "  "$9" "$5}'
+    case "$BASE" in
+        /tmp/*)
+            echo "flog: userdata not writable — pull via: adb pull $DEST"
+            ;;
+        *)
+            echo "flog: send every file above with the bug report"
+            ;;
+    esac
+    exit 0
+fi
+case "$BASE" in
     /tmp/*)
-        echo "flog: userdata not writable — pull via: adb pull $DEST"
+        echo "flog: userdata not writable — pull via: adb pull $BASE/$ARCH"
         ;;
     *)
-        echo "flog: send every file above with the bug report"
+        echo "flog: send this single file with the bug report"
         ;;
 esac
 exit 0
