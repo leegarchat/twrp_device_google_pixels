@@ -1,10 +1,49 @@
 --- a/bootable/recovery/minuitwrp/graphics.cpp
 +++ b/bootable/recovery/minuitwrp/graphics.cpp
-@@ -206,7 +206,7 @@
+@@ -59,6 +59,22 @@
+ static unsigned char gr_current_g = 255;
+ static unsigned char gr_current_b = 255;
+ 
++// Fox AIO: runtime R/B channel swap selector. Display/GPU generations
++// disagree about byte order (Mali families gs101/gs201/zuma/zumapro render
++// correctly with the patched no-swap path, PowerVR malibu/laguna need the
++// upstream swap), and AIO ships one binary — so the family decides at
++// runtime via ro.recovery.rb_swap (family.json props, stamped by
++// recovery-pixel-boot before the UI starts). Absent prop = no swap,
++// i.e. today's behavior. Cached: properties are process-stable here.
++static int g_fox_rb_swap = -1;
++static bool fox_rb_swap(void) {
++    if (g_fox_rb_swap < 0) {
++        char v[PROPERTY_VALUE_MAX];
++        g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
++    }
++    return g_fox_rb_swap == 1;
++}
++
+ GRSurface* gr_draw = NULL;
+ 
+ static GGLContext *gr_context = 0;
+@@ -206,7 +222,23 @@
  {
      GGLContext *gl = gr_context;
      GGLint color[4];
 -#if defined(RECOVERY_ARGB) || defined(RECOVERY_BGRA) || defined(RECOVERY_ABGR)
++    // Fox AIO runtime R/B-swap override (ro.recovery.rb_swap, stamped per
++    // family from family.json by recovery-pixel-boot before the UI starts:
++    // "1" = upstream swap for malibu/laguna, "0" = patched no-swap for
++    // gs101/gs201/zuma/zumapro). Handled here and returned early; the
++    // compile-time branches below stay untouched as the absent-prop
++    // fallback (default = no swap, i.e. current behavior for 6-9).
++    if (fox_rb_swap()) {
++        color[0] = ((b << 8) | r) + 1;
++        color[1] = ((g << 8) | g) + 1;
++        color[2] = ((r << 8) | b) + 1;
++        color[3] = ((a << 8) | a) + 1;
++        gl->color4xv(gl, color);
++
++        gr_is_curr_clr_opaque = (a == 255);
++        return;
++    }
 +#if defined(RECOVERY_ARGB) || defined(RECOVERY_BGRA)
      color[0] = ((b << 8) | r) + 1;
      color[1] = ((g << 8) | g) + 1;

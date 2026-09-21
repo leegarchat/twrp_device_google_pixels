@@ -30,6 +30,7 @@
 
 #include <png.h>
 
+#include <cutils/properties.h>
 #include <pixelflinger/pixelflinger.h>
 #ifdef TW_INCLUDE_JPEG
 extern "C" {
@@ -39,6 +40,18 @@ extern "C" {
 #include "minuitwrp/minui.h"
 
 #define SURFACE_DATA_ALIGNMENT 8
+
+// Fox AIO runtime R/B-swap selector (same contract as fox_rb_swap() in
+// graphics.cpp: ro.recovery.rb_swap="1" for malibu/laguna, "0" otherwise,
+// absent = no swap). Separate TU, same one-line cache.
+static int g_fox_rb_swap = -1;
+static bool fox_rb_swap(void) {
+    if (g_fox_rb_swap < 0) {
+        char v[PROPERTY_VALUE_MAX];
+        g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
+    }
+    return g_fox_rb_swap == 1;
+}
 
 static GGLSurface* malloc_surface(size_t data_size) {
     size_t size = sizeof(GGLSurface) + data_size + SURFACE_DATA_ALIGNMENT;
@@ -224,6 +237,10 @@ int res_create_surface_png(const char* name, gr_surface* pSurface) {
         goto exit;
     }
 
+    // Fox AIO runtime override: malibu/laguna need the upstream BGR swap.
+    // The untouched compile-time branch below stays the default path.
+    if (fox_rb_swap())
+        png_set_bgr(png_ptr);
 #if defined(RECOVERY_ARGB) || defined(RECOVERY_BGRA)
     png_set_bgr(png_ptr);
 #endif
@@ -320,6 +337,15 @@ int res_create_surface_jpg(const char* name, gr_surface* pSurface) {
             unsigned char g = pRow[sx + 1];
             unsigned char b = pRow[sx + 2];
             unsigned char a = 0xff;
+            // Fox AIO runtime override: swapped write + skip the untouched
+            // native branches below (continue); default falls through.
+            if (fox_rb_swap()) {
+                pRow[dx    ] = b; // r
+                pRow[dx + 1] = g; // g
+                pRow[dx + 2] = r; // b
+                pRow[dx + 3] = a;
+                continue;
+            }
 #if defined(RECOVERY_ARGB) || defined(RECOVERY_BGRA)
             pRow[dx    ] = b; // r
             pRow[dx + 1] = g; // g

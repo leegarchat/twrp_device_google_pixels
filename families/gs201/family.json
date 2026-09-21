@@ -4,6 +4,7 @@
   "keymint": "cpp",
   "post_remove_ramdisk": [],
   "props": {
+    "ro.recovery.rb_swap": "0",
     "ro.recovery.soc_family": "gs201",
     "persist.wm.extensions.enabled": "true",
     "ro.com.google.ime.kb_pad_port_b": "8",

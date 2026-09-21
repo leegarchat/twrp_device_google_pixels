@@ -3,7 +3,9 @@
   "soc_family": "gs101",
   "keymint": "cpp",
   "post_remove_ramdisk": [],
-  "props": {},
+  "props": {
+    "ro.recovery.rb_swap": "0"
+  },
   "default_kernel": "6.1",
   "kernels": {
     "6.1": {

@@ -4,6 +4,7 @@
   "keymint": "rust",
   "post_remove_ramdisk": [],
   "props": {
+    "ro.recovery.rb_swap": "1",
     "ro.recovery.soc_family": "malibu",
     "ro.soc.model": "Tensor G6",
     "persist.sys.usb.config": "mtp,adb",
