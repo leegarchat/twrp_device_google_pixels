@@ -17,37 +17,6 @@ on early-init
     # Must complete before USB gadget writes ${ro.product.model} to configfs.
     exec u:r:recovery:s0 root root -- /system/bin/recovery-pixel-boot init
 
-# --- DWC3 driver bind waits, gated by runtime SoC family ---
-# Placed BEFORE the main `on init` block on purpose: init runs same-trigger
-# actions in parse order, so the matching wait completes BEFORE the USB
-# command chain below touches configfs/UDC. Only the matching path is
-# waited on — other devices stall nothing (an unconditional triple-wait
-# would burn 2x timeout on every boot).
-# ro.recovery.soc_family is stamped by recovery-pixel-boot in early-init
-# above. Layouts (ported from P11 f651e12):
-# gs101/gs201/zuma/zumapro: DWC3 at 11210000 via 11210000.usb bus
-# laguna (Tensor G5): DWC3 at c400000 via c450000.usb3 bus
-# malibu (Tensor G6): DWC3 at a210000 via a200000.usb3 bus
-# NOTE: AIO blanking/sed rewrites 11210000 only where it appears; the
-# laguna/malibu literals stay correct on every boot.
-on init && property:ro.recovery.soc_family=gs101
-    wait /sys/devices/platform/11210000.usb/11210000.dwc3/driver 5
-
-on init && property:ro.recovery.soc_family=gs201
-    wait /sys/devices/platform/11210000.usb/11210000.dwc3/driver 5
-
-on init && property:ro.recovery.soc_family=zuma
-    wait /sys/devices/platform/11210000.usb/11210000.dwc3/driver 5
-
-on init && property:ro.recovery.soc_family=zumapro
-    wait /sys/devices/platform/11210000.usb/11210000.dwc3/driver 5
-
-on init && property:ro.recovery.soc_family=laguna
-    wait /sys/devices/platform/simple_usb_bus/c450000.usb3/c400000.dwc3/driver 5
-
-on init && property:ro.recovery.soc_family=malibu
-    wait /sys/devices/platform/simple_usb_bus/a200000.usb3/a210000.dwc3/driver 5
-
 on init
     # --- CPU temperature zone discovery ---
     # TWRP reads TW_CUSTOM_CPU_TEMP_PATH (/dev/thermal_cpu) for the CPU temperature widget.
@@ -57,8 +26,13 @@ on init
     exec u:r:recovery:s0 root root -- /system/bin/recovery-pixel-boot setup-temp
 
     # --- USB controller setup ---
-    # The DWC3 driver bind wait already ran above (gated by SoC family),
-    # so the controller below is bound by the time these fire.
+    # The wait runs FIRST in this chain on purpose: init executes same-block
+    # commands sequentially, so the DWC3 driver is bound before anything
+    # touches configfs/UDC below. The path is family-exact — the AIO stub
+    # (and the installer swap) rewrites the 11210000 bus/controller pair
+    # from families.txt before init parses this file (laguna/malibu bus
+    # parent comes from the manifest usbpath, not the controller name).
+    wait /sys/devices/platform/11210000.usb/11210000.dwc3/driver 5
     setprop sys.usb.controller "11210000.dwc3"
     setprop sys.usb.configfs 1
     setprop servicemanager true

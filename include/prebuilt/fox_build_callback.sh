@@ -780,10 +780,14 @@ case "$CALL_TYPE" in
         done
 
         # --- AIO swap-kit manifest (AIO only) ---
-        # /system/etc/aio/families.txt maps every family to its keymint type
-        # and USB controller so aio_swap.sh (and the installer) can select
-        # family files post-unpack with no tree dependency:
-        #   <fam>:keymint=<rust|cpp>:usbctrl=<base>.dwc3 (empty = 11210000 default)
+        # /system/etc/aio/families.txt maps every family to its keymint type,
+        # USB controller and USB bus parent dir so aio_swap.sh (and the
+        # installer) can select family files post-unpack with no tree
+        # dependency:
+        #   <fam>:keymint=<rust|cpp>:usbctrl=<base>.dwc3[:usbpath=<bus dir>]
+        # (empty usbctrl = 11210000 default, empty/missing usbpath =
+        # "<base>.usb" directly under /sys/devices/platform; laguna/malibu
+        # live under simple_usb_bus and must name it explicitly)
         if [ "$platform" = "aio" ]; then
             mkdir -p "$TARGET_DIR/system/etc/aio"
             : > "$TARGET_DIR/system/etc/aio/families.txt"
@@ -792,7 +796,8 @@ case "$CALL_TYPE" in
                 case "$_fam" in common|aio) continue ;; esac
                 _km=$(python3 -c "import json;print(json.load(open('$_fam_dir/family.json')).get('keymint',''))" 2>/dev/null)
                 _usb=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")
-                printf '%s:keymint=%s:usbctrl=%s\n' "$_fam" "$_km" "$_usb" >> "$TARGET_DIR/system/etc/aio/families.txt"
+                _bus=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBBUS:-}")
+                printf '%s:keymint=%s:usbctrl=%s:usbpath=%s\n' "$_fam" "$_km" "$_usb" "$_bus" >> "$TARGET_DIR/system/etc/aio/families.txt"
             done
             echo "    [PLATFORM]   + swap kit manifest: system/etc/aio/families.txt"
         fi

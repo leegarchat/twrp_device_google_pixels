@@ -317,10 +317,13 @@ static int map_device_family(const char* device, char* fam, size_t cap) {
     return -1;
 }
 
-/* families.txt lookup: "fam:keymint=<rust|cpp>:usbctrl=<base>.dwc3|".
- * keymint/usbctrl buffers filled (usbctrl may end up empty). */
+/* families.txt lookup: "fam:keymint=<rust|cpp>:usbctrl=<base>.dwc3|:usbpath=<bus dir>|".
+ * keymint/usbctrl/usbpath buffers filled (usbctrl and usbpath may end up
+ * empty: empty usbctrl means the 11210000 default, empty usbpath means
+ * "<base>.usb" under /sys/devices/platform). */
 static int read_family_info(const char* fam, char* keymint, size_t kcap,
-                            char* usbctrl, size_t ucap) {
+                            char* usbctrl, size_t ucap,
+                            char* usbpath, size_t pcap) {
     static char info[4096];
     char* line;
     if (read_file(AIO_FAMILIES, info, sizeof(info)) < 0) return -1;
@@ -345,10 +348,23 @@ static int read_family_info(const char* fam, char* keymint, size_t kcap,
             }
             usbctrl[0] = '\0';
             if (uc != NULL) {
-                size_t n = strlen(uc + 9);
+                char* up;
+                char* end = strchr(uc + 9, ':');
+                size_t n = end != NULL ? (size_t)(end - (uc + 9)) : strlen(uc + 9);
                 if (n >= ucap) n = ucap - 1;
                 memcpy(usbctrl, uc + 9, n);
                 usbctrl[n] = '\0';
+                /* usbpath is the last field: runs to end of line. */
+                up = (end != NULL) ? strstr(end, ":usbpath=") : NULL;
+                usbpath[0] = '\0';
+                if (up != NULL) {
+                    size_t m = strlen(up + 9);
+                    if (m >= pcap) m = pcap - 1;
+                    memcpy(usbpath, up + 9, m);
+                    usbpath[m] = '\0';
+                }
+            } else {
+                usbpath[0] = '\0';
             }
             return 0;
         }
@@ -370,6 +386,7 @@ void aioswap_run(void) {
     char fam[32];
     char keymint[16];
     char usbctrl[32];
+    char usbpath[64];
     int i;
     aio_log("stub swap start\n");
     ensure_proc();
@@ -432,14 +449,15 @@ void aioswap_run(void) {
 swapped_family:
     release_proc();
     if (read_family_info(fam, keymint, sizeof(keymint), usbctrl,
-                         sizeof(usbctrl)) != 0) {
+                         sizeof(usbctrl), usbpath, sizeof(usbpath)) != 0) {
         aio_log("FALLBACK: family not in manifest, keeping placeholders\n");
         return;
     }
     {
-        char msg[128];
-        snprintf(msg, sizeof(msg), "keymint=%s usbctrl=%s\n", keymint,
-                 usbctrl[0] != '\0' ? usbctrl : "(default)");
+        char msg[192];
+        snprintf(msg, sizeof(msg), "keymint=%s usbctrl=%s usbpath=%s\n", keymint,
+                 usbctrl[0] != '\0' ? usbctrl : "(default)",
+                 usbpath[0] != '\0' ? usbpath : "(default)");
         aio_log(msg);
     }
 
@@ -469,8 +487,12 @@ swapped_family:
 
     /* USB controller in rc files (parsed by init AFTER us). The build
      * blanks the default to UNKNOWN markers; empty manifest usbctrl
-     * means the 11210000 default. Always written: an unswapped boot
-     * must fail visibly, never silently act like zuma. */
+     * means the 11210000 default. The bus parent dir comes from the
+     * manifest usbpath when present (laguna/malibu live under
+     * simple_usb_bus, not directly under platform/); otherwise it is
+     * derived as "<base>.usb" (gs101/gs201/zuma/zumapro layout).
+     * Always written: an unswapped boot must fail visibly, never
+     * silently act like zuma. */
     {
         const char* uc = usbctrl[0] != '\0' ? usbctrl : "11210000.dwc3";
         char base[32];
@@ -481,11 +503,19 @@ swapped_family:
         memcpy(base, uc, n);
         base[n] = '\0';
         {
-            /* sed twice: "<base>.usb" then full controller name. */
+            /* sed twice: bus dir then full controller name. */
             char from_usb[48];
-            char to_usb[48];
+            char to_usb[64];
+            const char* bus;
+            char bus_default[40];
             snprintf(from_usb, sizeof(from_usb), "%s.usb", USB_BLANK_BASE);
-            snprintf(to_usb, sizeof(to_usb), "%s.usb", base);
+            if (usbpath[0] != '\0') {
+                bus = usbpath;
+            } else {
+                snprintf(bus_default, sizeof(bus_default), "%s.usb", base);
+                bus = bus_default;
+            }
+            snprintf(to_usb, sizeof(to_usb), "%s", bus);
             r1 = sed_file(RC_COMMON, from_usb, to_usb);
             r2 = sed_file(RC_COMMON, USB_BLANK, uc);
             {

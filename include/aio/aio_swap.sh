@@ -56,8 +56,9 @@ if [[ -z "$rec" ]]; then
     exit 1
 fi
 KM="$(echo "$rec" | sed -n 's/.*:keymint=\([^:]*\).*/\1/p')"
-USBCTRL="$(echo "$rec" | sed -n 's/.*:usbctrl=\(.*\)/\1/p')"
-echo "[aio-swap] family=$FAM keymint=$KM usbctrl=${USBCTRL:-<default 11210000.dwc3>}"
+USBCTRL="$(echo "$rec" | sed -n 's/.*:usbctrl=\([^:]*\).*/\1/p')"
+USBPATH="$(echo "$rec" | sed -n 's/.*:usbpath=\([^:]*\).*/\1/p')"
+echo "[aio-swap] family=$FAM keymint=$KM usbctrl=${USBCTRL:-<default 11210000.dwc3>} usbpath=${USBPATH:-<default <base>.usb>}"
 
 # --- recovery.fstab (live file TWRP parses at boot) ---
 # Canonical location is system/etc (root /etc is a symlink to it).
@@ -86,13 +87,17 @@ fi
 # --- USB controller (rc files stay open in the cpio, sed is safe) ---
 # New images carry UNKNOWN markers (no zuma defaults); older ones still
 # have the baked 11210000 default — substitute both spellings. Empty
-# manifest usbctrl means the 11210000 default, always written.
+# manifest usbctrl means the 11210000 default, always written. The bus
+# parent dir comes from the manifest usbpath when present (laguna/malibu
+# live under simple_usb_bus); otherwise "<base>.usb" directly under
+# /sys/devices/platform (gs101/gs201/zuma/zumapro layout).
 if [[ -z "$USBCTRL" ]]; then USBCTRL="11210000.dwc3"; fi
 usb_base="${USBCTRL%.dwc3}"
+usb_bus="${USBPATH:-${usb_base}.usb}"
 for rc in "$ROOT/init.recovery.pixel_common.rc" "$ROOT/init.recovery.usb.rc"; do
     [[ -f "$rc" ]] || continue
-    sed -i "s/00000000\.usb/${usb_base}.usb/g; s/UNKNOWN\.dwc3/${USBCTRL}/g; s/11210000\.usb/${usb_base}.usb/g; s/11210000\.dwc3/${USBCTRL}/g" "$rc"
-    echo "[aio-swap]   USB controller -> $USBCTRL ($(basename "$rc"))"
+    sed -i "s|00000000\.usb|${usb_bus}|g; s|UNKNOWN\.dwc3|${USBCTRL}|g; s|11210000\.usb|${usb_bus}|g; s|11210000\.dwc3|${USBCTRL}|g" "$rc"
+    echo "[aio-swap]   USB controller -> $USBCTRL (bus $usb_bus, $(basename "$rc"))"
 done
 
 # --- VINTF keymint fragments: keep the target one, drop siblings ---
