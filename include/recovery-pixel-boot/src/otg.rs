@@ -279,7 +279,7 @@ fn switch_to_host(current: &mut String) {
     // Exynos OTG-ID register; absent on laguna/malibu (skipped, the role
     // switch above already steered the controller).
     if let Some(otg_id) = find_otg_id() {
-        let _ = std::fs::write(&otg_id, b"0\n");
+        let _ = std::fs::write(otg_id, b"0\n");
     }
     *current = "host".into();
 }
@@ -292,7 +292,7 @@ fn switch_to_device(current: &mut String) {
     let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
     // Exynos OTG-ID register; absent on laguna/malibu (skipped).
     if let Some(otg_id) = find_otg_id() {
-        let _ = std::fs::write(&otg_id, b"1\n");
+        let _ = std::fs::write(otg_id, b"1\n");
     }
     // Single write (shell version wrote it twice).
     let _ = set_prop("sys.usb.ffs.ready", "1");

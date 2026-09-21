@@ -67,8 +67,6 @@
 
 #define ARRAY_SIZE(A) (sizeof(A)/sizeof(*(A)))
 
-struct drm_surface {
-
 // Fox AIO runtime scanout-format selector (same contract as fox_rb_swap()
 // in graphics.cpp: ro.recovery.rb_swap="1" for PowerVR malibu/laguna).
 // The app-layer channel swap in gr_color/resources.cpp is NOT enough on
@@ -76,7 +74,8 @@ struct drm_surface {
 // creation. Swapped families take the P11-proven RGBX path
 // (DRM_FORMAT_XBGR8888, cf. P11 TARGET_RECOVERY_PIXEL_FORMAT=RGBX_8888
 // with normal screenshots); the rest keep the patched RGBA8888 path.
-// Logged so triage can see which fourcc a boot negotiated.
+// Logged so triage can see which fourcc a boot negotiated. File scope
+// (not a drm_surface member) so drm_create_surface calls it directly.
 static bool fox_rb_swap_drm(void) {
     static int cached = -1;
     if (cached < 0) {
@@ -88,6 +87,8 @@ static bool fox_rb_swap_drm(void) {
     }
     return cached == 1;
 }
+
+struct drm_surface {
     GRSurface base;
     uint32_t fb_id;
     uint32_t handle;

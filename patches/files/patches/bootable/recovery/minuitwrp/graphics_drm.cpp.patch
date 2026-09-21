@@ -1,10 +1,9 @@
 --- a/bootable/recovery/minuitwrp/graphics_drm.cpp
 +++ b/bootable/recovery/minuitwrp/graphics_drm.cpp
-@@ -68,6 +68,26 @@
+@@ -67,6 +67,27 @@
+ 
  #define ARRAY_SIZE(A) (sizeof(A)/sizeof(*(A)))
  
- struct drm_surface {
-+
 +// Fox AIO runtime scanout-format selector (same contract as fox_rb_swap()
 +// in graphics.cpp: ro.recovery.rb_swap="1" for PowerVR malibu/laguna).
 +// The app-layer channel swap in gr_color/resources.cpp is NOT enough on
@@ -12,7 +11,8 @@
 +// creation. Swapped families take the P11-proven RGBX path
 +// (DRM_FORMAT_XBGR8888, cf. P11 TARGET_RECOVERY_PIXEL_FORMAT=RGBX_8888
 +// with normal screenshots); the rest keep the patched RGBA8888 path.
-+// Logged so triage can see which fourcc a boot negotiated.
++// Logged so triage can see which fourcc a boot negotiated. File scope
++// (not a drm_surface member) so drm_create_surface calls it directly.
 +static bool fox_rb_swap_drm(void) {
 +    static int cached = -1;
 +    if (cached < 0) {
@@ -24,10 +24,11 @@
 +    }
 +    return cached == 1;
 +}
++
+ struct drm_surface {
      GRSurface base;
      uint32_t fb_id;
-     uint32_t handle;
-@@ -678,9 +698,15 @@
+@@ -678,9 +699,15 @@
      }
  
  #if defined(RECOVERY_ABGR)
@@ -46,7 +47,7 @@
  #elif defined(RECOVERY_BGRA)
      format = DRM_FORMAT_ARGB8888;
      base_format = GGL_PIXEL_FORMAT_RGBA_8888;
-@@ -803,18 +829,23 @@
+@@ -803,18 +830,23 @@
  static drmModeConnector *find_used_connector_by_type(int fd,
                                   drmModeRes *resources,
                                   unsigned type) {
