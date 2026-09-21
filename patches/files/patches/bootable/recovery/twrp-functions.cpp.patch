@@ -136,3 +136,23 @@
    if (DataManager::GetIntValue("tw_has_brightnesss_file"))
      {
        LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n",
+@@ -2597,7 +2695,18 @@
+       gui_msg(Msg(msg::kWarning, "fox_unencrypted=* Storage is not encrypted"));
+ 
+ #ifdef PRODUCT_PLATFORM
+-  gui_msg(Msg("fox_platform=* Platform:   {1}")(EXPAND(PRODUCT_PLATFORM)));
++  {
++    // AIO builds bake PRODUCT_PLATFORM="aio" (one image for all SoCs):
++    // prefer the runtime-detected SoC family (ro.recovery.soc_family,
++    // stamped per family by recovery-pixel-boot init before the UI
++    // starts). Falls back to the baked value when the prop is absent
++    // (per-family builds already bake the right one).
++    std::string fox_plat = EXPAND(PRODUCT_PLATFORM);
++    std::string soc_family = android::base::GetProperty("ro.recovery.soc_family", "");
++    if (!soc_family.empty())
++      fox_plat = soc_family;
++    gui_msg(Msg("fox_platform=* Platform:   {1}")(fox_plat.c_str()));
++  }
+ #else
+   gui_msg(Msg("fox_platform=* Platform:   {1}")(DataManager::GetStrValue(FOX_COMPATIBILITY_DEVICE).c_str()));
+ #endif
