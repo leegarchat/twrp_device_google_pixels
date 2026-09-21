@@ -9,6 +9,12 @@
   "status_h": 130,
   "progressive_scale": 0,
   "touch_modules": [
+    "stmvl53l1",
+    "slc_pt",
+    "bts",
+    "exynos_pm_qos",
+    "lwis",
+    "haptics-cs40l2x",
     "touch_bus_negotiator",
     "heatmap",
     "touch_offload",
