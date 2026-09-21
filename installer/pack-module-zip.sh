@@ -17,13 +17,31 @@
 # OFOX_FAMILY=aio. The zip is placed into the tree's builds/ directory
 # (resolved by walking up from here; override with OFOX_BUILDS_DIR).
 #
-# OFOX_PAYLOAD=/path/to/<payload>.lz4 refreshes the bundled payload: it
-# is copied next to this script and export.txt RECOVERY_IMG is rewritten
-# to its basename before packing (the stale payload file is removed).
+# OFOX_PAYLOAD=/path/to/<payload>.lz4 refreshes the bundled payload for
+# this zip only: it is copied next to this script and export.txt
+# RECOVERY_IMG is rewritten to its basename before packing. The tree is
+# left untouched afterwards (export.txt restored from backup, our payload
+# copy removed, stale payloads never deleted) so routine builds don't
+# dirty git status; fully ignoring export.txt is not an option (the
+# installer reads it at runtime).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
+
+# Restores the in-tree files touched for the payload refresh (backup copy
+# of export.txt + our payload copy). Runs on every exit via trap; a plain
+# repack without OFOX_PAYLOAD is a no-op (no backup was taken).
+_ofx_restore() {
+    if [ -n "${_export_bak:-}" ] && [ -f "${_export_bak:-}" ]; then
+        cp -f "$_export_bak" export.txt
+        rm -f "$_export_bak"
+    fi
+    if [ -z "${_pb_existed:-}" ] && [ -n "${_pb:-}" ]; then
+        rm -f "$ROOT/$_pb"
+    fi
+}
+trap _ofx_restore EXIT
 
 OFOX_NAME="${OFOX_NAME:-OrangeFox}"
 OFOX_TYPE="${OFOX_TYPE:-R12.0}"
@@ -47,18 +65,24 @@ else
 fi
 
 # Optional payload refresh before the required-file checks below.
+# Tree-neutral: export.txt is backed up (trap restores it on exit) and
+# only our own payload copy is removed afterwards; anything the user had
+# (including a stale payload or export.txt edits) is left exactly as is.
 if [ -n "${OFOX_PAYLOAD:-}" ]; then
     [ -f "$OFOX_PAYLOAD" ] || { echo "OFOX_PAYLOAD not found: $OFOX_PAYLOAD" >&2; exit 1; }
     _pb="$(basename "$OFOX_PAYLOAD")"
     case "$_pb" in *.lz4) ;; *) echo "OFOX_PAYLOAD must be a .lz4 ramdisk payload" >&2; exit 1;; esac
     _old="$(grep -E '^RECOVERY_IMG=' export.txt 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' | sed 's/^ *//;s/ *$//')"
+    _export_bak="$(mktemp)"
+    cp -f export.txt "$_export_bak"
+    _pb_existed=""
+    [ -f "$ROOT/$_pb" ] && _pb_existed=1
     cp -f "$OFOX_PAYLOAD" "$ROOT/$_pb"
     sed -i "s|^RECOVERY_IMG=.*|RECOVERY_IMG=$_pb|" export.txt
-    if [ -n "$_old" ] && [ "$_old" != "$_pb" ] && [ -f "$ROOT/$_old" ]; then
-        rm -f "$ROOT/$_old"
-        echo "payload refreshed: $_old -> $_pb (export.txt updated)"
+    if [ -n "$_old" ] && [ "$_old" != "$_pb" ]; then
+        echo "payload refreshed for this zip: $_old -> $_pb (tree files restored afterwards)"
     else
-        echo "payload refreshed: $_pb (export.txt updated)"
+        echo "payload refreshed for this zip: $_pb (tree files restored afterwards)"
     fi
 fi
 
