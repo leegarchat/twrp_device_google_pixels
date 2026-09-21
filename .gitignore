@@ -8,3 +8,4 @@ test_*
 # Generated kernel-profile override (gen_kernel_mk.py via build.sh -k).
 # Never commit: reproducible from families/*/family.json + devices/*/pixel.json.
 .gen_kernel.mk__pycache__/
+installer/OrangeFox-*.ramdisk.lz4
