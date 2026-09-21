@@ -38,9 +38,17 @@ import xml.etree.ElementTree as ET
 BASE_W, BASE_H = 1080, 1920
 
 VARIANTS = [
+    # Wide slabs (portrait panels).
     ("1280", 1280, 2856),
     ("1344", 1344, 2992),
     ("1440", 1440, 3120),
+    # Tablet (tangorpro, portrait 1600x2560) and fold inner displays
+    # (nearly square): native full-bleed instead of the 16:9 letterbox.
+    # X ratios here are large (up to 1.92) — proportions stay consistent
+    # (runtime scales ~1.0), aesthetics get a hand-tune pass later.
+    ("1600", 1600, 2560),
+    ("1840", 1840, 2208),
+    ("2076", 2076, 2152),
 ]
 
 # Element attributes holding X geometry (loader: ScaleX).
