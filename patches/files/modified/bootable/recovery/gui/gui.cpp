@@ -50,6 +50,7 @@ extern "C"
 #include "../variables.h"
 #include "../partitions.hpp"
 #include "../twrp-functions.hpp"
+#include <android-base/properties.h>
 #include "../openrecoveryscript.hpp"
 #include "../orscmd/orscmd.h"
 #include "blanktimer.hpp"
@@ -65,6 +66,34 @@ extern "C"
 #endif
 
 using namespace rapidxml;
+
+// Dynamic wide-panel theme selection (OrangeFox pixels).
+// recovery-pixel-boot stamps ro.recovery.theme (e.g. "twres_1440") at
+// early-init for wide slabs (pixel.json wide_theme + tools/theme_wide.py
+// variants shipped in the ramdisk). Returns "/<variant>/<file>" when the
+// variant ships the file, else the stock TWRES path. Base panels,
+// tablets (uniform 16:9 letterbox canvas) and folds (narrow cover,
+// letterboxed inner) always take TWRES: the prop stays empty there.
+static std::string Fox_ThemeFile(const char* file)
+{
+	static bool logged = false;
+	std::string variant = android::base::GetProperty("ro.recovery.theme", "");
+	if (!variant.empty())
+	{
+		std::string cand = "/" + variant + "/" + file;
+		if (TWFunc::Path_Exists(cand))
+		{
+			if (!logged)
+			{
+				LOGINFO("Fox_ThemeFile: wide theme '%s' active\n", variant.c_str());
+				logged = true;
+			}
+			return cand;
+		}
+		LOGINFO("Fox_ThemeFile: variant '%s' missing %s, falling back to stock theme\n", variant.c_str(), file);
+	}
+	return std::string(TWRES) + file;
+}
 
 // Global values
 static int gGuiInitialized = 0;
@@ -910,7 +939,7 @@ extern "C" int gui_init(void)
 #endif
 
 	// load and show splash screen
-	if (PageManager::LoadPackage("splash", TWRES "splash.xml", "splash")) {
+	if (PageManager::LoadPackage("splash", Fox_ThemeFile("splash.xml"), "splash")) {
 		LOGERR("Failed to load splash screen XML.\n");
 	}
 	else {
@@ -945,7 +974,7 @@ extern "C" int gui_loadResources(void)
 
 	if (check)
 	{
-		if (PageManager::LoadPackage("OrangeFox", TWRES "ui.xml", "decrypt"))
+		if (PageManager::LoadPackage("OrangeFox", Fox_ThemeFile("ui.xml"), "decrypt"))
 		{
 			gui_err("base_pkg_err=Failed to load base packages.");
 			goto error;
@@ -979,7 +1008,7 @@ extern "C" int gui_loadResources(void)
 		if (check || PageManager::LoadPackage("OrangeFox", theme_path, "main"))
 		{
 #endif // ifndef TW_OEM_BUILD
-			if (PageManager::LoadPackage("OrangeFox", TWRES "ui.xml", "main"))
+			if (PageManager::LoadPackage("OrangeFox", Fox_ThemeFile("ui.xml"), "main"))
 			{
 				gui_err("base_pkg_err=Failed to load base packages.");
 				goto error;
@@ -1029,7 +1058,7 @@ extern "C" int gui_loadCustomResources(void)
 		if (PageManager::ReloadPackage("OrangeFox", theme_path)) 
 		{
 			// Custom theme failed to load, try to load stock theme
-			if (PageManager::ReloadPackage("OrangeFox", TWRES "ui.xml")) 
+			if (PageManager::ReloadPackage("OrangeFox", Fox_ThemeFile("ui.xml"))) 
 			{
 				gui_err("base_pkg_err=Failed to load base packages.");
 				goto error;

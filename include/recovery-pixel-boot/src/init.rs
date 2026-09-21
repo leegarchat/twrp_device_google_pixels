@@ -332,15 +332,21 @@ fn apply_display_geometry(
     let _ = set_prop("DOF_SCREEN_W", &geom.w.to_string());
     let _ = set_prop("DOF_SCREEN_H", &geom.h.to_string());
     let _ = set_prop("DOF_PROGRESSIVE_SCALE", &scale.to_string());
+    // Wide-panel theme variant (pixel.json wide_theme, e.g. "twres_1440"):
+    // TWRP's dynamic theme pick (gui.cpp) loads matching XML so all three
+    // scalers agree. Empty = base /twres (1080p panels, tablets, folds).
+    if !cfg.wide_theme.is_empty() {
+        let _ = set_prop("ro.recovery.theme", &cfg.wide_theme);
+    }
     // Per-device status-bar height (pixel.json status_h): lets data.cpp drop
     // the compile-time OF_STATUS_H default, same pattern as DOF_SCREEN_H.
     let _ = set_prop("DOF_STATUS_H", &cfg.status_h.to_string());
     crate::ko_picker::log_msg(
         "boot",
         "INFO",
-        &format!("display: {which} canvas {}x{} scale={scale} status_h={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, cfg.is_fold),
+        &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, if cfg.wide_theme.is_empty() { "twres" } else { &cfg.wide_theme }, cfg.is_fold),
     );
-    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={}", geom.w, geom.h, cfg.status_h));
+    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={}", geom.w, geom.h, cfg.status_h, if cfg.wide_theme.is_empty() { "twres" } else { &cfg.wide_theme }));
 }
 
 fn by_name_exists(part: &str) -> bool {

@@ -51,6 +51,14 @@ pub struct DeviceConfig {    pub family: String,
     /// zumapro devices use 150). Stamped as DOF_STATUS_H at early-init so
     /// data.cpp can drop the compile-time OF_STATUS_H default.
     pub status_h: u32,
+    /// Wide-panel theme variant dir (default empty = base /twres).
+    /// Wide slabs name their pre-generated variant (e.g. "twres_1440",
+    /// see tools/theme_wide.py); stamped as ro.recovery.theme at
+    /// early-init so TWRP loads matching XML (gui.cpp dynamic pick).
+    /// Empty keeps the stock behavior on 1080p panels, tablets (their
+    /// 16:9 letterbox canvas already scales uniformly) and folds
+    /// (cover narrow, inner letterboxed).
+    pub wide_theme: String,
     /// Vertical letterbox for the front/cover canvas (default 0 = stock
     /// vertical-stretch behavior): slabs and fold covers use real panel
     /// geometry with 0; tablets stamp 1 explicitly.
@@ -417,6 +425,7 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
             let v = get_int(pairs, "status_h");
             if v > 0 { v as u32 } else { 130 }
         },
+        wide_theme: get_str(pairs, "wide_theme"),
         progressive_scale: if has_key(pairs, "progressive_scale")
             && get_int(pairs, "progressive_scale") == 1
         {
@@ -647,6 +656,24 @@ mod tests {
         // Missing keys: front defaults to stock stretch (0), inner to bars (1).
         assert_eq!(load_device_config_from(&f, "lynx").unwrap().progressive_scale, 0);
         assert_eq!(load_device_config_from(&f, "lynx").unwrap().inner_progressive_scale, 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn wide_theme_parses_with_default() {
+        let d = std::env::temp_dir().join(format!("fox_test_wide_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"husky": {"family": "zuma", "wide_theme": "twres_1344", "props": {}},
+            "shiba": {"family": "zuma", "props": {}}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_device_config_from(&f, "husky").unwrap().wide_theme, "twres_1344");
+        // Missing key: base theme, empty string.
+        assert_eq!(load_device_config_from(&f, "shiba").unwrap().wide_theme, "");
         let _ = std::fs::remove_dir_all(&d);
     }
 

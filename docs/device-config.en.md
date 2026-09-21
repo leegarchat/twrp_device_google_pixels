@@ -72,6 +72,12 @@ Displays are also in JSON; code knows no resolutions:
   bars) for the inner canvas. Slab always takes front. Slabs and covers
   carry real panel geometry with 0; inner canvases and the tablet carry
   a 16:9 canvas (see `tools/display_16x9.py`) with 1.
+- `wide_theme` (default empty = base `/twres`): wide slabs name their
+  pre-generated XML variant (e.g. `"twres_1440"` for 1440-wide panels;
+  see `tools/theme_wide.py`), stamped as `ro.recovery.theme` so TWRP's
+  dynamic theme pick (gui.cpp) loads matching pages. With a matched
+  theme all three scalers agree (~1.0), so text/images/boxes cannot
+  drift apart. Tablets and folds stay empty (uniform letterbox path).
 - Letterbox engine (`data.cpp` + `pages.cpp`): virtual canvas +
   centering, uniform scale instead of stretching. Without `DOF_SCREEN_W` —
   stock behavior.
