@@ -11,7 +11,7 @@
 # directory holding THIS file; the tools live under bin/<os>/ next to
 # the installer binaries.
 
-RECOVERY_IMG=OrangeFox-R12.0-test7-aio.ramdisk.lz4
+RECOVERY_IMG=OrangeFox-R12.0-test7.1-aio.ramdisk.lz4
 BACKUP_DIR=backup
 PLATFORM_TOOLS_LINUX=bin/linux/platform-tools
 PLATFORM_TOOLS_WINDOWS=bin/windows/platform-tools
