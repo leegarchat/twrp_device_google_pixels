@@ -25,3 +25,13 @@ MIN_FREE_MB=7
 # both (default) | a | b | 0 (=a) | 1 (=b) | current (active slot
 # from the ro.boot.slot_suffix property).
 SLOT=both
+# Install layout type (test sets; empty = Type A classic):
+#   empty      Type A — classic: payload becomes the recovery fragment,
+#              native first-stage wins (stock behavior, all families).
+#   var1       Type B — all-in-platform: native first-stage + payload
+#              merged into the platform fragment, no recovery fragment.
+#   var2       Type C — payload-only platform: native platform fully
+#              replaced by the payload (needs a var2-AIO payload built
+#              with first_stage inside, build.sh --platform-recovery).
+# Passed as bootsmasher `install --file --recovery-is-platform <v>`.
+RECOVERY_IS_PLATFORM=

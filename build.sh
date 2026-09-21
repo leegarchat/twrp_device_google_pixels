@@ -39,6 +39,13 @@
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
+#   --platform-recovery
+#                     Recovery-in-platform test layout (var2-AIO): merge
+#                     first-stage + recovery into one ramdisk
+#                     (BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=false,
+#                     like gs101) and pack first_stage files into the payload
+#                     cpio. Exported as FOX_RECOVERY_IN_PLATFORM=1 for
+#                     BoardConfig.mk + .build_platform.conf (callback merge).
 #   -N, --no-first-stage
 #                     Skip first-stage (vendor_ramdisk) components: no
 #                     fstab.*.vendor_ramdisk, no linker/e2fs vendor_ramdisk
@@ -240,6 +247,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_NO_FIRST_STAGE=1
             shift
             ;;
+        --platform-recovery)
+            FOX_RECOVERY_IN_PLATFORM=1
+            shift
+            ;;
         --build-type)
             shift
             FOX_BUILD_TYPE="${1:-}"
@@ -287,6 +298,25 @@ export FOX_BUILD_TYPE
 if [[ -n "$FOX_NO_FIRST_STAGE" ]]; then
     export FOX_NO_FIRST_STAGE
     echo "[build] First-stage components DISABLED (FOX_NO_FIRST_STAGE=1)"
+fi
+# Recovery-in-platform test layout (var2-AIO): empty by default, so normal
+# builds see an empty var. Exported for BoardConfig.mk (make imports env);
+# .build_platform.conf (lunch-time file read by the callback in recipe
+# shells, where custom env is stripped) is updated below at build time.
+if [[ -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
+    export FOX_RECOVERY_IN_PLATFORM
+    echo "[build] Recovery-in-platform layout ENABLED (FOX_RECOVERY_IN_PLATFORM=1)"
+    _plat_conf="$SCRIPT_DIR/.build_platform.conf"
+    if [[ -f "$_plat_conf" ]]; then
+        if grep -q '^RECOVERY_IN_PLATFORM=' "$_plat_conf" 2>/dev/null; then
+            sed -i 's/^RECOVERY_IN_PLATFORM=.*/RECOVERY_IN_PLATFORM=1/' "$_plat_conf"
+        else
+            echo "RECOVERY_IN_PLATFORM=1" >> "$_plat_conf"
+        fi
+        echo "[build] .build_platform.conf updated: RECOVERY_IN_PLATFORM=1"
+    else
+        echo "[build] WARNING: $_plat_conf missing, callback merge will be skipped"
+    fi
 fi
 if [[ "$CPIO_ONLY" == true ]]; then
     echo "[build] cpio-only delivery: .img/.zip will NOT be copied, only ramdisk cpio.lz4"
@@ -819,7 +849,7 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
     #   gs101 → vendor_ramdisk/ramdisk.cpio,  flash: fastboot flash vendor_boot:
     #   other → vendor_ramdisk/recovery.cpio, flash: fastboot flash vendor_boot:recovery
     if [[ -n "$LATEST_IMG" ]] && [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || "$CPIO_ONLY" == true ]]; then
-        if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
+        if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
             FRAG_SRC="vendor_ramdisk/ramdisk.cpio"
             FRAG_FLASH="fastboot flash vendor_boot:"
         else

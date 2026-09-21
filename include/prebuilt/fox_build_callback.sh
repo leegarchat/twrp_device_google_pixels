@@ -64,6 +64,17 @@ case "$USBCTRL" in
     *) echo "    [CONFIG] ERROR: bad USBCTRL='$USBCTRL', need <base>.dwc3 or empty"; return 1 ;;
 esac
 [ -n "$USBCTRL" ] && echo "    [CONFIG] USBCTRL=$USBCTRL"
+# Recovery-in-platform test layout (var2-AIO, build.sh --platform-recovery
+# sets RECOVERY_IN_PLATFORM=1 in .build_platform.conf at build time).
+# Empty (default) = split layout, nothing merged. With =1 the first-stage
+# tree (vendor_ramdisk/) is merged into the recovery root below, so the
+# payload cpio carries first_stage files for all-in-platform installs.
+: "${RECOVERY_IN_PLATFORM:=}"
+case "$RECOVERY_IN_PLATFORM" in
+    ""|1) ;;
+    *) echo "    [CONFIG] WARNING: bad RECOVERY_IN_PLATFORM='$RECOVERY_IN_PLATFORM', need empty|1; using empty"; RECOVERY_IN_PLATFORM="" ;;
+esac
+[ -n "$RECOVERY_IN_PLATFORM" ] && echo "    [CONFIG] RECOVERY_IN_PLATFORM=$RECOVERY_IN_PLATFORM"
 
 # =========================================================================
 # LGZ compression configuration
@@ -708,6 +719,25 @@ case "$CALL_TYPE" in
         # family's flags ship as /system/etc/twrp.flags.<fam> for the
         # installer to select post-unpack (include/aio/aio_swap.sh).
         platform="$PLATFORM"
+        # --- Recovery-in-platform merge (var2-AIO, RECOVERY_IN_PLATFORM=1) ---
+        # Must run FIRST in --second-call: everything below (family kits,
+        # keymint injection, INIT-STUB swap, manifest/file-list generation,
+        # LGZ pack) must see the merged tree. Merges vendor_ramdisk/
+        # (first_stage files) into the recovery root; no clobber of files
+        # the recovery root already owns.
+        if [ -n "$RECOVERY_IN_PLATFORM" ]; then
+            _vr_dir="$(dirname "$(dirname "$TARGET_DIR")")/vendor_ramdisk"
+            if [ -d "$_vr_dir/first_stage_ramdisk" ]; then
+                _merged=0
+                _merged=$(cd "$_vr_dir" && find . -mindepth 1 ! -type d | wc -l)
+                cp -an "$_vr_dir/." "$TARGET_DIR/" 2>/dev/null || \
+                    cp -a "$_vr_dir/." "$TARGET_DIR/"
+                echo "    [PLATFORM]   + vendor_ramdisk merged into recovery root ($_merged files, no-clobber)"
+            else
+                echo "    [PLATFORM] WARNING: RECOVERY_IN_PLATFORM=1 but $_vr_dir/first_stage_ramdisk missing, payload stays split"
+            fi
+            unset _vr_dir _merged
+        fi
         fam_flags="$TREE_ROOT/families/$platform/twrp.flags"
         default_flags="$TARGET_DIR/system/etc/twrp.flags"
         if [ -f "$fam_flags" ]; then

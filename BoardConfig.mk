@@ -247,7 +247,11 @@ BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT := true
 # via PRIVATE_ADDITIONAL_DIR), no standalone recovery fragment, no dtb/dlkm
 # fragments (stock kernel modules ride inside our platform, see
 # families/gs101/family.mk). All other families keep the split layout.
-ifeq ($(DEVICE_BUILD_FLAG),gs101)
+# Recovery-in-platform test layout (var2-AIO, build.sh --platform-recovery):
+# same merge for any family (e.g. AIO test payloads with first_stage inside).
+ifeq ($(FOX_RECOVERY_IN_PLATFORM),1)
+BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT := false
+else ifeq ($(DEVICE_BUILD_FLAG),gs101)
 BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT := false
 else
 BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT := true

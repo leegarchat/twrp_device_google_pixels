@@ -200,9 +200,20 @@ fi
 # --- [3/4] rebuild ---
 say ""
 say "== [3/4] rebuild =="
+# Install layout type from export.txt RECOVERY_IS_PLATFORM (empty = Type A
+# classic; var1 = Type B all-in-platform; var2 = Type C payload-only
+# platform). Passed only when set: old binaries reject unknown flags.
+RIP_ARGS=""
+_RIP_VAL="$(cfg RECOVERY_IS_PLATFORM)"
+case "$_RIP_VAL" in
+    "") ;;
+    var1|var2) RIP_ARGS="--recovery-is-platform $_RIP_VAL"
+        say "  layout: Type $([ "$_RIP_VAL" = var1 ] && echo B || echo C) ($_RIP_VAL)" ;;
+    *) fail "bad RECOVERY_IS_PLATFORM in export.txt: '$_RIP_VAL' (want empty|var1|var2)" ;;
+esac
 for s in $SLOTS; do
     "$BIN" install --file -i "$TMPDIR/vendor_boot_${s}_orig.img" -c "$PAYLOAD" \
-        -o "$TMPDIR/recovery_${s}.img" --log "$TMPDIR/install-${s}.log" >>"$LOG" 2>&1 \
+        -o "$TMPDIR/recovery_${s}.img" --log "$TMPDIR/install-${s}.log" $RIP_ARGS >>"$LOG" 2>&1 \
         || fail "rebuild slot $s (see $TMPDIR/install-${s}.log)"
     say "  ok: slot $s rebuilt ($(wc -c < "$TMPDIR/recovery_${s}.img" | tr -d ' ') bytes)"
 done
