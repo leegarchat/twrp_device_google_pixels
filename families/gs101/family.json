@@ -4,7 +4,8 @@
   "keymint": "cpp",
   "post_remove_ramdisk": [],
   "props": {
-    "ro.recovery.rb_swap": "0"
+    "ro.recovery.rb_swap": "0",
+    "ro.recovery.soc_family": "gs101"
   },
   "default_kernel": "6.1",
   "kernels": {
