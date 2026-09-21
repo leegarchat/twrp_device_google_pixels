@@ -16,8 +16,10 @@
     "touch_offload",
     "touch_bus_negotiator",
     "goog_touch_interface",
+    "stm_core",
     "focal_touch",
-    "syna_touch"
+    "syna_touch",
+    "sec_touch"
   ],
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",

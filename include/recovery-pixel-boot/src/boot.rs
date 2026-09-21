@@ -5,7 +5,7 @@
 //! Called as `recovery-pixel-boot boot` from an `on boot` exec (and, during
 //! transition, from the runatboot.sh delegation wrapper).
 
-use crate::config::{load_device_config, DeviceConfig};
+use crate::config::{DeviceConfig, load_device_config_fallback};
 use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg, ko_try_load, score_candidate, detect_kernel_env};
 use crate::props::get_prop;
 use crate::stage::{is_mounted, run_stage};
@@ -26,9 +26,10 @@ fn error(msg: &str) {
 }
 
 /// Load the device section; unknown codename -> empty (skip like the old
-/// `*` branch), never fatal.
+/// `*` branch), never fatal. Family-level fallback included: SoC-named
+/// hardware ("malibu") borrows the first section of its family.
 fn device_config(code: &str) -> DeviceConfig {
-    match load_device_config(code) {
+    match load_device_config_fallback(code) {
         Ok(c) => c,
         Err(e) => {
             warn(&format!("no config section for {code}: {e}"));
@@ -209,6 +210,53 @@ fn modules_touch_install(cfg: &DeviceConfig, suffix: &str, unsuffix: &str, slot:
     let _ = ok;
 }
 
+/// Late backlight nudge for late-probing panels (malibu DPU et al).
+///
+/// The panel backlight node appears only after display DLKM probes,
+/// which can lose the race with TWRP's one-shot brightness discovery
+/// at startup: the slider then stays hidden and the screen sits at the
+/// driver default (dark, reported as "brightness 0"). If every live
+/// backlight node reads below 10% of its max, raise it to 50% — a
+/// no-op when TWRP already set a sane value, and TWRP's own writes
+/// still win afterwards. Pure over `dir` (testable).
+fn nudge_backlight_dir(dir: &Path) -> bool {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let mut nudged = false;
+    for e in entries.flatten() {
+        let node = e.path().join("brightness");
+        let max_node = e.path().join("max_brightness");
+        let cur: u32 = std::fs::read_to_string(&node)
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        let max: u32 = std::fs::read_to_string(&max_node)
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .unwrap_or(0);
+        if max == 0 || cur * 10 >= max {
+            continue;
+        }
+        let target = max / 2;
+        if std::fs::write(&node, format!("{target}\n")).is_ok() {
+            info(&format!(
+                "brightness: nudged {} -> {target} (max {max})",
+                node.display()
+            ));
+            nudged = true;
+        }
+    }
+    nudged
+}
+
+fn nudge_brightness() {
+    nudge_backlight_dir(Path::new("/sys/class/backlight"));
+}
+
 fn find_magisk_zip() -> Option<PathBuf> {
     let entries = std::fs::read_dir("/system/bin").ok()?;
     for e in entries.flatten() {
@@ -327,6 +375,11 @@ pub fn run_boot() -> Result<(), String> {
         }
     }
 
+    // Backlight may still read dark here (late panel probe vs TWRP's
+    // one-shot discovery); nudge before the GUI settles. No-op when
+    // TWRP already set a sane value.
+    nudge_brightness();
+
     if Path::new("/dev/lwis-flash-lm3644").exists() {
         info("torch: /dev/lwis-flash-lm3644 available");
     } else {
@@ -364,6 +417,32 @@ mod tests {
         let c = crate::config::load_device_config_from(&f, "shiba").unwrap();
         assert!(c.touch_modules.contains(&"sec_touch".to_string()));
         assert!(!c.touch_modules.contains(&"syna_touch".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn backlight_nudge_raises_only_dark_nodes() {
+        let d = std::env::temp_dir().join(format!("fox_test_bl_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let dark = d.join("panel0");
+        let bright = d.join("panel1");
+        let broken = d.join("panel2");
+        for p in [&dark, &bright, &broken] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        std::fs::write(dark.join("brightness"), b"0\n").unwrap();
+        std::fs::write(dark.join("max_brightness"), b"3827\n").unwrap();
+        std::fs::write(bright.join("brightness"), b"3827\n").unwrap();
+        std::fs::write(bright.join("max_brightness"), b"3827\n").unwrap();
+        // No max file: untouched.
+        std::fs::write(broken.join("brightness"), b"0\n").unwrap();
+        assert!(nudge_backlight_dir(&d));
+        let v: u32 = std::fs::read_to_string(dark.join("brightness")).unwrap().trim().parse().unwrap();
+        assert_eq!(v, 3827 / 2);
+        let v: u32 = std::fs::read_to_string(bright.join("brightness")).unwrap().trim().parse().unwrap();
+        assert_eq!(v, 3827);
+        let v: u32 = std::fs::read_to_string(broken.join("brightness")).unwrap().trim().parse().unwrap();
+        assert_eq!(v, 0);
         let _ = std::fs::remove_dir_all(&d);
     }
 

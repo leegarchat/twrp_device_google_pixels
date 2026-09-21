@@ -53,6 +53,7 @@
 #include <private/android_filesystem_config.h>
 
 #include "twrp-functions.hpp"
+#include "find_file.hpp"
 #include "orangefox.hpp"
 #include "abx-functions.hpp"
 #include "twcommon.h"
@@ -2109,10 +2110,69 @@ bool TWFunc::Create_Dir_Recursive(const std::string & path, mode_t mode,
   return true;
 }
 
+// Late backlight discovery (Tensor G6/DPU panels): the panel backlight
+// node appears only after display DLKM probes at `on boot`, which can
+// lose the race with TWRP's one-shot brightness discovery at startup
+// (DataManager::SetDefaultValues). Without this retry,
+// tw_has_brightnesss_file stays 0, the slider is hidden and every
+// Set_Brightness is a no-op, so the screen sits at the driver default
+// (dark). Mirrors the data.cpp discovery; harmless when the node was
+// already found at startup.
+static bool Rediscover_Brightness_File(void)
+{
+  std::string findbright;
+#ifdef TW_BRIGHTNESS_PATH
+  findbright = EXPAND(TW_BRIGHTNESS_PATH);
+  if (!TWFunc::Path_Exists(findbright))
+    findbright = "";
+#endif
+  if (findbright.empty())
+    findbright = Find_File::Find("brightness", "/sys/class/backlight");
+  if (findbright.empty())
+    findbright =
+      Find_File::Find("brightness", "/sys/class/leds/lcd-backlight");
+  if (findbright.empty())
+    return false;
+  LOGINFO("TWFunc::Set_Brightness: late discovery found '%s'\n",
+	  findbright.c_str());
+  DataManager::SetValue("tw_has_brightnesss_file", "1");
+  DataManager::SetValue("tw_brightness_file", findbright);
+  std::string maxBrightness;
+#ifdef TW_MAX_BRIGHTNESS
+  {
+    std::ostringstream maxVal;
+    maxVal << TW_MAX_BRIGHTNESS;
+    maxBrightness = maxVal.str();
+  }
+#else
+  std::string maxbrightpath = findbright;
+  maxbrightpath.insert(maxbrightpath.rfind('/') + 1, "max_");
+  if (TWFunc::Path_Exists(maxbrightpath))
+    {
+      std::ifstream maxVal(maxbrightpath.c_str());
+      if (!(maxVal >> maxBrightness))
+	maxBrightness = "-1";
+    }
+  if (atoi(maxBrightness.c_str()) <= 0)
+    maxBrightness = "255";
+#endif
+  DataManager::SetValue("tw_brightness_max", maxBrightness);
+  DataManager::SetValue("tw_brightness", maxBrightness);
+  DataManager::SetValue("tw_brightness_pct", "100");
+  return true;
+}
+
 int TWFunc::Set_Brightness(std::string brightness_value)
 {
   int result = -1;
   std::string secondary_brightness_file;
+
+  if (!DataManager::GetIntValue("tw_has_brightnesss_file"))
+    {
+      // Late-probing panel (e.g. malibu DPU): retry discovery once.
+      if (!Rediscover_Brightness_File())
+	return -1;
+    }
 
   if (DataManager::GetIntValue("tw_has_brightnesss_file"))
     {

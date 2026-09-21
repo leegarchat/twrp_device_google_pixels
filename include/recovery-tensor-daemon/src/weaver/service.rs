@@ -396,8 +396,28 @@ mod binder_glue {
         }
         binder::ProcessState::start_thread_pool();
         let service = BnWeaver::new_binder(BinderWeaver { hal }, binder::BinderFeatures::default());
-        if let Err(e) = binder::add_service(WEAVER_INSTANCE, service.as_binder()) {
-            crate::loge!("weaver", "failed to register {WEAVER_INSTANCE}: {e:?}");
+        // Titan M3 bringup: servicemanager can be momentarily unreachable
+        // right after boot (observed UNKNOWN_ERROR on malibu). The service
+        // is oneshot, so a single fatal exit here kills CE decrypt with no
+        // retry — poll instead, then join the pool once registered.
+        let mut registered = false;
+        for attempt in 0..30u32 {
+            match binder::add_service(WEAVER_INSTANCE, service.as_binder()) {
+                Ok(()) => {
+                    registered = true;
+                    break;
+                }
+                Err(e) => {
+                    crate::loge!(
+                        "weaver",
+                        "register attempt {attempt} failed: {e:?}; retrying"
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        }
+        if !registered {
+            crate::loge!("weaver", "failed to register {WEAVER_INSTANCE} after retries");
             std::process::exit(1);
         }
         crate::logi!("weaver", "registered {WEAVER_INSTANCE}");
