@@ -179,7 +179,9 @@ def scale_vars(text, ratios, warnings, where):
 
 
 def convert_file(src, dst, variant, w, h, ratios, warnings):
-    with open(src, "r", encoding="utf-8", errors="replace") as f:
+    # newline="" keeps source line endings (CRLF files stay CRLF) so
+    # diffs against the base theme show only real value changes.
+    with open(src, "r", encoding="utf-8", errors="replace", newline="") as f:
         text = f.read()
     rel = os.path.relpath(src, TWRES)
     if rel == "ui.xml":
@@ -199,7 +201,7 @@ def convert_file(src, dst, variant, w, h, ratios, warnings):
     else:
         text = scale_attrs(text, ratios, warnings, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    with open(dst, "w", encoding="utf-8") as f:
+    with open(dst, "w", encoding="utf-8", newline="") as f:
         f.write(text)
 
 
