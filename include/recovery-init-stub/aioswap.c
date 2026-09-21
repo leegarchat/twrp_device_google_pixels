@@ -399,7 +399,27 @@ void aioswap_run(void) {
         snprintf(msg, sizeof(msg), "hardware=%s\n", device);
         aio_log(msg);
     }
-    if (map_device_family(device, fam, sizeof(fam)) != 0) {
+    /* Family-level hardware first: Tensor G6 bootloaders report the SoC
+     * ("malibu") instead of the codename ("grizzly") in
+     * androidboot.hardware, and devices.txt only maps codenames. A
+     * hardware value that already names a family is used directly. */
+    fam[0] = '\0';
+    for (i = 0; kFamilies[i] != NULL; i++) {
+        if (strcmp(device, kFamilies[i]) == 0) {
+            size_t n = strlen(device);
+            if (n >= sizeof(fam)) n = sizeof(fam) - 1;
+            memcpy(fam, device, n);
+            fam[n] = '\0';
+            {
+                char msg[128];
+                snprintf(msg, sizeof(msg),
+                         "hardware is family name, using family=%s\n", fam);
+                aio_log(msg);
+            }
+            break;
+        }
+    }
+    if (fam[0] == '\0' && map_device_family(device, fam, sizeof(fam)) != 0) {
         release_proc();
         aio_log("FALLBACK: device not in map, keeping placeholders\n");
         return;

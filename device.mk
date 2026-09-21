@@ -172,6 +172,23 @@ PRODUCT_PACKAGES += fstab.malibu-fips.vendor_ramdisk
 else ifeq ($(DEVICE_BUILD_FLAG),laguna)
 PRODUCT_PACKAGES += fstab.laguna.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.laguna-fips.vendor_ramdisk
+else ifeq ($(DEVICE_BUILD_FLAG),aio)
+# AIO ships every family's fstab: first-stage init picks fstab.<hardware>
+# per device, and malibu/laguna must not fall back to the zuma file
+# (wrong UFS/EROFS layout breaks vendor mount, which in turn runs the
+# wrong KeyMint HAL and kills decrypt). Small files, always installed.
+PRODUCT_PACKAGES += fstab.zuma.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.zuma-fips.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.gs201.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.gs101.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.gs101-fips.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.malibu.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.malibu-fips.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.laguna.vendor_ramdisk
+PRODUCT_PACKAGES += fstab.laguna-fips.vendor_ramdisk
 else
 PRODUCT_PACKAGES += fstab.zuma.vendor_ramdisk
 PRODUCT_PACKAGES += fstab.zuma-fips.vendor_ramdisk

@@ -12,7 +12,7 @@
 //! itself belongs to the otg-auto daemon, which runs when configfs
 //! exists; see otg.rs resolve_udc.)
 
-use crate::config::load_device_config;
+use crate::config::load_device_config_fallback;
 use crate::props::{get_prop, set_prop};
 use crate::stage::run_stage;
 use std::io::Write;
@@ -497,7 +497,11 @@ pub fn run_init() -> Result<(), String> {
     );
 
     let device_code = crate::config::resolve_device_code();
-    let cfg = load_device_config(&device_code).unwrap_or_default();
+    // Family-level fallback: SoC-named hardware ("malibu") has no device
+    // section; borrow the first section of the matching family so the
+    // family swap below still fires (USB/fstab/flags/keymint are
+    // family-exact even when the exact unit is unknown).
+    let cfg = load_device_config_fallback(&device_code).unwrap_or_default();
     dlog(&mut log, &format!("detected family={}", cfg.family));
     let _ = TAG;
 
@@ -533,7 +537,7 @@ pub fn run_init() -> Result<(), String> {
     // twrp.cpp SetDefaultValues reads DOF_* and before minui opens DRM).
     // Re-load config under the corrected code so folds resolve geometry.
     {
-        let cfg_final = load_device_config(&final_code).unwrap_or_default();
+        let cfg_final = load_device_config_fallback(&final_code).unwrap_or_default();
         let hinge = if cfg_final.is_fold {
             detect_fold_state()
         } else {

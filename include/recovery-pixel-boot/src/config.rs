@@ -411,6 +411,45 @@ pub fn load_device_config(code: &str) -> Result<DeviceConfig, String> {
     load_device_config_from(Path::new(CONFIG_PATH), code)
 }
 
+/// Family-level fallback for SoC-named hardware.
+///
+/// Tensor G6 bootloaders report the SoC ("malibu") instead of the
+/// codename ("grizzly") in androidboot.hardware, and no per-device
+/// section exists for a family name. Exact section first; otherwise the
+/// first section whose `family` matches `code` (touch/display geometry
+/// may be approximate for the exact unit, but fstab/flags/USB/keymint
+/// are family-exact — enough for decrypt + ADB + backup).
+/// Path-parameterized core of [`load_device_config_fallback`] (testable).
+fn load_device_config_fallback_from(path: &Path, code: &str) -> Result<DeviceConfig, String> {
+    match load_device_config_from(path, code) {
+        Ok(c) => Ok(c),
+        Err(_) => {
+            if code.is_empty() {
+                return Err("empty device code".to_string());
+            }
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("read {}: {e}", path.display()))?;
+            let mut p = Parser { b: text.as_bytes(), i: 0 };
+            p.ws();
+            let top = p.object().map_err(|e| e.to_string())?;
+            for (dev, _) in top.iter().filter(|(k, _)| !k.starts_with('_')) {
+                if let Ok(c) = load_device_config_from(path, dev) {
+                    if c.family == code {
+                        return Ok(c);
+                    }
+                }
+            }
+            Err(format!("no section for device {code}"))
+        }
+    }
+}
+
+pub fn load_device_config_fallback(code: &str) -> Result<DeviceConfig, String> {
+    load_device_config_fallback_from(Path::new(CONFIG_PATH), code)
+}
+
+
+
 /// Top-level device keys (skips `_families` bookkeeping).
 pub fn list_devices() -> Vec<String> {
     let text = match std::fs::read_to_string(CONFIG_PATH) {
@@ -600,6 +639,28 @@ mod tests {
             std::fs::write(&f, bad).unwrap();
             assert!(load_device_config_from(&f, "a").is_err(), "{bad}");
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn family_name_falls_back_to_first_family_section() {
+        let d = std::env::temp_dir().join(format!("fox_test_famfb_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"grizzly": {"family": "malibu", "props": {}},
+            "shiba": {"family": "zuma", "props": {}}}"#,
+        )
+        .unwrap();
+        // Exact codename still wins.
+        assert_eq!(load_device_config_fallback_from(&f, "grizzly").unwrap().family, "malibu");
+        // SoC name borrows the family's first section.
+        assert_eq!(load_device_config_fallback_from(&f, "malibu").unwrap().family, "malibu");
+        // Unknown stays an error; empty stays an error.
+        assert!(load_device_config_fallback_from(&f, "nope").is_err());
+        assert!(load_device_config_fallback_from(&f, "").is_err());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
