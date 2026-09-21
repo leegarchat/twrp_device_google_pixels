@@ -7,8 +7,9 @@
 2. First-stage: `IsRecoveryMode()` (`access /system/bin/recovery`, открыт)
    → exec нашего `/system/bin/init` — это **статический стаб**, не настоящий init.
 3. Стаб: снапшот рамдиска (для reflash) → анпак LGZ-кластера → exec
-   настоящего `init.real`. Фейл в recovery-режиме = `reboot bootloader`.
-   Legacy-путь в `SecondStageMain` пропускается (handoff по `init.real`).
+   настоящего `init.fox_real`. Фейл в recovery-режиме = `reboot bootloader`.
+   Legacy-путь в `SecondStageMain` пропускается (handoff по `init.fox_real`).
+   (`.fox_real`, а не `init.real`: без коллизий с цепочками Magisk/KSU.)
 4. `early-init exec` → `recovery-pixel-boot init` (резолв девайса, пропсы,
    hinge-детект).
 5. `on init exec` → `setup-temp`; стартуют Trusty/keymint/weaver-сервисы.
@@ -21,15 +22,16 @@
 
 Статический C (`static_executable`, без логов) PID 1 на месте
 `/system/bin/init`; настоящий init едет **внутри LGZ-кластера** как
-`init.real` (`init` в exclude-списке, `init.real` — нет; свап делает
+`init.fox_real` (`init` в exclude-списке, `init.fox_real` — нет; свап делает
 колбэк до паковки и манифестов).
 
-- **Первое invocation** (`init.real` отсутствует): встроенный снапшот
+- **Первое invocation** (`init.fox_real` отсутствует): встроенный снапшот
   (`snapshot.c`, порт Rust-версии; Rust-бинарь `ramdisk_snapshot`
-  оставлен фолбэком) → `lgz decompress` → exec `init.real`.
-- **Последующие** (`second_stage`, `init.real` на месте): мгновенный
+  оставлен фолбэком) → `lgz decompress` → маркеры
+  (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `init.fox_real`.
+- **Последующие** (`second_stage`, маркер или `init.fox_real` на месте): мгновенный
   passthrough с сохранением argv/env.
-- Распаковка обязана случиться до `selinux_setup`: `init.real`,
+- Распаковка обязана случиться до `selinux_setup`: `init.fox_real`,
   sepolicy и пропсы должны лежать на месте до `SetupSelinux`/`PropertyInit`.
 
 Зачем стаб вообще: файлы, нужные **до** анпака (сам анпаковщик, `recovery`,

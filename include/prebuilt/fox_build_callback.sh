@@ -933,15 +933,17 @@ case "$CALL_TYPE" in
 
         # --- INIT-STUB: real init rides the cluster, stub takes its place ---
         # Must run BEFORE lgz_compress_ramdisk + manifest generation below:
-        # "init" is in LGZ_EXCLUDE_LIST (stays open), "init.real" is not
+        # "init" is in LGZ_EXCLUDE_LIST (stays open), "init.fox_real" is not
         # (packs via system/bin), and the file lists must reference final
-        # names. If the swap is skipped the build still boots via the
+        # names. The .fox_real name (not init.real) avoids collisions with
+        # Magisk/KSU chains, which use init.real for the stock init backup.
+        # If the swap is skipped the build still boots via the
         # init.cpp unpack fallback — warn loudly, do not fail.
         if [ -x "$TARGET_DIR/system/bin/init" ] && [ -f "$TARGET_DIR/system/bin/recovery_init_stub" ]; then
-            mv -f "$TARGET_DIR/system/bin/init" "$TARGET_DIR/system/bin/init.real"
+            mv -f "$TARGET_DIR/system/bin/init" "$TARGET_DIR/system/bin/init.fox_real"
             mv -f "$TARGET_DIR/system/bin/recovery_init_stub" "$TARGET_DIR/system/bin/init"
             chmod 0755 "$TARGET_DIR/system/bin/init"
-            echo "    [INIT-STUB] real init -> init.real, stub installed as init"
+            echo "    [INIT-STUB] real init -> init.fox_real, stub installed as init"
         else
             echo "    [INIT-STUB] WARNING: init or recovery_init_stub missing, swap skipped (init.cpp fallback)"
         fi

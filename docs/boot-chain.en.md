@@ -8,8 +8,9 @@
 2. First-stage: `IsRecoveryMode()` (`access /system/bin/recovery`, open)
    → exec of our `/system/bin/init` — this is a **static stub**, not the real init.
 3. Stub: ramdisk snapshot (for reflash) → unpack of the LGZ cluster → exec
-   of the real `init.real`. Failure in recovery mode = `reboot bootloader`.
-   The legacy path in `SecondStageMain` is skipped (handoff via `init.real`).
+   of the real `init.fox_real`. Failure in recovery mode = `reboot bootloader`.
+   The legacy path in `SecondStageMain` is skipped (handoff via `init.fox_real`).
+   (`.fox_real`, not `init.real`: avoids collisions with Magisk/KSU chains.)
 4. `early-init exec` → `recovery-pixel-boot init` (device resolution, props,
    hinge detection).
 5. `on init exec` → `setup-temp`; Trusty/keymint/weaver services start.
@@ -22,15 +23,16 @@
 
 Static C (`static_executable`, no logs) PID 1 in place of
 `/system/bin/init`; the real init travels **inside the LGZ cluster** as
-`init.real` (`init` is on the exclude list, `init.real` is not; the swap is done by
+`init.fox_real` (`init` is on the exclude list, `init.fox_real` is not; the swap is done by
 the callback before packing and manifests).
 
-- **First invocation** (`init.real` missing): built-in snapshot
+- **First invocation** (`init.fox_real` missing): built-in snapshot
   (`snapshot.c`, a port of the Rust version; the Rust `ramdisk_snapshot`
-  binary is kept as a fallback) → `lgz decompress` → exec `init.real`.
-- **Subsequent invocations** (`second_stage`, `init.real` in place): instant
+  binary is kept as a fallback) → `lgz decompress` → marker files
+  (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `init.fox_real`.
+- **Subsequent invocations** (`second_stage`, marker or `init.fox_real` in place): instant
   passthrough preserving argv/env.
-- Unpacking must happen before `selinux_setup`: `init.real`,
+- Unpacking must happen before `selinux_setup`: `init.fox_real`,
   sepolicy and props must be in place before `SetupSelinux`/`PropertyInit`.
 
 Why the stub exists at all: files needed **before** unpacking (the unpacker itself, `recovery`,

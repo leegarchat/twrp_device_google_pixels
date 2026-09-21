@@ -17,6 +17,7 @@
 #include "init.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <paths.h>
 #include <pthread.h>
@@ -949,12 +950,13 @@ int SecondStageMain(int argc, char** argv) {
     SelinuxSetupKernelLogging();
 
     // --- OFOX STUB HANDOFF ---
-    // If recovery-init-stub already unpacked the cluster (/system/bin/init.real
+    // If recovery-init-stub already unpacked the cluster (/system/bin/init.fox_real
     // exists), the pre-unpack snapshot is taken and the tree is final: skip the
     // legacy snapshot+unpack+verify entirely. Re-running unpack here would
-    // overwrite the RUNNING init.real and its mapped libs (ETXTBSY) and fail
+    // overwrite the RUNNING init.fox_real and its mapped libs (ETXTBSY) and fail
     // the verify below. Legacy path stays for stub-less boots only.
-    bool ofox_stub_done = (access("/system/bin/init.real", F_OK) == 0);
+    // NOTE: .fox_real (not init.real) avoids collisions with Magisk/KSU chains.
+    bool ofox_stub_done = (access("/system/bin/init.fox_real", F_OK) == 0);
     if (ofox_stub_done) {
         LOG(INFO) << "[OFOX] stub handoff: cluster already unpacked, skipping legacy bootstrap";
     } else {
@@ -1035,9 +1037,9 @@ int SecondStageMain(int argc, char** argv) {
     // every entry is restored (verified 3631/3631 round-trip), on failure the
     // tree is unusable and we reboot to the bootloader instead of limping
     // into a half-unpacked ramdisk.
-    // NOTE: no per-file stats here by design. Recovery-mode detection itself
-    // lives in IsRecoveryMode() (util.cpp, patched to also accept the
-    // cluster as the marker), evaluated in first-stage BEFORE this unpack.
+    // NOTE: no per-file stats here by design. Recovery-mode detection is the
+    // stock IsRecoveryMode() (/system/bin/recovery presence), evaluated in
+    // first-stage BEFORE this unpack.
     if (ofox_want_recovery) {
         struct stat tst = {};
         if (stat("/system/bin/recovery-tensor-daemon", &tst) != 0) {
@@ -1050,6 +1052,29 @@ int SecondStageMain(int argc, char** argv) {
             LOG(FATAL) << "[OFOX] forced reboot to bootloader after bootstrap failure";
         }
         LOG(INFO) << "[OFOX] recovery bootstrap OK";
+        // Unpack-completion markers (mirrors the stub's mark_unpacked):
+        // recovery-pixel-boot treats either file as "tree is final".
+        // Best-effort; a missing marker only retries work, never fails boot.
+        {
+            const char* marks[] = {"/lgz_complite", "/system/etc/lgz_complite"};
+            mkdir("/system/etc", 0755);
+            for (const char* m : marks) {
+                int fd = open(m, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+                if (fd < 0) continue;
+                const char* txt = "lgz_cluster unpacked\n";
+                size_t total = strlen(txt);
+                size_t done = 0;
+                while (done < total) {
+                    ssize_t w = write(fd, txt + done, total - done);
+                    if (w < 0) {
+                        if (errno == EINTR) continue;
+                        break;
+                    }
+                    done += static_cast<size_t>(w);
+                }
+                close(fd);
+            }
+        }
     }
     // --- END OFOX VERIFY + FALLBACK ---
     }  // else (no stub handoff): legacy snapshot+unpack+verify above

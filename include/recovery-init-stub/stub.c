@@ -1,11 +1,13 @@
 /* recovery-init-stub — static PID 1 entry point for OrangeFox recovery.
  *
  * Occupies /system/bin/init. The real AOSP init lives at
- * /system/bin/init.real INSIDE /lgz_cluster.lgz.
+ * /system/bin/init.fox_real INSIDE /lgz_cluster.lgz. The .fox_real name
+ * (not init.real) avoids collisions with Magisk/KSU chains, which use
+ * init.real for the stock init backup.
  *
- * - First invocation (selinux_setup, init.real absent): snapshot the ramdisk,
+ * - First invocation (selinux_setup, init.fox_real absent): snapshot the ramdisk,
  *   unpack the cluster, verify, then exec the real init.
- * - Later invocations (second_stage, init.real present): exec through
+ * - Later invocations (second_stage, init.fox_real present): exec through
  *   immediately (passthrough, no work).
  *
  * Plain C, libc calls only, fully static (see Android.bp): must run before
@@ -28,7 +30,12 @@
 #include "snapshot.h"
 #include "aioswap.h"
 
-static const char kInitReal[] = "/system/bin/init.real";
+static const char kInitReal[] = "/system/bin/init.fox_real";
+/* Unpack-completion markers (either one suffices): the tree is final,
+ * skip straight to exec. Two locations for redundancy — /system may be
+ * over-mounted later in the boot, the root copy always stays visible. */
+static const char kMarkerRoot[] = "/lgz_complite";
+static const char kMarkerEtc[] = "/system/etc/lgz_complite";
 static const char kCluster[] = "/lgz_cluster.lgz";
 static const char kRecovery[] = "/system/bin/recovery";
 static const char kSnapshotBin[] = "/system/bin/ramdisk_snapshot";
@@ -72,12 +79,47 @@ static void exec_real(int argc, char** argv, char** envp) {
     reboot_bootloader();
 }
 
+/* Best-effort creation of one marker file. Raw syscalls only. */
+static void mark_one(const char* path) {
+    static const char kMark[] = "lgz_cluster unpacked\n";
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return;
+    {
+        size_t left = sizeof(kMark) - 1;
+        const char* p = kMark;
+        while (left > 0) {
+            ssize_t w = write(fd, p, left);
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            p += w;
+            left -= (size_t)w;
+        }
+    }
+    close(fd);
+}
+
+/* Drop both unpack-completion markers. Best-effort, never fatal:
+ * a missing marker just means the next invocation retries the unpack. */
+static void mark_unpacked(void) {
+    /* /system/etc may not exist in minimal ramdisks; ensure it, ignore errors. */
+    mkdir("/system/etc", 0755);
+    mark_one(kMarkerRoot);
+    mark_one(kMarkerEtc);
+}
+
 int main(int argc, char** argv, char** envp) {
-    /* Cluster already unpacked (second and later invocations): passthrough. */
+    /* Cluster already unpacked (second and later invocations): passthrough.
+     * Either marker suffices; the init.fox_real check stays as fallback
+     * in case marker creation failed but the unpack succeeded. */
+    if (path_exists(kMarkerRoot) || path_exists(kMarkerEtc))
+        exec_real(argc, argv, envp);
     if (path_exists(kInitReal)) exec_real(argc, argv, envp);
 
-    /* First invocation: unpack path. Mirrors the IsRecoveryMode gate
-     * (system/core/init/util.cpp): recovery binary OR cluster present. */
+    /* First invocation: unpack path. recovery_mode gates the bootloader
+     * reboot on unpack failure (a missing cluster means a plain system
+     * boot image, which must never be failed by us). */
     int recovery_mode = path_exists(kRecovery) || path_exists(kCluster);
     if (path_exists(kCluster)) {
         if (path_exists(kSnapshotManifest)) {
@@ -107,6 +149,10 @@ int main(int argc, char** argv, char** envp) {
      * flags, wipe, USB controller in rc, KeyMint set, selector prop) can
      * still be swapped. Best-effort, never fatal. */
     aioswap_run();
+
+    /* Tree is final: drop the unpack-completion markers so later
+     * invocations (and recovery-pixel-boot) can skip straight to exec. */
+    mark_unpacked();
 
     exec_real(argc, argv, envp);
     return 127;

@@ -1,7 +1,7 @@
 // Soong build for OrangeFox recovery.
 //
 // Static PID 1 stub occupying /system/bin/init. The real AOSP init lives at
-// /system/bin/init.real INSIDE /lgz_cluster.lgz. Plain C, fully static
+// /system/bin/init.fox_real INSIDE /lgz_cluster.lgz. Plain C, fully static
 // (static_executable + no shared libs): it must run before the cluster is
 // unpacked, so it cannot depend on any .so.
 cc_binary {
