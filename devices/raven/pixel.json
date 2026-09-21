@@ -3,10 +3,11 @@
   "soc_family": "gs101",
   "is_fold": 0,
   "front_display": {
-    "w": 1080,
+    "w": 1440,
     "h": 3120
   },
   "status_h": 130,
+  "progressive_scale": 0,
   "touch_modules": [
     "touch_bus_negotiator",
     "heatmap",

@@ -302,20 +302,22 @@ fn detect_fold_state() -> FoldState {
 }
 
 /// Picks the active virtual canvas: folds use hinge state (inner when open
-/// and inner geometry exists, else cover); slabs always use front.
+/// and inner geometry exists, else cover); slabs always use front. The
+/// progressive letterbox flag travels with the canvas: inner uses
+/// inner_progressive_scale, front/cover/slab use progressive_scale.
 fn pick_display_geom(
     cfg: &crate::config::DeviceConfig,
     hinge: FoldState,
-) -> (crate::config::DisplayGeom, &'static str) {
+) -> (crate::config::DisplayGeom, &'static str, u32) {
     if cfg.is_fold {
         if hinge == FoldState::OpenInner {
             if let Some(g) = cfg.inner_display {
-                return (g, "inner");
+                return (g, "inner", cfg.inner_progressive_scale);
             }
         }
-        return (cfg.front_display, "front");
+        return (cfg.front_display, "front", cfg.progressive_scale);
     }
-    (cfg.front_display, "front")
+    (cfg.front_display, "front", cfg.progressive_scale)
 }
 
 /// Applies display geometry before recovery UI starts (early-init stage):
@@ -326,19 +328,19 @@ fn apply_display_geometry(
     cfg: &crate::config::DeviceConfig,
     hinge: FoldState,
 ) {
-    let (geom, which) = pick_display_geom(cfg, hinge);
+    let (geom, which, scale) = pick_display_geom(cfg, hinge);
     let _ = set_prop("DOF_SCREEN_W", &geom.w.to_string());
     let _ = set_prop("DOF_SCREEN_H", &geom.h.to_string());
-    let _ = set_prop("DOF_PROGRESSIVE_SCALE", "1");
+    let _ = set_prop("DOF_PROGRESSIVE_SCALE", &scale.to_string());
     // Per-device status-bar height (pixel.json status_h): lets data.cpp drop
     // the compile-time OF_STATUS_H default, same pattern as DOF_SCREEN_H.
     let _ = set_prop("DOF_STATUS_H", &cfg.status_h.to_string());
     crate::ko_picker::log_msg(
         "boot",
         "INFO",
-        &format!("display: {which} canvas {}x{} status_h={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, cfg.is_fold),
+        &format!("display: {which} canvas {}x{} scale={scale} status_h={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, cfg.is_fold),
     );
-    dlog(log, &format!("display: {which} canvas {}x{} status_h={}", geom.w, geom.h, cfg.status_h));
+    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={}", geom.w, geom.h, cfg.status_h));
 }
 
 fn by_name_exists(part: &str) -> bool {
@@ -707,20 +709,24 @@ mod tests {
         use crate::config::{DeviceConfig, DisplayGeom};
         let mut cfg = DeviceConfig::default();
         cfg.front_display = DisplayGeom { w: 1080, h: 2424 };
-        // Slab ignores hinge.
-        assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner).1, "front");
+        cfg.progressive_scale = 0;
+        cfg.inner_progressive_scale = 1;
+        // Slab ignores hinge; front scale travels along.
+        assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner), (DisplayGeom { w: 1080, h: 2424 }, "front", 0));
         // Fold without inner geometry falls back to cover.
         cfg.is_fold = true;
         assert_eq!(pick_display_geom(&cfg, FoldState::OpenInner).1, "front");
-        // Fold open with inner geometry.
+        // Fold open with inner geometry: inner scale travels along.
         cfg.inner_display = Some(DisplayGeom { w: 2076, h: 2152 });
-        let (g, which) = pick_display_geom(&cfg, FoldState::OpenInner);
+        let (g, which, scale) = pick_display_geom(&cfg, FoldState::OpenInner);
         assert_eq!(which, "inner");
         assert_eq!((g.w, g.h), (2076, 2152));
-        // Fold closed -> cover.
-        let (g, which) = pick_display_geom(&cfg, FoldState::ClosedCover);
+        assert_eq!(scale, 1);
+        // Fold closed -> cover with front scale.
+        let (g, which, scale) = pick_display_geom(&cfg, FoldState::ClosedCover);
         assert_eq!(which, "front");
         assert_eq!((g.w, g.h), (1080, 2424));
+        assert_eq!(scale, 0);
     }
 
     #[test]

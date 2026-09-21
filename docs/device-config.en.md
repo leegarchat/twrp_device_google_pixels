@@ -66,8 +66,12 @@ Displays are also in JSON; code knows no resolutions:
 - `recovery-pixel-boot init` (on `early-init`, before `DOF_*` is read in
   `data.cpp` and before DRM is opened in minui): scans `/dev/input` for EV_SW
   (`SW_LID` closed = cover, open = inner, no sensor = safe
-  cover) and sets `DOF_SCREEN_W/H` of the active canvas +
-  `DOF_PROGRESSIVE_SCALE=1`. Slab always takes front.
+  cover) and sets `DOF_SCREEN_W/H` of the active canvas plus its
+  letterbox flag: `progressive_scale` (default 0 = stock vertical
+  stretch) for front/cover/slab, `inner_progressive_scale` (default 1 =
+  bars) for the inner canvas. Slab always takes front. Slabs and covers
+  carry real panel geometry with 0; inner canvases and the tablet carry
+  a 16:9 canvas (see `tools/display_16x9.py`) with 1.
 - Letterbox engine (`data.cpp` + `pages.cpp`): virtual canvas +
   centering, uniform scale instead of stretching. Without `DOF_SCREEN_W` —
   stock behavior.

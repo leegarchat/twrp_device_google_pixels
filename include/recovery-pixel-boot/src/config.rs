@@ -51,6 +51,13 @@ pub struct DeviceConfig {    pub family: String,
     /// zumapro devices use 150). Stamped as DOF_STATUS_H at early-init so
     /// data.cpp can drop the compile-time OF_STATUS_H default.
     pub status_h: u32,
+    /// Vertical letterbox for the front/cover canvas (default 0 = stock
+    /// vertical-stretch behavior): slabs and fold covers use real panel
+    /// geometry with 0; tablets stamp 1 explicitly.
+    pub progressive_scale: u32,
+    /// Vertical letterbox for the fold inner canvas (default 1): inner
+    /// displays use a 16:9 virtual canvas with bars on both axes.
+    pub inner_progressive_scale: u32,
 }
 
 /// Virtual display canvas (letterbox geometry) in pixels.
@@ -275,6 +282,12 @@ fn get_int(pairs: &[(String, Val)], key: &str) -> i64 {
         .unwrap_or_default()
 }
 
+/// True when the section defines `key` at all (distinguishes an explicit
+/// 0 from a missing key for the progressive-scale flags).
+fn has_key(pairs: &[(String, Val)], key: &str) -> bool {
+    pairs.iter().any(|(k, _)| k == key)
+}
+
 fn get_obj(pairs: &[(String, Val)], key: &str) -> Vec<(String, Val)> {
     pairs
         .iter()
@@ -403,6 +416,20 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
         status_h: {
             let v = get_int(pairs, "status_h");
             if v > 0 { v as u32 } else { 130 }
+        },
+        progressive_scale: if has_key(pairs, "progressive_scale")
+            && get_int(pairs, "progressive_scale") == 1
+        {
+            1
+        } else {
+            0
+        },
+        inner_progressive_scale: if has_key(pairs, "inner_progressive_scale")
+            && get_int(pairs, "inner_progressive_scale") == 0
+        {
+            0
+        } else {
+            1
         },
     })
 }
@@ -597,6 +624,29 @@ mod tests {
         assert_eq!(load_device_config_from(&f, "comet").unwrap().status_h, 150);
         // Missing key keeps the legacy compile-time default (130).
         assert_eq!(load_device_config_from(&f, "shiba").unwrap().status_h, 130);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn progressive_scale_parses_with_defaults() {
+        let d = std::env::temp_dir().join(format!("fox_test_pscale_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"shiba": {"family": "zuma", "progressive_scale": 0, "props": {}},
+            "comet": {"family": "zumapro", "progressive_scale": 1, "inner_progressive_scale": 1, "props": {}},
+            "lynx": {"family": "gs201", "props": {}}}"#,
+        )
+        .unwrap();
+        // Explicit values win.
+        assert_eq!(load_device_config_from(&f, "shiba").unwrap().progressive_scale, 0);
+        assert_eq!(load_device_config_from(&f, "comet").unwrap().progressive_scale, 1);
+        assert_eq!(load_device_config_from(&f, "comet").unwrap().inner_progressive_scale, 1);
+        // Missing keys: front defaults to stock stretch (0), inner to bars (1).
+        assert_eq!(load_device_config_from(&f, "lynx").unwrap().progressive_scale, 0);
+        assert_eq!(load_device_config_from(&f, "lynx").unwrap().inner_progressive_scale, 1);
         let _ = std::fs::remove_dir_all(&d);
     }
 

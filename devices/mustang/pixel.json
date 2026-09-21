@@ -3,10 +3,11 @@
   "soc_family": "laguna",
   "is_fold": 0,
   "front_display": {
-    "w": 1080,
+    "w": 1344,
     "h": 2992
   },
   "status_h": 130,
+  "progressive_scale": 0,
   "touch_modules": [
     "focal_touch",
     "stm_core",

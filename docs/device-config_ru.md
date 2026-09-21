@@ -66,8 +66,12 @@
 - `recovery-pixel-boot init` (на `early-init`, до чтения `DOF_*` в
   `data.cpp` и до открытия DRM в minui): сканирует `/dev/input` на EV_SW
   (`SW_LID` закрыт = cover, открыт = inner, нет сенсора = безопасный
-  cover) и ставит `DOF_SCREEN_W/H` активного канваса +
-  `DOF_PROGRESSIVE_SCALE=1`. Slab всегда берёт front.
+  cover) и ставит `DOF_SCREEN_W/H` активного канваса плюс его флаг
+  леттербокса: `progressive_scale` (дефолт 0 = стоковый вертикальный
+  стретч) для front/cover/slab, `inner_progressive_scale` (дефолт 1 =
+  полосы) для внутреннего канваса. Slab всегда берёт front. Слабы и
+  каверы несут реальную геометрию панели с 0; внутренние канвасы и
+  планшет — 16:9 канвас (см. `tools/display_16x9.py`) с 1.
 - Letterbox-движок (`data.cpp` + `pages.cpp`): виртуальный канвас +
   центровка, uniform scale вместо растягивания. Без `DOF_SCREEN_W` —
   стоковое поведение.

@@ -3,10 +3,11 @@
   "soc_family": "malibu",
   "is_fold": 0,
   "front_display": {
-    "w": 1080,
+    "w": 1280,
     "h": 2856
   },
   "status_h": 130,
+  "progressive_scale": 0,
   "touch_modules": [
     "cl_dsp-core",
     "cs40l26-core",

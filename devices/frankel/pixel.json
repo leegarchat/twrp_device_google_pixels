@@ -7,6 +7,7 @@
     "h": 2424
   },
   "status_h": 130,
+  "progressive_scale": 0,
   "touch_modules": [
     "focal_touch",
     "stm_core",
