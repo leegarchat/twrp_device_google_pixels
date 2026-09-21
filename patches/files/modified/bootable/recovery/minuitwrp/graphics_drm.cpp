@@ -68,6 +68,26 @@
 #define ARRAY_SIZE(A) (sizeof(A)/sizeof(*(A)))
 
 struct drm_surface {
+
+// Fox AIO runtime scanout-format selector (same contract as fox_rb_swap()
+// in graphics.cpp: ro.recovery.rb_swap="1" for PowerVR malibu/laguna).
+// The app-layer channel swap in gr_color/resources.cpp is NOT enough on
+// vs-drm: the DPU/panel scanout byte order is fixed here at surface
+// creation. Swapped families take the P11-proven RGBX path
+// (DRM_FORMAT_XBGR8888, cf. P11 TARGET_RECOVERY_PIXEL_FORMAT=RGBX_8888
+// with normal screenshots); the rest keep the patched RGBA8888 path.
+// Logged so triage can see which fourcc a boot negotiated.
+static bool fox_rb_swap_drm(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        std::string v = android::base::GetProperty("ro.recovery.rb_swap", "");
+        cached = (v == "1") ? 1 : 0;
+        printf("fox_rb_swap_drm: ro.recovery.rb_swap=%s -> %s\n",
+               v.empty() ? "(absent)" : v.c_str(),
+               cached ? "XBGR8888 scanout (PowerVR)" : "RGBA8888 scanout (Mali)");
+    }
+    return cached == 1;
+}
     GRSurface base;
     uint32_t fb_id;
     uint32_t handle;
@@ -678,9 +698,15 @@ static drm_surface *drm_create_surface(int width, int height) {
     }
 
 #if defined(RECOVERY_ABGR)
-    format = DRM_FORMAT_RGBA8888;
-    base_format = GGL_PIXEL_FORMAT_RGBA_8888;
-    printf("setting DRM_FORMAT_RGBA8888 and GGL_PIXEL_FORMAT_RGBA_8888\n");
+    if (fox_rb_swap_drm()) {
+        format = DRM_FORMAT_XBGR8888;
+        base_format = GGL_PIXEL_FORMAT_RGBA_8888;
+        printf("setting DRM_FORMAT_XBGR8888 and GGL_PIXEL_FORMAT_RGBA_8888 (fox rb_swap override)\n");
+    } else {
+        format = DRM_FORMAT_RGBA8888;
+        base_format = GGL_PIXEL_FORMAT_RGBA_8888;
+        printf("setting DRM_FORMAT_RGBA8888 and GGL_PIXEL_FORMAT_RGBA_8888\n");
+    }
 #elif defined(RECOVERY_BGRA)
     format = DRM_FORMAT_ARGB8888;
     base_format = GGL_PIXEL_FORMAT_RGBA_8888;

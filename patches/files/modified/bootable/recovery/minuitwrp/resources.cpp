@@ -49,6 +49,8 @@ static bool fox_rb_swap(void) {
     if (g_fox_rb_swap < 0) {
         char v[PROPERTY_VALUE_MAX];
         g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
+        printf("fox_rb_swap(res): ro.recovery.rb_swap=%s -> %s\n", v[0] ? v : "(absent)",
+               g_fox_rb_swap ? "SWAP" : "no-swap");
     }
     return g_fox_rb_swap == 1;
 }
@@ -480,6 +482,10 @@ int res_scale_surface(gr_surface source, gr_surface* destination, float scale_w,
 }
 
 int res_get_pixel_format(void) {
+    // NOTE: ABGR and RGBX both resolve to GGL_PIXEL_FORMAT_RGBA_8888, so
+    // the Fox runtime override needs no branch here — the DRM scanout
+    // fourcc (graphics_drm.cpp) + producer swaps above carry the family
+    // difference. Untouched on purpose.
 #if defined(RECOVERY_ABGR)
     return GGL_PIXEL_FORMAT_RGBA_8888;
 #elif defined(RECOVERY_BGRA)

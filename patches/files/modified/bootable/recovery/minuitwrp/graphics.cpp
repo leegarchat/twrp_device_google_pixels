@@ -71,6 +71,8 @@ static bool fox_rb_swap(void) {
     if (g_fox_rb_swap < 0) {
         char v[PROPERTY_VALUE_MAX];
         g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
+        printf("fox_rb_swap: ro.recovery.rb_swap=%s -> %s\n", v[0] ? v : "(absent)",
+               g_fox_rb_swap ? "SWAP (PowerVR path)" : "no-swap (Mali path)");
     }
     return g_fox_rb_swap == 1;
 }
@@ -190,7 +192,11 @@ gr_surface gr_render_circle(int radius, unsigned char r, unsigned char g, unsign
     GGLSurface *surface;
     const int diameter = radius*2 + 1;
     const int radius_check = radius*radius + radius*0.8;
-    const uint32_t px = (a << 24) | (b << 16) | (g << 8) | r;
+    // Fox AIO: packed pixel must agree with gr_color's runtime swap —
+    // the stock packing is ABGR-order (b in bits 16-23); swapped families
+    // need RGBA-order instead.
+    const uint32_t px = fox_rb_swap() ? (uint32_t)((a << 24) | (r << 16) | (g << 8) | b)
+                                      : (uint32_t)((a << 24) | (b << 16) | (g << 8) | r);
     uint32_t *data;
 
     surface = (GGLSurface *)malloc(sizeof(GGLSurface));

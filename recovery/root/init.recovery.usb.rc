@@ -267,6 +267,12 @@ on property:sys.usb.ffs.ready=1 && property:sys.usb.config=mtp,adb && property:s
 
 on property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1
     start adbd
+    # Role-aware UDC bind retry (laguna/malibu): the ffs.ready trigger
+    # above fires on property edges while the DWC3 role voter may still
+    # sit at `none` (-ENODEV on bind, never retried by init). usb_rebind
+    # polls the role switch and re-binds for ~30s; late plug transitions
+    # stay owned by otg_auto's VBUS poll.
+    start usb_rebind
 
 on property:sys.usb.config=mtp,adb && property:vendor.usb.use_ffs_mtp=1 && property:sys.usb.configfs=1
     rm /config/usb_gadget/g1/configs/b.1/f1
@@ -346,6 +352,12 @@ service otg_enable /system/bin/recovery-pixel-boot otg-patch
 
 service otg_auto /system/bin/recovery-pixel-boot otg-auto
     disabled
+    seclabel u:r:recovery:s0
+
+
+service usb_rebind /system/bin/recovery-pixel-boot usb-rebind
+    disabled
+    oneshot
     seclabel u:r:recovery:s0
 
 

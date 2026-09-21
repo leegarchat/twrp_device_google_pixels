@@ -43,6 +43,35 @@ fn find_usb_role() -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
+/// First dwc3_exynos_otg_id node found under the platform bus
+/// (e.g. /sys/devices/platform/11210000.usb/dwc3_exynos_otg_id).
+/// None on SoCs without the exynos OTG ID register (laguna/malibu) —
+/// callers must skip the write instead of failing.
+fn find_otg_id() -> Option<PathBuf> {
+    let root = Path::new("/sys/devices/platform");
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.file_name().map(|n| n == "dwc3_exynos_otg_id").unwrap_or(false) {
+                return Some(p);
+            }
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                // One level is enough (platform/<bus>/node); still allow
+                // a second level for simple_usb_bus wrappers.
+                if p.parent() == Some(root) || p.parent().and_then(|q| q.parent()) == Some(root) {
+                    stack.push(p);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Native host path (6.12+): role switch to host + gvotable VBUS force.
 /// Proven live: role flips (xHCI enumerates), CHARGER_MODE force sets
 /// otg_on=1, USB mouse works. otg_id follows the role on its own; typec
@@ -128,8 +157,28 @@ pub fn run_otg_patch() -> Result<(), String> {
     } else {
         info("/proc/otg_host_shim not found, injecting module");
         if !ko_try_load("otg_host_shim", None, "otg_patch") {
-            let _ = set_prop("sys.usb.patch_dwc3", "0");
-            return Err("module injection failed".into());
+            // Shim path is dead on this kernel (e.g. laguna 6.6: the
+            // kprobe target dwc3_otg_host_ready is absent, same as 6.12).
+            // Fall back to the native role-switch + VBUS path instead of
+            // giving up: without this patch_dwc3 stays 0, otg_auto never
+            // starts, and both OTG-host and the device-mode UDC rebind
+            // below stay dead.
+            info("shim injection failed, trying native role-switch fallback");
+            let vbus_file = find_vbus_path(&vbus_candidates());
+            let initial = read_vbus(&vbus_file);
+            info(&format!("fallback initial VBUS: {initial}"));
+            if initial == "1" {
+                info("PC detected, staying in DEVICE mode (no host force)");
+                native_done = true;
+            } else {
+                match native_activate() {
+                    Ok(()) => native_done = true,
+                    Err(e) => {
+                        let _ = set_prop("sys.usb.patch_dwc3", "0");
+                        return Err(format!("shim and native host paths both failed: {e}"));
+                    }
+                }
+            }
         }
     }
 
@@ -172,7 +221,6 @@ pub fn run_otg_patch() -> Result<(), String> {
 
 // --- otg-auto daemon ---
 
-const OTG_ID: &str = "/sys/devices/platform/11210000.usb/dwc3_exynos_otg_id";
 const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value";
 const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
@@ -228,7 +276,11 @@ fn switch_to_host(current: &mut String) {
     let _ = std::fs::write(UDC_FILE, b"\n");
     let _ = std::fs::write(CHARGER_VALUE, b"49\n");
     let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
-    let _ = std::fs::write(OTG_ID, b"0\n");
+    // Exynos OTG-ID register; absent on laguna/malibu (skipped, the role
+    // switch above already steered the controller).
+    if let Some(otg_id) = find_otg_id() {
+        let _ = std::fs::write(&otg_id, b"0\n");
+    }
     *current = "host".into();
 }
 
@@ -238,7 +290,10 @@ fn switch_to_device(current: &mut String) {
     }
     info(">>> SWITCHING TO DEVICE MODE <<<");
     let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
-    let _ = std::fs::write(OTG_ID, b"1\n");
+    // Exynos OTG-ID register; absent on laguna/malibu (skipped).
+    if let Some(otg_id) = find_otg_id() {
+        let _ = std::fs::write(&otg_id, b"1\n");
+    }
     // Single write (shell version wrote it twice).
     let _ = set_prop("sys.usb.ffs.ready", "1");
     // Self-healing rebind: init triggers are edge-based, so a missed edge
@@ -295,6 +350,50 @@ fn resolve_udc() -> String {
         .unwrap_or_default();
     sysfs.sort();
     pick_controller(&get_prop("sys.usb.controller"), &sysfs)
+}
+
+/// usb-rebind (oneshot, service usb_rebind): role-aware UDC bind retry.
+///
+/// The init `write g1/UDC` triggers fire on property edges
+/// (sys.usb.config/configfs/ffs.ready) with no notion of controller role.
+/// On google-usb-role-sw SoCs (laguna/malibu) the DWC3 refuses gadget start
+/// with -ENODEV (-19) while the role voter still sits at `none`, and the
+/// failed bind is never retried — adbd then loops on FUNCTIONFS_BIND while
+/// MTP can't open its bulk endpoint. This service polls the role switch
+/// (when present) and re-attempts the bind for ~30s; the long-running
+/// otg-auto daemon owns later plug transitions via its VBUS poll.
+pub fn run_usb_rebind() -> Result<(), String> {
+    info("usb-rebind: waiting for device role, then binding UDC");
+    for i in 0..30 {
+        let role = find_usb_role()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        if role == "host" {
+            info("usb-rebind: role=host, leaving controller to host mode");
+            sleep(Duration::from_secs(2));
+            continue;
+        }
+        let controller = resolve_udc();
+        match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
+            Ok(_) => {
+                info(&format!(
+                    "usb-rebind: UDC bound to {controller} (attempt {i}, role={})",
+                    if role.is_empty() { "unknown" } else { &role }
+                ));
+                let _ = set_prop("sys.usb.controller", &controller);
+                let _ = set_prop("ctl.start", "adbd");
+                return Ok(());
+            }
+            Err(e) => {
+                if i % 5 == 0 {
+                    info(&format!("usb-rebind: bind {controller} failed (attempt {i}): {e}"));
+                }
+            }
+        }
+        sleep(Duration::from_secs(1));
+    }
+    Err("usb-rebind: UDC still unbound after 30s".into())
 }
 
 /// otg-auto: default HOST, PC detected by external VBUS -> DEVICE. Never exits.

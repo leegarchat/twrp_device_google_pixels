@@ -1,6 +1,6 @@
 --- a/bootable/recovery/minuitwrp/graphics.cpp
 +++ b/bootable/recovery/minuitwrp/graphics.cpp
-@@ -59,6 +59,22 @@
+@@ -59,6 +59,24 @@
  static unsigned char gr_current_g = 255;
  static unsigned char gr_current_b = 255;
  
@@ -16,6 +16,8 @@
 +    if (g_fox_rb_swap < 0) {
 +        char v[PROPERTY_VALUE_MAX];
 +        g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
++        printf("fox_rb_swap: ro.recovery.rb_swap=%s -> %s\n", v[0] ? v : "(absent)",
++               g_fox_rb_swap ? "SWAP (PowerVR path)" : "no-swap (Mali path)");
 +    }
 +    return g_fox_rb_swap == 1;
 +}
@@ -23,7 +25,20 @@
  GRSurface* gr_draw = NULL;
  
  static GGLContext *gr_context = 0;
-@@ -206,7 +222,23 @@
+@@ -174,7 +192,11 @@
+     GGLSurface *surface;
+     const int diameter = radius*2 + 1;
+     const int radius_check = radius*radius + radius*0.8;
+-    const uint32_t px = (a << 24) | (b << 16) | (g << 8) | r;
++    // Fox AIO: packed pixel must agree with gr_color's runtime swap —
++    // the stock packing is ABGR-order (b in bits 16-23); swapped families
++    // need RGBA-order instead.
++    const uint32_t px = fox_rb_swap() ? (uint32_t)((a << 24) | (r << 16) | (g << 8) | b)
++                                      : (uint32_t)((a << 24) | (b << 16) | (g << 8) | r);
+     uint32_t *data;
+ 
+     surface = (GGLSurface *)malloc(sizeof(GGLSurface));
+@@ -206,7 +228,23 @@
  {
      GGLContext *gl = gr_context;
      GGLint color[4];
