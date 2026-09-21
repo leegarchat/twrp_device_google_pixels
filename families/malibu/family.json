@@ -48,7 +48,7 @@
         "bootconfig"
       ]},
       "bootconfig_append": [
-        "androidboot.boot_devices=13200000.ufs",
+        "androidboot.boot_devices=3c2d0000.ufs",
         "androidboot.load_modules_parallel=true"
       ],
       "prebuilt": {},
