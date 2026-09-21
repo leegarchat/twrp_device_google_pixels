@@ -335,21 +335,11 @@ fn apply_display_geometry(
     let _ = set_prop("DOF_PROGRESSIVE_SCALE", &scale.to_string());
     // Theme variant (pixel.json wide_theme/inner_theme, e.g. "twres_1440"):
     // TWRP's dynamic theme pick (gui.cpp) loads matching XML so all three
-    // scalers agree. Empty = base /twres.
-    // NOTE: ro.* is read-only via the property API (props.rs rejects it,
-    // silently dropping the value when ignored with `let _`), so the theme
-    // must go through the resetprop stage like the initial props-apply.
-    // Without this the prop stays empty, TWRP falls back to base /twres
-    // and wide panels render mismatched (double battery, squeezed input).
+    // scalers agree. Empty = base /twres. Plain DOF_* prop (same family as
+    // DOF_SCREEN_W/H): writable via the property API directly, no resetprop
+    // fork needed (ro.* would require the props-apply stage).
     if !theme.is_empty() {
-        let pair = format!("ro.recovery.theme={theme}");
-        match run_stage("props-apply", &[&cfg.family, &pair]) {
-            Ok(_) => dlog(log, &format!("theme prop set: {pair}")),
-            Err(e) => {
-                dlog(log, &format!("theme prop FAILED: {e}"));
-                crate::ko_picker::log_msg("boot", "WARN", &format!("theme prop failed: {e}"));
-            }
-        }
+        let _ = set_prop("DOF_THEME", theme);
     }
     // Per-device status-bar height (pixel.json status_h): lets data.cpp drop
     // the compile-time OF_STATUS_H default, same pattern as DOF_SCREEN_H.

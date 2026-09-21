@@ -87,7 +87,7 @@ fi
     uname -a 2>/dev/null
     echo ""
     echo "## key facts"
-    for _p in ro.hardware ro.product.device ro.product.model ro.boot.slot_suffix ro.build.version.incremental DOF_SCREEN_W DOF_SCREEN_H DOF_PROGRESSIVE_SCALE DOF_STATUS_H ro.recovery.keymint ro.recovery.theme sys.usb.controller sys.usb.config tw_screen_timeout_secs; do
+    for _p in ro.hardware ro.product.device ro.product.model ro.boot.slot_suffix ro.build.version.incremental DOF_SCREEN_W DOF_SCREEN_H DOF_PROGRESSIVE_SCALE DOF_STATUS_H DOF_THEME ro.recovery.keymint sys.usb.controller sys.usb.config tw_screen_timeout_secs; do
         printf '%s=%s\n' "$_p" "$(getprop "$_p" 2>/dev/null)"
     done
 } > "$DEST/props.txt" 2>/dev/null

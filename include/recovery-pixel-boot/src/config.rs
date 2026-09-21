@@ -53,9 +53,9 @@ pub struct DeviceConfig {    pub family: String,
     pub status_h: u32,
     /// Wide-panel theme variant dir (default empty = base /twres).
     /// Wide slabs name their pre-generated variant (e.g. "twres_1440",
-    /// see tools/theme_wide.py); stamped as ro.recovery.theme at
-    /// early-init so TWRP loads matching XML (gui.cpp dynamic pick).
-    /// Empty keeps the stock behavior on 1080p panels.
+    /// see tools/theme_wide.py); stamped as DOF_THEME at early-init so
+    /// TWRP loads matching XML (gui.cpp dynamic pick). Empty keeps the
+    /// stock behavior on 1080p panels.
     pub wide_theme: String,
     /// Same for the fold inner canvas (default empty): open folds stamp
     /// e.g. "twres_2076" and render the inner panel natively instead of

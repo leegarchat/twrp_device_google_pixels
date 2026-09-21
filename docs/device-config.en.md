@@ -74,7 +74,7 @@ Displays are also in JSON; code knows no resolutions:
   a 16:9 canvas (see `tools/display_16x9.py`) with 1.
 - `wide_theme` (default empty = base `/twres`): wide slabs name their
   pre-generated XML variant (e.g. `"twres_1440"` for 1440-wide panels;
-  see `tools/theme_wide.py`), stamped as `ro.recovery.theme` so TWRP's
+  see `tools/theme_wide.py`), stamped as `DOF_THEME` so TWRP's
   dynamic theme pick (gui.cpp) loads matching pages. With a matched
   theme all three scalers agree (~1.0), so text/images/boxes cannot
   drift apart. The tablet uses `twres_1600` the same way (native

@@ -13,7 +13,7 @@
  using namespace rapidxml;
  
 +// Dynamic wide-panel theme selection (OrangeFox pixels).
-+// recovery-pixel-boot stamps ro.recovery.theme (e.g. "twres_1440") at
++// recovery-pixel-boot stamps DOF_THEME (e.g. "twres_1440") at
 +// early-init for wide slabs (pixel.json wide_theme + tools/theme_wide.py
 +// variants shipped in the ramdisk). Returns "/<variant>/<file>" when the
 +// variant ships the file, else the stock TWRES path. Base panels,
@@ -22,7 +22,7 @@
 +static std::string Fox_ThemeFile(const char* file)
 +{
 +	static bool logged = false;
-+	std::string variant = android::base::GetProperty("ro.recovery.theme", "");
++	std::string variant = android::base::GetProperty("DOF_THEME", "");
 +	if (!variant.empty())
 +	{
 +		std::string cand = "/" + variant + "/" + file;
