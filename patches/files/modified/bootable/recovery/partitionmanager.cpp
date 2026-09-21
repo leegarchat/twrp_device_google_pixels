@@ -292,7 +292,7 @@ void inline Process_Keymaster_Version(TWPartition *ven, bool Display_Error) {
 
 	std::string product_device = android::base::GetProperty("ro.product.device", "");
     if (ven) ven->UnMount(Display_Error);
-    LOGINFO("Keymaster_Ver::Tensor zuma-family device detected (%s); forcing empty keymaster_ver to use AIDL KeyMint path\n", product_device.c_str());
+    LOGINFO("Keymaster_Ver::Tensor device detected (%s); forcing empty keymaster_ver to use AIDL KeyMint path\n", product_device.c_str());
     android::base::SetProperty(TW_KEYMASTER_VERSION_PROP, "");
     return;
 
