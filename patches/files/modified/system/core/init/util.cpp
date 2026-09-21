@@ -666,13 +666,7 @@ void InitKernelLogging(char** argv) {
 }
 
 bool IsRecoveryMode() {
-    // OrangeFox: the recovery binary may live inside /lgz_cluster.lgz until
-    // second-stage init unpacks it (before PropertyInit/SELinux/RC parsing),
-    // so the cluster itself is an equivalent recovery marker. Either file
-    // proves this ramdisk carries recovery. Checked in first-stage, before
-    // any unpack runs.
-    return access("/system/bin/recovery", F_OK) == 0 ||
-           access("/lgz_cluster.lgz", F_OK) == 0;
+    return access("/system/bin/recovery", F_OK) == 0;
 }
 
 // Check if default mount namespace is ready to be used with APEX modules
