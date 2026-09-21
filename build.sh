@@ -839,16 +839,20 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         fi
     fi
 
-    # --- Ramdisk cpio extract (gs101 always; other families on --cpio-only) ---
+    # --- Ramdisk cpio extract (gs101 always; --platform-recovery always;
+    # other families on --cpio-only) ---
     # Tensor G1 has no vendor_kernel_boot partition; the device keeps its own
     # dtb + dlkm + bootloader, we replace only the platform fragment (empty
     # name in the table). Other families replace only the recovery fragment.
+    # --platform-recovery (var2-AIO test layout) merges first-stage into the
+    # payload, so the payload cpio is needed for our universal installer
+    # even without --cpio-only (full .img/.zip are still copied above).
     # Host fastboot fetches the on-device vendor_boot, swaps that one entry
     # and flashes back — so testers need just the ramdisk in stock
     # lz4_legacy format, not the whole image.
     #   gs101 → vendor_ramdisk/ramdisk.cpio,  flash: fastboot flash vendor_boot:
     #   other → vendor_ramdisk/recovery.cpio, flash: fastboot flash vendor_boot:recovery
-    if [[ -n "$LATEST_IMG" ]] && [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || "$CPIO_ONLY" == true ]]; then
+    if [[ -n "$LATEST_IMG" ]] && [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || "$CPIO_ONLY" == true || -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
         if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
             FRAG_SRC="vendor_ramdisk/ramdisk.cpio"
             FRAG_FLASH="fastboot flash vendor_boot:"
