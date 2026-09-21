@@ -24,6 +24,23 @@ mod torch;
 
 use std::process::ExitCode;
 
+/// Unpack-completion markers dropped by recovery-init-stub (and by the
+/// init.cpp legacy path) once the LGZ cluster is unpacked and the tree is
+/// final. Either copy suffices (`/system` may be over-mounted later, the
+/// root copy always stays visible).
+const MARKER_ROOT: &str = "lgz_complite";
+const MARKER_ETC: &str = "system/etc/lgz_complite";
+
+/// True when at least one unpack-completion marker exists under `root`.
+/// Split out for testability; production passes `/`.
+fn markers_present_under(root: &std::path::Path) -> bool {
+    root.join(MARKER_ROOT).exists() || root.join(MARKER_ETC).exists()
+}
+
+fn markers_present() -> bool {
+    markers_present_under(std::path::Path::new("/"))
+}
+
 fn run_simple(res: Result<(), String>, name: &str) -> ExitCode {
     match res {
         Ok(()) => ExitCode::SUCCESS,
@@ -48,6 +65,12 @@ fn usage() -> ! {
 }
 
 fn main() -> ExitCode {
+    // Guard: the tree is usable only after the LGZ cluster was unpacked
+    // (stub or legacy path drops the markers first). Without them this
+    // binary must not touch anything — silent success, exit 0.
+    if !markers_present() {
+        return ExitCode::SUCCESS;
+    }
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         usage();
@@ -68,5 +91,28 @@ fn main() -> ExitCode {
             otg::run_otg_auto()
         }
         _ => usage(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unpack_markers_gate() {
+        let d = std::env::temp_dir().join(format!("fox_test_markers_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        // No markers: gate closed.
+        assert!(!markers_present_under(&d));
+        // Either marker alone opens the gate.
+        std::fs::write(d.join(MARKER_ROOT), b"lgz_cluster unpacked\n").unwrap();
+        assert!(markers_present_under(&d));
+        std::fs::remove_file(d.join(MARKER_ROOT)).unwrap();
+        assert!(!markers_present_under(&d));
+        std::fs::create_dir_all(d.join("system/etc")).unwrap();
+        std::fs::write(d.join(MARKER_ETC), b"lgz_cluster unpacked\n").unwrap();
+        assert!(markers_present_under(&d));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
