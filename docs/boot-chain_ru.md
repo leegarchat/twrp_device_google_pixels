@@ -29,8 +29,10 @@
   (`snapshot.c`, порт Rust-версии; Rust-бинарь `ramdisk_snapshot`
   оставлен фолбэком) → `lgz decompress` → маркеры
   (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `init.fox_real`.
-- **Последующие** (`second_stage`, маркер или `init.fox_real` на месте): мгновенный
-  passthrough с сохранением argv/env.
+- **Цепочка фолбэков, первое совпадение побеждает**: маркеры →
+  `init.fox_real` → анпак сейчас → хендофф на `/init` (хук Magisk/KSU;
+  защита от петли через readlink — если `/init` это сам стаб, то
+  ребут в bootloader).
 - Распаковка обязана случиться до `selinux_setup`: `init.fox_real`,
   sepolicy и пропсы должны лежать на месте до `SetupSelinux`/`PropertyInit`.
 

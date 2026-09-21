@@ -30,8 +30,9 @@ the callback before packing and manifests).
   (`snapshot.c`, a port of the Rust version; the Rust `ramdisk_snapshot`
   binary is kept as a fallback) → `lgz decompress` → marker files
   (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `init.fox_real`.
-- **Subsequent invocations** (`second_stage`, marker or `init.fox_real` in place): instant
-  passthrough preserving argv/env.
+- **Fallback chain, first match wins**: markers → `init.fox_real` →
+  unpack now → `/init` handoff (Magisk/KSU hook; loop-guarded by
+  readlink — if `/init` is this stub, reboot to bootloader instead).
 - Unpacking must happen before `selinux_setup`: `init.fox_real`,
   sepolicy and props must be in place before `SetupSelinux`/`PropertyInit`.
 

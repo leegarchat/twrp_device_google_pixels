@@ -5,10 +5,13 @@
  * (not init.real) avoids collisions with Magisk/KSU chains, which use
  * init.real for the stock init backup.
  *
- * - First invocation (selinux_setup, init.fox_real absent): snapshot the ramdisk,
- *   unpack the cluster, verify, then exec the real init.
- * - Later invocations (second_stage, init.fox_real present): exec through
- *   immediately (passthrough, no work).
+ * Fallback chain (first match wins, never loops, never hangs):
+ *  1. unpack markers (/lgz_complite or /system/etc/lgz_complite) -> exec real;
+ *  2. /system/bin/init.fox_real present (markers lost) -> exec real;
+ *  3. /lgz_cluster.lgz present -> snapshot, unpack, swap, mark, exec real;
+ *  4. nothing of the above -> hand off to the kernel entry /init (possibly
+ *     a Magisk/KSU hook); if /init resolves back to this stub -> reboot to
+ *     the bootloader.
  *
  * Plain C, libc calls only, fully static (see Android.bp): must run before
  * the cluster is unpacked, so it cannot depend on any shared library.
@@ -37,6 +40,9 @@ static const char kInitReal[] = "/system/bin/init.fox_real";
 static const char kMarkerRoot[] = "/lgz_complite";
 static const char kMarkerEtc[] = "/system/etc/lgz_complite";
 static const char kCluster[] = "/lgz_cluster.lgz";
+/* Kernel entry point. May be a hook binary (Magisk/KSU) instead of the
+ * usual symlink back to /system/bin/init. */
+static const char kInitRoot[] = "/init";
 static const char kRecovery[] = "/system/bin/recovery";
 static const char kSnapshotBin[] = "/system/bin/ramdisk_snapshot";
 static const char kSnapshotManifest[] = "/ramdisk_snapshot_manifest.txt";
@@ -109,18 +115,32 @@ static void mark_unpacked(void) {
     mark_one(kMarkerEtc);
 }
 
+/* True when the kernel entry /init resolves back to this stub, i.e. handing
+ * off to it would re-enter this same binary (infinite loop). A regular file
+ * or a foreign symlink (Magisk/KSU hook) returns false: handing off is safe.
+ * readlink needs <unistd.h>; strcmp needs <string.h> (both included). */
+static int root_init_is_self(void) {
+    char buf[256];
+    ssize_t n = readlink(kInitRoot, buf, sizeof(buf) - 1);
+    if (n < 0) return 0;
+    buf[n] = '\0';
+    return strcmp(buf, "system/bin/init") == 0 ||
+           strcmp(buf, "/system/bin/init") == 0;
+}
+
 int main(int argc, char** argv, char** envp) {
-    /* Cluster already unpacked (second and later invocations): passthrough.
-     * Either marker suffices; the init.fox_real check stays as fallback
-     * in case marker creation failed but the unpack succeeded. */
+    /* 1. Fast path: unpacked tree. Either marker suffices. */
     if (path_exists(kMarkerRoot) || path_exists(kMarkerEtc))
         exec_real(argc, argv, envp);
-    if (path_exists(kInitReal)) exec_real(argc, argv, envp);
+    /* 2. Real binary present without markers (markers lost, unpack done). */
+    if (path_exists(kInitReal))
+        exec_real(argc, argv, envp);
 
-    /* First invocation: unpack path. recovery_mode gates the bootloader
-     * reboot on unpack failure (a missing cluster means a plain system
-     * boot image, which must never be failed by us). */
+    /* 3. Slow path: unpack the cluster now. recovery_mode gates the
+     * bootloader reboot on unpack failure (a missing cluster means a plain
+     * system boot image, which must never be failed by us). */
     int recovery_mode = path_exists(kRecovery) || path_exists(kCluster);
+    int unpacked = 0;
     if (path_exists(kCluster)) {
         if (path_exists(kSnapshotManifest)) {
             /* Built-in snapshot (snapshot.c). The Rust ramdisk_snapshot
@@ -141,7 +161,11 @@ int main(int argc, char** argv, char** envp) {
         char* const lgz_argv[] = {
             (char*)"lgz", (char*)"decompress", (char*)kCluster, (char*)"/", NULL,
         };
-        if (run_child(kLgzBin, lgz_argv) != 0 && recovery_mode) reboot_bootloader();
+        if (run_child(kLgzBin, lgz_argv) != 0) {
+            if (recovery_mode) reboot_bootloader();
+        } else {
+            unpacked = 1;
+        }
     }
 
     /* AIO family swap (aioswap.c): the tree is fully unpacked here and the
@@ -150,10 +174,22 @@ int main(int argc, char** argv, char** envp) {
      * still be swapped. Best-effort, never fatal. */
     aioswap_run();
 
-    /* Tree is final: drop the unpack-completion markers so later
-     * invocations (and recovery-pixel-boot) can skip straight to exec. */
-    mark_unpacked();
+    /* Markers stay truthful: only when the cluster was actually unpacked.
+     * Without an unpack there is no final tree to fast-path to. */
+    if (unpacked)
+        mark_unpacked();
 
-    exec_real(argc, argv, envp);
+    /* 4. The unpack may have produced the real init: re-check before
+     * falling through (covers markers-lost and just-unpacked alike). */
+    if (path_exists(kInitReal))
+        exec_real(argc, argv, envp);
+
+    /* 5. Last resort: no markers, no init.fox_real, no (usable) cluster.
+     * Hand off to the kernel entry /init (possibly a Magisk/KSU hook);
+     * if it resolves back to us there is nothing left to try. */
+    if (!root_init_is_self()) {
+        execve(kInitRoot, argv, envp);
+    }
+    reboot_bootloader();
     return 127;
 }
