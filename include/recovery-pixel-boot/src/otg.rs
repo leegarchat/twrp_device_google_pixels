@@ -43,6 +43,24 @@ fn find_usb_role() -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
+/// gs101 fallback detector (pure inputs, testable).
+///
+/// Post-8.0 USB churn (OTG_ID register writes via find_otg_id, usb-rebind
+/// service) regressed raven/oriole/bluejay: stuck vibration + frozen
+/// touch on decrypt screens, dead adb — while shiba/laguna/malibu need
+/// the new logic. In 8.0 the OTG_ID write silently missed on gs101 (the
+/// hardcoded zuma path doesn't exist there) and no rebind service ran,
+/// so the fallback restores exactly that: no OTG_ID writes, no rebind.
+/// Everything else (shim, otg-auto, TCPC) is untouched on all families.
+fn is_gs101_family(soc_family: &str, hardware: &str) -> bool {
+    soc_family.trim() == "gs101"
+        || matches!(hardware.trim(), "oriole" | "raven" | "bluejay")
+}
+
+fn is_gs101() -> bool {
+    is_gs101_family(&get_prop("ro.recovery.soc_family"), &get_prop("ro.hardware"))
+}
+
 /// First dwc3_exynos_otg_id node found under the platform bus
 /// (e.g. /sys/devices/platform/11210000.usb/dwc3_exynos_otg_id).
 /// None on SoCs without the exynos OTG ID register (laguna/malibu) —
@@ -277,8 +295,12 @@ fn switch_to_host(current: &mut String) {
     let _ = std::fs::write(CHARGER_VALUE, b"49\n");
     let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
     // Exynos OTG-ID register; absent on laguna/malibu (skipped, the role
-    // switch above already steered the controller).
-    if let Some(otg_id) = find_otg_id() {
+    // switch above already steered the controller). gs101 fallback: skip
+    // the write (8.0 behavior — the old hardcoded zuma path never existed
+    // there, so 8.0 never touched this register on Pixel 6).
+    if is_gs101() {
+        info("gs101 fallback: OTG_ID write skipped");
+    } else if let Some(otg_id) = find_otg_id() {
         let _ = std::fs::write(otg_id, b"0\n");
     }
     *current = "host".into();
@@ -291,7 +313,10 @@ fn switch_to_device(current: &mut String) {
     info(">>> SWITCHING TO DEVICE MODE <<<");
     let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
     // Exynos OTG-ID register; absent on laguna/malibu (skipped).
-    if let Some(otg_id) = find_otg_id() {
+    // gs101 fallback: skip (8.0 behavior, see switch_to_host).
+    if is_gs101() {
+        info("gs101 fallback: OTG_ID write skipped");
+    } else if let Some(otg_id) = find_otg_id() {
         let _ = std::fs::write(otg_id, b"1\n");
     }
     // Single write (shell version wrote it twice).
@@ -363,6 +388,13 @@ fn resolve_udc() -> String {
 /// (when present) and re-attempts the bind for ~30s; the long-running
 /// otg-auto daemon owns later plug transitions via its VBUS poll.
 pub fn run_usb_rebind() -> Result<(), String> {
+    // gs101 fallback: no rebind service ran in 8.0 and init-trigger binds
+    // succeed on exynos (field-proven: UDC ends bound); the 30s write loop
+    // only churns UDC/adbd on Pixel 6. Other families unaffected.
+    if is_gs101() {
+        info("gs101 fallback: usb-rebind skipped (init triggers own the bind)");
+        return Ok(());
+    }
     info("usb-rebind: waiting for device role, then binding UDC");
     for i in 0..30 {
         let role = find_usb_role()
@@ -524,5 +556,24 @@ mod tests {
         assert_eq!(pick_controller("c400000.dwc3", &empty), "c400000.dwc3");
         assert_eq!(pick_controller("UNKNOWN.dwc3", &empty), UDC_NAME);
         assert_eq!(pick_controller("", &empty), UDC_NAME);
+    }
+
+    #[test]
+    fn gs101_detected_by_family_or_codename() {
+        // soc_family prop is primary (stamped by our early-init).
+        assert!(is_gs101_family("gs101", ""));
+        assert!(is_gs101_family("gs101\n", "raven"));
+        // ro.hardware fallback covers trees where the prop is missing.
+        assert!(is_gs101_family("", "oriole"));
+        assert!(is_gs101_family("", "raven"));
+        assert!(is_gs101_family("", "bluejay"));
+        // Other families stay on the new logic.
+        assert!(!is_gs101_family("zuma", "shiba"));
+        assert!(!is_gs101_family("zumapro", "komodo"));
+        assert!(!is_gs101_family("laguna", "mustang"));
+        assert!(!is_gs101_family("malibu", "grizzly"));
+        assert!(!is_gs101_family("gs201", "cheetah"));
+        assert!(!is_gs101_family("", ""));
+        assert!(!is_gs101_family("UNKNOWN", "UNKNOWN.dwc3"));
     }
 }
