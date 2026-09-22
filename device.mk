@@ -147,6 +147,11 @@ endif
 # Every family owns its fstab/ as prebuilt_etc (ext4+erofs twins, no AVB).
 # Skipped entirely with build.sh -N/--no-first-stage (FOX_NO_FIRST_STAGE=1
 # in env, imported by make): no fstab, no linker/e2fs vendor_ramdisk tools.
+# Fallback to .build_platform.conf (build.sh persists the key there;
+# recipe shells may strip custom env, the conf survives).
+ifeq ($(FOX_NO_FIRST_STAGE),)
+FOX_NO_FIRST_STAGE := $(shell grep '^NO_FIRST_STAGE=' $(LOCAL_PATH)/.build_platform.conf 2>/dev/null | cut -d= -f2)
+endif
 # Recovery ramdisk (TARGET_RECOVERY_FSTAB, recovery/root) is unaffected.
 # families/zuma/fstab/    → fstab.zuma*                             (Tensor G3, UFS 13200000)
 # families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
