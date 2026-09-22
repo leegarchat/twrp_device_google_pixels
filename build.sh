@@ -62,6 +62,11 @@
 #                     "group": {"name": id}}). Several groups allowed, comma
 #                     separated: --push testers,g6. Non-fatal: a push failure
 #                     only warns, the build itself is already delivered.
+#   -g, --git-tag     Tag this build in git: -n/--name value + datetime
+#                     (e.g. -n test8.7 -> test8.7-20260923-0130). Refuses to
+#                     build on a dirty tree (uncommitted changes = error
+#                     before anything runs). The tag is deleted automatically
+#                     if the build fails; pushing is manual (VS Code).
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -85,6 +90,13 @@ SAFE_EXIT_CODE=0
 fox_safe_exit() {
     SAFE_EXIT_CODE="${1:-1}"
     SAFE_EXIT_REQUESTED=true
+    # Failed runs must not leave a version tag behind (sourced mode never
+    # reaches the EXIT trap below, so clean up here too; idempotent).
+    if [[ "$SAFE_EXIT_CODE" != 0 && "${FOX_TAG_CREATED:-}" == 1 && -n "${FOX_TAG_NAME:-}" && -n "${SCRIPT_DIR:-}" ]]; then
+        git -C "$SCRIPT_DIR" tag -d "$FOX_TAG_NAME" >/dev/null 2>&1 \
+            && echo "[build] Removed git tag $FOX_TAG_NAME (failed build)" || true
+        FOX_TAG_CREATED=0
+    fi
 }
 
 # Stop the flow NOW: inline return/exit (see note above).
@@ -167,6 +179,7 @@ FOX_FORCE=false
 FOX_BUILD_TYPE="Stable"
 FOX_NO_FIRST_STAGE=""
 CPIO_ONLY=false
+FOX_GIT_TAG=""
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -270,6 +283,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             shift
             ;;
+        -g|--git-tag)
+            FOX_GIT_TAG=1
+            shift
+            ;;
         --build-type)
             shift
             FOX_BUILD_TYPE="${1:-}"
@@ -293,7 +310,7 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             ;;
         -h|--help)
-            sed -n '2,53p' "${BASH_SOURCE[0]}"
+            sed -n '2,70p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
             ;;
         *)
@@ -308,6 +325,59 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
         return "$SAFE_EXIT_CODE"
     else
         exit "$SAFE_EXIT_CODE"
+    fi
+fi
+
+# --- Version tag (--git-tag): name + datetime, clean tree or no build ---
+# Runs before anything mutates the tree (.gen_kernel.mk, .build_platform.conf
+# are all generated later). Push stays manual; a failed build deletes the tag
+# (via fox_safe_exit + the EXIT trap below), so a tag always means "built OK".
+fox_tag_cleanup() {
+    if [[ "${FOX_TAG_CREATED:-}" == 1 && "${FOX_BUILD_OK:-}" != 1 && -n "${FOX_TAG_NAME:-}" ]]; then
+        git -C "$SCRIPT_DIR" tag -d "$FOX_TAG_NAME" >/dev/null 2>&1 \
+            && echo "[build] Removed git tag $FOX_TAG_NAME (failed build)" || true
+    fi
+}
+if [[ -n "$FOX_GIT_TAG" ]]; then
+    command -v git >/dev/null 2>&1 || { echo "ERROR: --git-tag needs git in PATH"; fox_safe_exit 1; }
+    if [[ "$SAFE_EXIT_REQUESTED" == false && -z "$BUILD_NAME" ]]; then
+        echo "ERROR: --git-tag needs -n/--name (tag = <name>-<datetime>)"
+        fox_safe_exit 1
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        FOX_TAG_NAME="${BUILD_NAME}-$(date '+%Y%m%d-%H%M')"
+        if git -C "$SCRIPT_DIR" rev-parse -q --verify "refs/tags/$FOX_TAG_NAME" >/dev/null 2>&1; then
+            echo "ERROR: git tag $FOX_TAG_NAME already exists (built this minute?)."
+            echo "  Delete it first: git -C $SCRIPT_DIR tag -d $FOX_TAG_NAME"
+            fox_safe_exit 1
+        fi
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        _dirty=$(git -C "$SCRIPT_DIR" status --porcelain 2>&1) || { echo "ERROR: git status failed in $SCRIPT_DIR"; fox_safe_exit 1; }
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false && -n "$_dirty" ]]; then
+        echo "ERROR: uncommitted changes in $SCRIPT_DIR — commit or stash first:"
+        echo "$_dirty" | sed 's/^/  /'
+        fox_safe_exit 1
+    fi
+    unset _dirty
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        git -C "$SCRIPT_DIR" tag -a "$FOX_TAG_NAME" -m "OrangeFox $BUILD_NAME build ($FOX_TAG_NAME)" \
+            || fox_safe_exit 1
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+        FOX_TAG_CREATED=1
+        echo "[build] Git tag created: $FOX_TAG_NAME"
+        if [[ "$fox_sourced" != true ]]; then
+            trap fox_tag_cleanup EXIT
+        fi
+    fi
+    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+        if [[ "$fox_sourced" == true ]]; then
+            return "$SAFE_EXIT_CODE"
+        else
+            exit "$SAFE_EXIT_CODE"
+        fi
     fi
 fi
 export LGZ_LEVEL
@@ -538,6 +608,9 @@ if [[ ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
     echo "  Groups:        $(printf '%s ' "${KERNEL_GROUPS[@]%%|*}")"
 fi
 echo "  Name:          ${BUILD_NAME:-<auto>}"
+if [[ -n "${FOX_TAG_NAME:-}" ]]; then
+echo "  Git tag:       $FOX_TAG_NAME"
+fi
 echo "  Patch Version: ${FOX_MAINTAINER_PATCH_VERSION:-<not set>}"
 echo "  First-stage:   ${FOX_NO_FIRST_STAGE:+skipped (no-first-stage)}${FOX_NO_FIRST_STAGE:-included}"
 echo "  Artifacts:     $([[ "$CPIO_ONLY" == true ]] && echo "cpio.lz4 only" || echo ".img/.zip")"
@@ -998,3 +1071,4 @@ fi
 echo "=============================================="
 echo "  Artifacts in: $BUILDS_DIR/"
 echo "=============================================="
+FOX_BUILD_OK=1
