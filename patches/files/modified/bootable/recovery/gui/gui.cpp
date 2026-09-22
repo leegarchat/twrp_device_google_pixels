@@ -74,7 +74,9 @@ using namespace rapidxml;
 // variant ships the file, else the stock TWRES path. Base panels,
 // tablets (uniform 16:9 letterbox canvas) and folds (narrow cover,
 // letterboxed inner) always take TWRES: the prop stays empty there.
-static std::string Fox_ThemeFile(const char* file)
+// Non-static on purpose: PageManager::RunReload (pages.cpp) reuses the
+// selector so a stock-theme reload stays on the wide variant.
+std::string Fox_ThemeFile(const char* file)
 {
 	static bool logged = false;
 	std::string variant = android::base::GetProperty("DOF_THEME", "");

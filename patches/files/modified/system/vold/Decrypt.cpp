@@ -816,7 +816,7 @@ userid_t fakeUid(const userid_t uid) {
 }
 
 bool Is_Weaver(const std::string& spblob_path, const std::string& handle_str) {
-	printf("Is_Weaver\n");
+	printf("Is_Weaver (handle='%s')\n", handle_str.c_str());
 	struct stat st;
 	std::vector<std::string> weaver_file_paths = {
 		spblob_path + handle_str + ".weaver",
@@ -825,10 +825,12 @@ bool Is_Weaver(const std::string& spblob_path, const std::string& handle_str) {
 	};
     for (auto& weaver_file : weaver_file_paths) {
 		if (stat(weaver_file.c_str(), &st) == 0) {
+			printf("Is_Weaver: matched %s\n", weaver_file.c_str());
 			return true;
 			break;
 		}
 	}
+	printf("Is_Weaver: no .weaver file under %s, secdis path\n", spblob_path.c_str());
 	return false;
 }
 
@@ -939,9 +941,18 @@ bool Decrypt_User_Synth_Pass(const userid_t user_id, const std::string& Password
 		// Send the slot from the .weaver file, the computed weaver key, and get the escrowed key data
 		std::vector<uint8_t> weaver_payload;
 		// TODO: we should return more information about the status including time delays before the next retry
+		// Fox: one automatic retry on transient failure. The first Trusty
+		// op after idle can fail (kmr_hal DeviceBegin -62 noise) while a
+		// retry seconds later succeeds; failing the whole PIN attempt on
+		// that instead forces the user through pass_error for nothing.
 		if (!weaver.WeaverVerify(wd.slot, weaver_key, &weaver_payload)) {
-			printf("failed to weaver verify\n");
-			return Free_Return(retval, weaver_key, &pwd);
+			printf("weaver verify attempt 1 failed (slot %u), retrying once after 2s\n", wd.slot);
+			sleep(2);
+			if (!weaver.WeaverVerify(wd.slot, weaver_key, &weaver_payload)) {
+				printf("failed to weaver verify (both attempts)\n");
+				return Free_Return(retval, weaver_key, &pwd);
+			}
+			printf("weaver verify succeeded on retry\n");
 		}
 		// printf("weaver payload: "); output_hex(&weaver_payload); printf("\n");
 		// Done with weaverVerify

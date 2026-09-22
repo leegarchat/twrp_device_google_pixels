@@ -250,6 +250,15 @@ on property:sys.usb.ffs.ready=1 && property:sys.usb.config=adb && property:sys.u
     write /config/usb_gadget/g1/idProduct 0x4EE7
     write /config/usb_gadget/g1/idVendor 0x18D1
 
+# ADB-only bind retry: the stock UDC write above is one-shot and
+# edge-triggered, so an adb-only bind landing while the DWC3 role voter
+# sits at `none` (-ENODEV) stays dead with adbd looping on FUNCTIONFS_BIND
+# (mtp,adb survives only via usb_rebind below). usb_rebind is
+# config-agnostic (resolve_udc + ctl.start adbd); adbd itself is started
+# by the stock `config=adb` trigger.
+on property:sys.usb.config=adb && property:sys.usb.configfs=1
+    start usb_rebind
+
 
 on property:sys.usb.ffs.ready=1 && property:sys.usb.config=mtp,adb && property:sys.usb.configfs=1
     write /config/usb_gadget/g1/configs/b.1/strings/0x409/configuration "mtp_adb"

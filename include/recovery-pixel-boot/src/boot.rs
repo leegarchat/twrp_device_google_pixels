@@ -383,7 +383,10 @@ pub fn run_boot() -> Result<(), String> {
     if Path::new("/dev/lwis-flash-lm3644").exists() {
         info("torch: /dev/lwis-flash-lm3644 available");
     } else {
-        warn("torch: /dev/lwis-flash-lm3644 not found");
+        // Not fatal on LWIS families (malibu/laguna): torch drives the
+        // LM3644 straight from the flash@ device-tree node (see torch.rs
+        // LWIS fallback) and never needs the camera-stack /dev node.
+        info("torch: no /dev/lwis-flash-lm3644 (LWIS-DT direct drive applies on malibu/laguna)");
     }
 
     match run_stage("meta-fix", &[]) {

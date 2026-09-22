@@ -1626,9 +1626,15 @@ int PageManager::RunReload() {
 	theme_path += "/theme/ui.zip";
 	if (ret_val != 0 || ReloadPackage("OrangeFox", theme_path) != 0)
 	{
-		// Loading the custom theme failed - try loading the stock theme
+		// Loading the custom theme failed - try loading the stock theme.
+		// Fox: route through the wide-variant selector so a reload on a
+		// wide slab (DOF_THEME=twres_1344 etc.) stays on the native variant
+		// instead of dropping to scaled base (TWRES "ui.xml"), which
+		// renders light-theme assets at the wrong scale. Fox_ThemeFile is
+		// declared in gui.cpp; keep the TWRES fallback when no variant.
 		LOGINFO("Attempting to reload stock theme...\n");
-		if (ReloadPackage("OrangeFox", TWRES "ui.xml"))
+		extern std::string Fox_ThemeFile(const char* file);
+		if (ReloadPackage("OrangeFox", Fox_ThemeFile("ui.xml")))
 		{
 			LOGERR("Failed to load base packages.\n");
 			ret_val = 1;

@@ -1,10 +1,15 @@
 //! torch — LM3644 flashlight control, fully native (no gpioset/i2cset forks).
 //!
-//! Port of torch_ctl.sh. Discovery is identical: LM3644 on
-//! /sys/bus/i2c/devices/*<match> (default "-0063"), flash pinctrl from the
-//! device tree (`samsung,pins` under a flash|torch path), GPIO chip by bank
-//! label. GPIO uses the v1 uAPI (structs defined locally: bionic/libc
-//! exposes no gpio ioctls); I2C reuses the i2c.rs transact helper.
+//! Discovery has two paths (P11 ab40c6f port):
+//! 1. registered I2C client (/sys/bus/i2c/devices/*<match>, default "-0063")
+//!    + flash pinctrl from the device tree (`samsung,pins` under a
+//!    flash|torch path), GPIO chip by bank label (gs201/zuma/zumapro);
+//! 2. LWIS fallback (malibu/laguna): the flash is a google,lwis-i2c-device
+//!    whose camera driver never probes in recovery, so no I2C client and no
+//!    samsung,pins exist. Bus/addr/enable-GPIO come straight from the
+//!    flash@* device-tree node via phandle resolution.
+//! GPIO uses the v1 uAPI (structs defined locally: bionic/libc exposes no
+//! gpio ioctls); I2C reuses the i2c.rs transact helper.
 //! Called by the Fox GUI as `recovery-pixel-boot torch on|off`.
 
 use crate::i2c::{i2c_transact, open_i2c_dev};
@@ -228,9 +233,17 @@ fn load_cache() -> Option<TorchHw> {
     let mut it = text.split_whitespace();
     let bus: u32 = it.next()?.parse().ok()?;
     let addr = u16::from_str_radix(it.next()?, 16).ok()?;
-    let chip = PathBuf::from(it.next()?);
+    // "-" sentinel = LWIS discovery with no enable GPIO (no drive).
+    let chip_str = it.next()?;
+    let chip = if chip_str == "-" {
+        PathBuf::new()
+    } else {
+        PathBuf::from(chip_str)
+    };
     let gpio_off: u32 = it.next()?.parse().ok()?;
-    if !Path::new(&format!("/dev/i2c-{bus}")).exists() || !chip.exists() {
+    if !Path::new(&format!("/dev/i2c-{bus}")).exists()
+        || (!chip.as_os_str().is_empty() && !chip.exists())
+    {
         return None;
     }
     Some(TorchHw {
@@ -242,30 +255,202 @@ fn load_cache() -> Option<TorchHw> {
 }
 
 fn store_cache(hw: &TorchHw) {
+    let chip_str = if hw.chip.as_os_str().is_empty() {
+        "-".to_string()
+    } else {
+        hw.chip.display().to_string()
+    };
     let _ = std::fs::write(
         HW_CACHE,
-        format!("{} {:x} {} {}\n", hw.bus, hw.addr, hw.chip.display(), hw.gpio_off),
+        format!("{} {:x} {} {}\n", hw.bus, hw.addr, chip_str, hw.gpio_off),
     );
+}
+
+/// Big-endian u32 from a DT property blob (phandles, i2c-addr, gpio cells).
+/// Testable pure helper.
+pub fn parse_be_u32(raw: &[u8]) -> Option<u32> {
+    if raw.len() < 4 {
+        return None;
+    }
+    Some(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]))
+}
+
+/// Match a phandle value to a linux i2c-N bus number by comparing each
+/// /sys/bus/i2c/devices/i2c-*/of_node/phandle. Base-path parameterized
+/// for tests. Port of the torch_ctl.sh (P11 ab40c6f) loop.
+pub fn find_i2c_bus_by_phandle(phandle: u32, i2c_base: &Path) -> Option<u32> {
+    let rd = std::fs::read_dir(i2c_base).ok()?;
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("i2c-") {
+            continue;
+        }
+        let bus: u32 = name[4..].parse().ok()?;
+        // of_node may be a symlink; join() follows it either way.
+        let ph = std::fs::read(entry.path().join("of_node/phandle")).ok()?;
+        if parse_be_u32(&ph) == Some(phandle) {
+            return Some(bus);
+        }
+    }
+    None
+}
+
+/// Match a phandle value to a gpiochip name (e.g. "gpiochip1") via
+/// /sys/bus/gpio/devices/gpiochip*/of_node/phandle. Port of ab40c6f.
+pub fn find_gpiochip_by_phandle(phandle: u32, gpio_base: &Path) -> Option<String> {
+    let rd = std::fs::read_dir(gpio_base).ok()?;
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("gpiochip") {
+            continue;
+        }
+        let ph = std::fs::read(entry.path().join("of_node/phandle")).ok()?;
+        if parse_be_u32(&ph) == Some(phandle) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn visit_flash_nodes(dir: &Path, out: &mut Vec<PathBuf>) {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        if p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with("flash@"))
+            .unwrap_or(false)
+        {
+            out.push(p.clone());
+        }
+        visit_flash_nodes(&p, out);
+    }
+}
+
+/// LWIS fallback (malibu/laguna, P11 ab40c6f port): the flash is a
+/// google,lwis-i2c-device with no registered I2C client. Bus/addr come
+/// from the flash@* node's i2c-bus (phandle) + i2c-addr (BE u32, low byte
+/// is the 7-bit address); enable-gpios (<phandle line flags>) resolves to
+/// a gpiochip the same way. GPIO is optional: LWIS would assert enable on
+/// device-open, in recovery nothing does, so torch_on drives it high —
+/// but an absent/unresolvable enable just means no GPIO drive (empty
+/// chip path), not a discovery failure.
+fn discover_lwis_flash() -> Result<TorchHw, String> {
+    discover_lwis_flash_under(
+        Path::new("/sys/firmware/devicetree/base"),
+        Path::new("/sys/bus/i2c/devices"),
+        Path::new("/sys/bus/gpio/devices"),
+    )
+}
+
+fn discover_lwis_flash_under(dt_base: &Path, i2c_base: &Path, gpio_base: &Path) -> Result<TorchHw, String> {
+    let mut nodes = Vec::new();
+    visit_flash_nodes(dt_base, &mut nodes);
+    for node in &nodes {
+        let compat = std::fs::read(node.join("compatible")).unwrap_or_default();
+        if !compat.windows(b"lwis-i2c-device".len()).any(|w| w == b"lwis-i2c-device") {
+            continue;
+        }
+        let addr_raw = std::fs::read(node.join("i2c-addr"))
+            .map_err(|_| "LWIS flash node has no i2c-addr".to_string())?;
+        let bus_raw = std::fs::read(node.join("i2c-bus"))
+            .map_err(|_| "LWIS flash node has no i2c-bus".to_string())?;
+        // i2c-addr is a BE u32; the low byte is the 7-bit address.
+        let addr = (parse_be_u32(&addr_raw).ok_or("bad i2c-addr")? & 0xff) as u16;
+        let bus_ph = parse_be_u32(&bus_raw).ok_or("bad i2c-bus phandle")?;
+        let bus = find_i2c_bus_by_phandle(bus_ph, i2c_base)
+            .ok_or_else(|| format!("no i2c bus for phandle 0x{bus_ph:x}"))?;
+        // enable-gpios is optional; cells are <phandle line flags>.
+        let mut chip = PathBuf::new();
+        let mut gpio_off = 0u32;
+        if let Ok(eg) = std::fs::read(node.join("enable-gpios")) {
+            if eg.len() >= 8 {
+                if let (Some(en_ph), Some(off)) = (parse_be_u32(&eg[0..]), parse_be_u32(&eg[4..])) {
+                    if let Some(name) = find_gpiochip_by_phandle(en_ph, gpio_base) {
+                        chip = PathBuf::from(format!("/dev/{name}"));
+                        gpio_off = off;
+                    } else {
+                        info(&format!("LWIS enable gpiochip for phandle 0x{en_ph:x} not found, no GPIO drive"));
+                    }
+                }
+            }
+        } else {
+            info("LWIS flash node has no enable-gpios, no GPIO drive");
+        }
+        info(&format!(
+            "LWIS flash -> I2C bus {bus} addr 0x{addr:02x}, enable {}{}",
+            if chip.as_os_str().is_empty() {
+                "(none)".to_string()
+            } else {
+                chip.display().to_string()
+            },
+            if chip.as_os_str().is_empty() {
+                String::new()
+            } else {
+                format!(" line {gpio_off}")
+            },
+        ));
+        return Ok(TorchHw {
+            bus,
+            addr,
+            chip,
+            gpio_off,
+        });
+    }
+    Err("no lwis-i2c-device flash@ node in device tree".to_string())
 }
 
 fn discover(i2c_match: &str, pinctrl_alts: &[String]) -> Result<TorchHw, String> {
     if let Some(hw) = load_cache() {
         return Ok(hw);
     }
-    let (bus, addr) = discover_i2c(i2c_match)?;
-    let (chip, gpio_off) = discover_gpio(pinctrl_alts)?;
-    info(&format!(
-        "HW found: I2C bus {bus} addr 0x{addr:02x}, GPIO {} offset {gpio_off}",
-        chip.display()
-    ));
-    let hw = TorchHw {
-        bus,
-        addr,
-        chip,
-        gpio_off,
-    };
-    store_cache(&hw);
-    Ok(hw)
+    match discover_i2c(i2c_match) {
+        Ok((bus, addr)) => {
+            let (chip, gpio_off) = discover_gpio(pinctrl_alts)?;
+            info(&format!(
+                "HW found: I2C bus {bus} addr 0x{addr:02x}, GPIO {} offset {gpio_off}",
+                chip.display()
+            ));
+            let hw = TorchHw {
+                bus,
+                addr,
+                chip,
+                gpio_off,
+            };
+            store_cache(&hw);
+            Ok(hw)
+        }
+        Err(client_err) => {
+            // No registered LM3644 client (LWIS camera stack never probes
+            // in recovery on malibu/laguna) — try the device-tree path.
+            info(&format!("{client_err}, trying LWIS device-tree fallback"));
+            let hw = discover_lwis_flash().map_err(|e| format!("{client_err}; {e}"))?;
+            info(&format!(
+                "HW found (LWIS): I2C bus {} addr 0x{:02x}, GPIO {}{}",
+                hw.bus,
+                hw.addr,
+                if hw.chip.as_os_str().is_empty() {
+                    "(none)".to_string()
+                } else {
+                    hw.chip.display().to_string()
+                },
+                if hw.chip.as_os_str().is_empty() {
+                    String::new()
+                } else {
+                    format!(" offset {}", hw.gpio_off)
+                },
+            ));
+            store_cache(&hw);
+            Ok(hw)
+        }
+    }
 }
 
 fn i2c_do(bus: u32, addr: u16, payload: &[u8]) -> Result<(), String> {
@@ -287,9 +472,13 @@ pub fn run_torch(action: &str) -> Result<(), String> {
                 err(&format!("aborting torch ON: {e}"));
                 e
             })?;
-            info("waking flash chip via GPIO");
-            gpio_drive(&hw.chip, hw.gpio_off, 1)?;
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // LWIS without enable GPIO: skip the drive, the chip is
+            // already out of reset once probed (or has no HWEN line).
+            if !hw.chip.as_os_str().is_empty() {
+                info("waking flash chip via GPIO");
+                gpio_drive(&hw.chip, hw.gpio_off, 1)?;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
             info("sending I2C commands");
             i2c_do(hw.bus, hw.addr, &[0x05, 0x3F])?;
             i2c_do(hw.bus, hw.addr, &[0x01, 0x0B])?;
@@ -303,8 +492,10 @@ pub fn run_torch(action: &str) -> Result<(), String> {
             })?;
             info("turning off LED via I2C");
             i2c_do(hw.bus, hw.addr, &[0x01, 0x00])?;
-            info("chip to sleep via GPIO");
-            gpio_drive(&hw.chip, hw.gpio_off, 0)?;
+            if !hw.chip.as_os_str().is_empty() {
+                info("chip to sleep via GPIO");
+                gpio_drive(&hw.chip, hw.gpio_off, 0)?;
+            }
             info("torch is OFF");
             Ok(())
         }
@@ -338,5 +529,91 @@ mod tests {
         assert_eq!(std::mem::size_of::<GpioHandleData>(), 64);
         assert_eq!(std::mem::size_of::<GpioChipInfo>(), 68);
         assert_eq!(GPIOHANDLE_REQUEST, 0xC16CB403);
+    }
+
+    #[test]
+    fn be_u32_parses_big_endian() {
+        assert_eq!(parse_be_u32(&[0x00, 0x00, 0x00, 0x63]), Some(0x63));
+        assert_eq!(parse_be_u32(&[0x00, 0x00, 0x00]), None);
+        assert_eq!(parse_be_u32(&[]), None);
+        // i2c-addr low byte is the 7-bit address.
+        assert_eq!((parse_be_u32(&[0x00, 0x00, 0x00, 0x63]).unwrap() & 0xff) as u16, 0x63);
+    }
+
+    #[test]
+    fn lwis_fallback_resolves_bus_addr_gpio() {
+        use std::fs;
+        let d = std::env::temp_dir().join(format!("fox_test_lwis_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        // DT: soc/flash@0 with lwis compatible, addr 0x63, bus phandle 0x11,
+        // enable-gpios <0x22 line 24 flags 0>.
+        let flash = d.join("dt/soc/flash@0");
+        fs::create_dir_all(&flash).unwrap();
+        fs::write(flash.join("compatible"), b"google,lwis-i2c-device\0").unwrap();
+        fs::write(flash.join("i2c-addr"), [0x00, 0x00, 0x00, 0x63]).unwrap();
+        fs::write(flash.join("i2c-bus"), [0x00, 0x00, 0x00, 0x11]).unwrap();
+        fs::write(flash.join("enable-gpios"), [0x00, 0x00, 0x00, 0x22, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00]).unwrap();
+        // i2c-5/of_node/phandle = 0x11.
+        let i2c5 = d.join("i2c/i2c-5/of_node");
+        fs::create_dir_all(&i2c5).unwrap();
+        fs::write(i2c5.join("phandle"), [0x00, 0x00, 0x00, 0x11]).unwrap();
+        // gpiochip1/of_node/phandle = 0x22.
+        let gc1 = d.join("gpio/gpiochip1/of_node");
+        fs::create_dir_all(&gc1).unwrap();
+        fs::write(gc1.join("phandle"), [0x00, 0x00, 0x00, 0x22]).unwrap();
+        let hw = discover_lwis_flash_under(
+            &d.join("dt"),
+            &d.join("i2c"),
+            &d.join("gpio"),
+        )
+        .unwrap();
+        assert_eq!((hw.bus, hw.addr), (5, 0x63));
+        assert_eq!(hw.chip, PathBuf::from("/dev/gpiochip1"));
+        assert_eq!(hw.gpio_off, 24);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn lwis_fallback_no_enable_gpio_still_resolves() {
+        use std::fs;
+        let d = std::env::temp_dir().join(format!("fox_test_lwisnogpio_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let flash = d.join("dt/soc/flash@0");
+        fs::create_dir_all(&flash).unwrap();
+        fs::write(flash.join("compatible"), b"google,lwis-i2c-device\0").unwrap();
+        fs::write(flash.join("i2c-addr"), [0x00, 0x00, 0x00, 0x63]).unwrap();
+        fs::write(flash.join("i2c-bus"), [0x00, 0x00, 0x00, 0x11]).unwrap();
+        let i2c5 = d.join("i2c/i2c-5/of_node");
+        fs::create_dir_all(&i2c5).unwrap();
+        fs::write(i2c5.join("phandle"), [0x00, 0x00, 0x00, 0x11]).unwrap();
+        fs::create_dir_all(d.join("gpio")).unwrap();
+        let hw = discover_lwis_flash_under(
+            &d.join("dt"),
+            &d.join("i2c"),
+            &d.join("gpio"),
+        )
+        .unwrap();
+        assert_eq!((hw.bus, hw.addr), (5, 0x63));
+        assert!(hw.chip.as_os_str().is_empty());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn lwis_fallback_rejects_non_lwis_flash() {
+        use std::fs;
+        let d = std::env::temp_dir().join(format!("fox_test_lwisrej_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let flash = d.join("dt/soc/flash@0");
+        fs::create_dir_all(&flash).unwrap();
+        fs::write(flash.join("compatible"), b"some,other-flash\0").unwrap();
+        fs::create_dir_all(d.join("i2c")).unwrap();
+        fs::create_dir_all(d.join("gpio")).unwrap();
+        assert!(discover_lwis_flash_under(
+            &d.join("dt"),
+            &d.join("i2c"),
+            &d.join("gpio"),
+        )
+        .is_err());
+        let _ = fs::remove_dir_all(&d);
     }
 }
