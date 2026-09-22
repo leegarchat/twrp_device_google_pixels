@@ -2103,8 +2103,16 @@ int GUIAction::decrypt(std::string arg __unused)
 			// parts under encrypted /sdcard/Fox/.theme), so the UI sits
 			// on defaults (white base) until a manual toggle. Now that
 			// user storage is unlocked, re-read the saved values and
-			// re-apply the saved theme at once.
-			DataManager::LoadValues(PERSIST_SETTINGS_FILE);
+			// re-apply the saved theme at once. Prefer the sdcard copy
+			// (written on every save, freshest); fall back to persist.
+			{
+				std::string sd_file = DataManager::GetSettingsStoragePath()
+					+ "/" + TW_SETTINGS_FILE;
+				if (TWFunc::Path_Exists(sd_file))
+					DataManager::LoadValues(sd_file);
+				else
+					DataManager::LoadValues(PERSIST_SETTINGS_FILE);
+			}
 			PageManager::RequestReload();
 
 	  int has_datamedia;
