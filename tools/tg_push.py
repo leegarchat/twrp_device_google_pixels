@@ -9,17 +9,19 @@ Reads the bot token + chat ids from a gitignored JSON config
 Usage:
     tg_push.py <zip-path> <group-name> [--config PATH]
 
-Only stdlib is used (urllib). Sends via sendDocument with a caption
-(filename, size, md5). Bot API file limit is 50 MB — bigger files are
-refused with a clear error (exit 2). Any other failure exits 1 with the
-API error text. Success prints the message id.
+Sends via send_document with a caption (filename, size, md5), then pins
+the message with notification for all (bot needs admin pin rights —
+a pin failure only warns). Requires aiogram v3 (pip install aiogram).
+
+Bot API file limit is 50 MB — bigger files are refused with a clear
+error (exit 2). Any other failure exits 1. Success prints message id.
 """
 
+import asyncio
 import hashlib
 import json
 import os
 import sys
-import urllib.request
 
 TG_API_LIMIT = 50 * 1024 * 1024  # Bot API per-file cap
 
@@ -49,40 +51,25 @@ def md5_of(path):
     return h.hexdigest()
 
 
-def send_document(token, chat_id, path, caption):
-    boundary = "----foxpush7d4a6e8c0b2"
-    crlf = b"\r\n"
-    filename = os.path.basename(path)
-    with open(path, "rb") as f:
-        data = f.read()
-    parts = []
-    for name, value in (("chat_id", str(chat_id)), ("caption", caption)):
-        parts += [
-            b"--" + boundary.encode() + crlf,
-            f'Content-Disposition: form-data; name="{name}"'.encode() + crlf + crlf,
-            value.encode() + crlf,
-        ]
-    parts += [
-        b"--" + boundary.encode() + crlf,
-        f'Content-Disposition: form-data; name="document"; filename="{filename}"'.encode() + crlf,
-        b"Content-Type: application/zip" + crlf + crlf,
-        data + crlf,
-        b"--" + boundary.encode() + b"--" + crlf,
-    ]
-    body = b"".join(parts)
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendDocument",
-        data=body,
-        headers={
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Content-Length": str(len(body)),
-        },
-    )
+async def push(token, chat_id, path, caption):
+    from aiogram import Bot
+    from aiogram.types import FSInputFile
+
+    bot = Bot(token=token)
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.load(resp)
-    except Exception as e:  # noqa: BLE001 — report any transport/API error
-        return {"ok": False, "description": str(e)}
+        msg = await bot.send_document(
+            chat_id, FSInputFile(path), caption=caption
+        )
+        try:
+            # disable_notification=False (default) = everyone gets notified.
+            await bot.pin_chat_message(chat_id, msg.message_id)
+            pinned = True
+        except Exception as e:  # noqa: BLE001 — pin needs admin rights
+            print(f"[tg-push] WARNING: message sent but pin failed: {e} (bot needs admin pin rights)")
+            pinned = False
+        return msg.message_id, pinned
+    finally:
+        await bot.session.close()
 
 
 def main(argv):
@@ -130,17 +117,20 @@ def main(argv):
             file=sys.stderr,
         )
         return 2
+    try:
+        import aiogram  # noqa: F401 — fail fast with a clear message
+    except ImportError:
+        print("ERROR: aiogram v3 is required (pip install aiogram)", file=sys.stderr)
+        return 2
     digest = md5_of(zip_path)
-    caption = (
-        f"{os.path.basename(zip_path)}\n"
-        f"{size / 1048576:.1f} MB | md5: {digest}"
-    )
+    caption = f"{os.path.basename(zip_path)}\n{size / 1048576:.1f} MB | md5: {digest}"
     print(f"[tg-push] sending {os.path.basename(zip_path)} ({size / 1048576:.1f} MB) to '{group}' ...")
-    resp = send_document(cfg["token"], cfg["groups"][group], zip_path, caption)
-    if not resp.get("ok"):
-        print(f"ERROR: telegram refused: {resp.get('description', resp)}", file=sys.stderr)
+    try:
+        message_id, pinned = asyncio.run(push(cfg["token"], cfg["groups"][group], zip_path, caption))
+    except Exception as e:  # noqa: BLE001 — report any transport/API error
+        print(f"ERROR: telegram refused: {e}", file=sys.stderr)
         return 1
-    print(f"[tg-push] OK, message_id={resp['result']['message_id']}")
+    print(f"[tg-push] OK, message_id={message_id}" + (", pinned with notification for all" if pinned else ""))
     return 0
 
 
