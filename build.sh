@@ -251,6 +251,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_RECOVERY_IN_PLATFORM=1
             shift
             ;;
+        --new-theme)
+            FOX_REWORK_THEME=1
+            shift
+            ;;
         --build-type)
             shift
             FOX_BUILD_TYPE="${1:-}"
@@ -316,6 +320,27 @@ if [[ -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
         echo "[build] .build_platform.conf updated: RECOVERY_IN_PLATFORM=1"
     else
         echo "[build] WARNING: $_plat_conf missing, callback merge will be skipped"
+    fi
+fi
+# Reworked (wide-variant) theme, test-gated: empty by default, so normal
+# builds ship the stock base theme only. Exported for BoardConfig.mk (make
+# re-exports it to Soong, which reads it via Getenv in
+# orangefox_defaults.go); .build_platform.conf (lunch-time file read by
+# the callback in recipe shells, where custom env is stripped) decides
+# whether theme_wide.py variants are generated and packed below.
+if [[ -n "${FOX_REWORK_THEME:-}" ]]; then
+    export FOX_REWORK_THEME
+    echo "[build] Reworked theme ENABLED (FOX_REWORK_THEME=1)"
+    _plat_conf="$SCRIPT_DIR/.build_platform.conf"
+    if [[ -f "$_plat_conf" ]]; then
+        if grep -q '^REWORK_THEME=' "$_plat_conf" 2>/dev/null; then
+            sed -i 's/^REWORK_THEME=.*/REWORK_THEME=1/' "$_plat_conf"
+        else
+            echo "REWORK_THEME=1" >> "$_plat_conf"
+        fi
+        echo "[build] .build_platform.conf updated: REWORK_THEME=1"
+    else
+        echo "[build] WARNING: $_plat_conf missing, theme variants will be skipped"
     fi
 fi
 if [[ "$CPIO_ONLY" == true ]]; then

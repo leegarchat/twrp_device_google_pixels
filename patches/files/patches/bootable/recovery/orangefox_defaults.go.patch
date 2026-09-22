@@ -1,0 +1,17 @@
+--- a/bootable/recovery/orangefox_defaults.go
++++ b/bootable/recovery/orangefox_defaults.go
+@@ -59,6 +59,14 @@
+ 		foxflags = append(foxflags, "-DFOX_USE_MEIZU_TOUCH_MAPPING=1")
+ 	}
+ 
++	// Fox pixels: reworked (wide-variant) theme, test-gated. build.sh
++	// --new-theme -> FOX_REWORK_THEME=1 (re-exported via BoardConfig.mk);
++	// empty (default) = stock base theme, no cflag, Fox_ThemeFile()
++	// falls back to TWRES in gui.cpp.
++	if ctx.AConfig().Getenv("FOX_REWORK_THEME") == "1" {
++		foxflags = append(foxflags, "-DFOX_REWORK_THEME=1")
++	}
++
+ 	return foxflags
+ }
+ 

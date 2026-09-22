@@ -79,7 +79,14 @@ using namespace rapidxml;
 std::string Fox_ThemeFile(const char* file)
 {
 	static bool logged = false;
+#ifdef FOX_REWORK_THEME
 	std::string variant = android::base::GetProperty("DOF_THEME", "");
+#else
+	// Test-gated reworked theme (build.sh --new-theme): without the flag
+	// the variant lookup is compiled out and every caller gets the stock
+	// base theme — the pre-rework behavior.
+	std::string variant;
+#endif
 	if (!variant.empty())
 	{
 		std::string cand = "/" + variant + "/" + file;

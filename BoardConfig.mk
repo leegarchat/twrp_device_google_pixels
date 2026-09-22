@@ -247,6 +247,12 @@ BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT := true
 # via PRIVATE_ADDITIONAL_DIR), no standalone recovery fragment, no dtb/dlkm
 # fragments (stock kernel modules ride inside our platform, see
 # families/gs101/family.mk). All other families keep the split layout.
+# Reworked (wide-variant) theme, test-gated: build.sh --new-theme exports
+# FOX_REWORK_THEME=1. Re-exported so Soong sees it even when make
+# sanitizes the environment; orangefox_defaults.go turns it into
+# -DFOX_REWORK_THEME for libguitwrp (gui.cpp variant selector).
+# Empty (default) = stock base theme only.
+export FOX_REWORK_THEME := $(FOX_REWORK_THEME)
 # Recovery-in-platform test layout (var2-AIO, build.sh --platform-recovery):
 # same merge for any family (e.g. AIO test payloads with first_stage inside).
 ifeq ($(FOX_RECOVERY_IN_PLATFORM),1)

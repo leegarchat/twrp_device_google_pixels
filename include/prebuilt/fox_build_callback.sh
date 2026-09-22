@@ -75,6 +75,17 @@ case "$RECOVERY_IN_PLATFORM" in
     *) echo "    [CONFIG] WARNING: bad RECOVERY_IN_PLATFORM='$RECOVERY_IN_PLATFORM', need empty|1; using empty"; RECOVERY_IN_PLATFORM="" ;;
 esac
 [ -n "$RECOVERY_IN_PLATFORM" ] && echo "    [CONFIG] RECOVERY_IN_PLATFORM=$RECOVERY_IN_PLATFORM"
+# Reworked (wide-variant) theme, test-gated (build.sh --new-theme sets
+# REWORK_THEME=1 in .build_platform.conf at build time).
+# Empty (default) = stock base theme only: no variant generation, no
+# twres_* dirs packed, Fox_ThemeFile() falls back to TWRES (the
+# -DFOX_REWORK_THEME cflag is likewise absent, see orangefox_defaults.go).
+: "${REWORK_THEME:=}"
+case "$REWORK_THEME" in
+    ""|1) ;;
+    *) echo "    [CONFIG] WARNING: bad REWORK_THEME='$REWORK_THEME', need empty|1; using empty"; REWORK_THEME="" ;;
+esac
+[ -n "$REWORK_THEME" ] && echo "    [CONFIG] REWORK_THEME=$REWORK_THEME"
 
 # =========================================================================
 # LGZ compression configuration
@@ -187,17 +198,25 @@ LGZ_PACK_DIRS=(
     # tools/theme_wide.py just below, before manifest/file-list
     # generation, so packaging sees final names. Slabs (1280/1344/1440),
     # tablet (1600) and fold inners (1840/2076).
-    "twres_1280"
-    "twres_1344"
-    "twres_1440"
-    "twres_1600"
-    "twres_1840"
-    "twres_2076"
+    # NOTE: literal entries here are the REWORK_THEME=1 set; with the flag
+    # off the dirs are never generated, so they are appended conditionally
+    # below instead (packer skips missing dirs, but explicit is better).
     # --- experiment examples (uncomment to test) ---
     # "system/lib64/modules"   # hierarchical otg/susfs .ko -> cluster
     # "twres/"                 # whole twres (needs *.png excludes to test)
     # "vendor/"                # whole vendor subtree
 )
+# Reworked theme test gate: pack variant dirs only when generated.
+if [ -n "$REWORK_THEME" ]; then
+    LGZ_PACK_DIRS+=(
+        "twres_1280"
+        "twres_1344"
+        "twres_1440"
+        "twres_1600"
+        "twres_1840"
+        "twres_2076"
+    )
+fi
 
 # =========================================================================
 # Pixel device config merge (families/*/family.json + devices/*/pixel.json
@@ -1004,6 +1023,8 @@ case "$CALL_TYPE" in
         echo ""
 
         # --- Wide-panel theme variants (tools/theme_wide.py) ---
+        # Test-gated by REWORK_THEME (build.sh --new-theme): with the flag
+        # off this block is skipped and AIO ships the stock base theme.
         # Must run BEFORE lgz_compress_ramdisk + manifest/file-list
         # generation below: variant XML (twres_1280/1344/1440, generated
         # from the final $TARGET_DIR/twres incl. page patches) must be
@@ -1011,7 +1032,9 @@ case "$CALL_TYPE" in
         # Images/fonts/languages stay shared under /twres (absolute
         # include paths), so each variant is ~0.5MB of XML only.
         echo "    === Wide Theme Variants ==="
-        if [ -f "$TARGET_DIR/twres/ui.xml" ]; then
+        if [ -z "$REWORK_THEME" ]; then
+            echo "    [THEME] stock base theme only (REWORK_THEME empty, --new-theme to enable variants)"
+        elif [ -f "$TARGET_DIR/twres/ui.xml" ]; then
             python3 "$TREE_ROOT/tools/theme_wide.py" \
                 "$TARGET_DIR/twres" "$TARGET_DIR" \
                 || echo "    [THEME] WARNING: variant generation failed, AIO ships base theme only"
