@@ -36,6 +36,7 @@
   "tcpc_driver": "",
   "thermal_soc_type": "soc_therm",
   "props": {
+    "ro.recovery.vibro_scale": "100",
     "ro.quick_start.device_id": "frankel",
     "ro.lineage.device": "frankel",
     "ro.crdroid.device": "frankel",

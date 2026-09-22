@@ -37,6 +37,7 @@
   "tcpc_driver": "",
   "thermal_soc_type": "soc_therm",
   "props": {
+    "ro.recovery.vibro_scale": "100",
     "ro.quick_start.device_id": "blazer",
     "ro.lineage.device": "blazer",
     "ro.crdroid.device": "blazer",

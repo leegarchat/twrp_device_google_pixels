@@ -24,6 +24,7 @@
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",
   "props": {
+    "ro.recovery.vibro_scale": "100",
     "ro.quick_start.device_id": "bluejay",
     "ro.lineage.device": "bluejay",
     "ro.crdroid.device": "bluejay",

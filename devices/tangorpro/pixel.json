@@ -42,6 +42,7 @@
   "tcpc_driver": "max77759tcpc",
   "thermal_soc_type": "soc_therm",
   "props": {
+    "ro.recovery.vibro_scale": "100",
     "ro.quick_start.device_id": "tangorpro",
     "ro.lineage.device": "tangorpro",
     "ro.crdroid.device": "tangorpro",

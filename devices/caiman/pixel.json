@@ -27,6 +27,7 @@
   "part_vendor": "vendor",
   "cs40l26_pm": "/sys/devices/platform/10c80000.hsi2c/i2c-0/0-0043/power/control",
   "props": {
+    "ro.recovery.vibro_scale": "100",
     "ro.quick_start.device_id": "caiman",
     "ro.lineage.device": "caiman",
     "ro.crdroid.device": "caiman",

@@ -26,6 +26,7 @@
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",
   "props": {
+    "ro.recovery.vibro_scale": "100",
     "ro.quick_start.device_id": "raven",
     "ro.lineage.device": "raven",
     "ro.crdroid.device": "raven",
