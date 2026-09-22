@@ -1,1 +1,7 @@
-{"group": {"testers": -1000000000000}, "token": ""}
+{
+  "token": "1234567890:AA-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "group": {
+    "testers": -1001111111111,
+    "g6": -1002222222222
+  }
+}

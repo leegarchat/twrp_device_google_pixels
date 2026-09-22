@@ -8,11 +8,21 @@ Reads the bot token + chat ids from a gitignored JSON config
 
 Usage:
     tg_push.py <zip-path> <group-name,...> [--config PATH]
+    tg_push.py --init [--config PATH]
 
 <group-name,...> is one group or several comma-separated groups
 (e.g. "testers" or "testers,g6"); the zip is uploaded once per group
 (Bot API has no multi-chat send), each message is pinned with
 notification for all.
+
+--init creates the gitignored config from .tg_push.json.example
+(next to this script's tree root) if it does not exist yet.
+
+Config schema (.tg_push.json):
+    {"token": "<bot token from @BotFather>",
+     "group": {"<name>": <chat id>, ...}}   # "groups" also accepted
+Chat id: group/channel id (e.g. -1001234567890). The bot must be a
+member of the chat; pinning needs admin pin rights.
 
 Sends via send_document with a caption (filename, size, md5), then pins
 the message with notification for all (bot needs admin pin rights —
@@ -48,6 +58,28 @@ def load_config(path):
     return {"token": token, "groups": groups}, None
 
 
+def default_config_path():
+    return os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".tg_push.json")
+    )
+
+
+def cmd_init(cfg_path):
+    import shutil
+
+    if os.path.isfile(cfg_path):
+        print(f"config already exists: {cfg_path}")
+        return 0
+    example = os.path.join(os.path.dirname(default_config_path()), ".tg_push.json.example")
+    if not os.path.isfile(example):
+        print(f"ERROR: example not found: {example}", file=sys.stderr)
+        return 2
+    shutil.copy(example, cfg_path)
+    os.chmod(cfg_path, 0o600)
+    print(f"created {cfg_path} (mode 600) — fill in token + chat ids")
+    return 0
+
+
 def md5_of(path):
     h = hashlib.md5()
     with open(path, "rb") as f:
@@ -80,6 +112,7 @@ async def push(token, chat_id, path, caption):
 def main(argv):
     cfg_path = None
     positional = []
+    do_init = False
     skip_next = False
     for i, a in enumerate(argv):
         if skip_next:
@@ -88,13 +121,21 @@ def main(argv):
         if a == "--config" and i + 1 < len(argv):
             cfg_path = argv[i + 1]
             skip_next = True
+        elif a == "--init":
+            do_init = True
         elif a.startswith("--"):
             print(f"unknown option: {a}", file=sys.stderr)
             return 2
         else:
             positional.append(a)
+    if do_init:
+        if positional:
+            print("usage: tg_push.py --init [--config PATH]", file=sys.stderr)
+            return 2
+        return cmd_init(cfg_path or default_config_path())
     if len(positional) != 2:
         print("usage: tg_push.py <zip-path> <group-name,...> [--config PATH]", file=sys.stderr)
+        print("       tg_push.py --init [--config PATH]", file=sys.stderr)
         return 2
     zip_path, groups_arg = positional
     groups = [g.strip() for g in groups_arg.split(",") if g.strip()]
