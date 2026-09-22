@@ -2098,6 +2098,15 @@ int GUIAction::decrypt(std::string arg __unused)
 		else {
 			DataManager::SetValue(TW_IS_ENCRYPTED, 0);
 
+			// Fox (encrypted Tensor Pixels): persisted settings + theme
+			// were unreadable at boot (/persist unmounted, custom theme
+			// parts under encrypted /sdcard/Fox/.theme), so the UI sits
+			// on defaults (white base) until a manual toggle. Now that
+			// user storage is unlocked, re-read the saved values and
+			// re-apply the saved theme at once.
+			DataManager::LoadValues(PERSIST_SETTINGS_FILE);
+			PageManager::RequestReload();
+
 	  int has_datamedia;
 
 	  // Check for a custom theme and load it if exists
