@@ -56,11 +56,12 @@
 #                     other families → recovery fragment
 #                     (`fastboot flash vendor_boot:recovery`). The .img/.zip
 #                     are NOT copied to builds/ in this mode.
-#   --push GROUP      Push the finished AIO installer zip to a Telegram chat
+#   --push GROUP      Push the finished AIO installer zip to Telegram chat(s)
 #                     via tools/tg_push.py (bot token + chat ids live in the
 #                     gitignored .tg_push.json: {"token": "...",
-#                     "group": {"name": id}}). Non-fatal: a push failure only
-#                     warns, the build itself is already delivered.
+#                     "group": {"name": id}}). Several groups allowed, comma
+#                     separated: --push testers,g6. Non-fatal: a push failure
+#                     only warns, the build itself is already delivered.
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is

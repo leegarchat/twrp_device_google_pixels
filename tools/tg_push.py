@@ -7,7 +7,12 @@ Reads the bot token + chat ids from a gitignored JSON config
     {"token": "123456:ABC...", "group": {"testers": -1001234567890}}
 
 Usage:
-    tg_push.py <zip-path> <group-name> [--config PATH]
+    tg_push.py <zip-path> <group-name,...> [--config PATH]
+
+<group-name,...> is one group or several comma-separated groups
+(e.g. "testers" or "testers,g6"); the zip is uploaded once per group
+(Bot API has no multi-chat send), each message is pinned with
+notification for all.
 
 Sends via send_document with a caption (filename, size, md5), then pins
 the message with notification for all (bot needs admin pin rights —
@@ -89,9 +94,13 @@ def main(argv):
         else:
             positional.append(a)
     if len(positional) != 2:
-        print("usage: tg_push.py <zip-path> <group-name> [--config PATH]", file=sys.stderr)
+        print("usage: tg_push.py <zip-path> <group-name,...> [--config PATH]", file=sys.stderr)
         return 2
-    zip_path, group = positional
+    zip_path, groups_arg = positional
+    groups = [g.strip() for g in groups_arg.split(",") if g.strip()]
+    if not groups:
+        print("ERROR: no group names given", file=sys.stderr)
+        return 2
     if cfg_path is None:
         cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".tg_push.json")
         cfg_path = os.path.normpath(cfg_path)
@@ -110,9 +119,10 @@ def main(argv):
     if err is not None:
         print(f"ERROR: {err}", file=sys.stderr)
         return 2
-    if group not in cfg["groups"]:
+    unknown = [g for g in groups if g not in cfg["groups"]]
+    if unknown:
         print(
-            f"ERROR: unknown group '{group}' in {cfg_path} "
+            f"ERROR: unknown group(s) {', '.join(unknown)} in {cfg_path} "
             f"(have: {', '.join(sorted(cfg['groups'])) or '<none>'})",
             file=sys.stderr,
         )
@@ -124,13 +134,19 @@ def main(argv):
         return 2
     digest = md5_of(zip_path)
     caption = f"{os.path.basename(zip_path)}\n{size / 1048576:.1f} MB | md5: {digest}"
-    print(f"[tg-push] sending {os.path.basename(zip_path)} ({size / 1048576:.1f} MB) to '{group}' ...")
-    try:
-        message_id, pinned = asyncio.run(push(cfg["token"], cfg["groups"][group], zip_path, caption))
-    except Exception as e:  # noqa: BLE001 — report any transport/API error
-        print(f"ERROR: telegram refused: {e}", file=sys.stderr)
+    failed = 0
+    for group in groups:
+        print(f"[tg-push] sending {os.path.basename(zip_path)} ({size / 1048576:.1f} MB) to '{group}' ...")
+        try:
+            message_id, pinned = asyncio.run(push(cfg["token"], cfg["groups"][group], zip_path, caption))
+        except Exception as e:  # noqa: BLE001 — report any transport/API error
+            print(f"ERROR: telegram refused for '{group}': {e}", file=sys.stderr)
+            failed += 1
+            continue
+        print(f"[tg-push] OK '{group}': message_id={message_id}" + (", pinned with notification for all" if pinned else ""))
+    if failed:
+        print(f"[tg-push] {failed}/{len(groups)} pushes failed", file=sys.stderr)
         return 1
-    print(f"[tg-push] OK, message_id={message_id}" + (", pinned with notification for all" if pinned else ""))
     return 0
 
 
