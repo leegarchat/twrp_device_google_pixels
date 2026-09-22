@@ -27,6 +27,8 @@
 #include <unistd.h>
 #include <map>
 #include <vector>
+#include <fstream>
+#include <sstream>
 #include <dirent.h>
 #include <time.h>
 #include <errno.h>
@@ -142,6 +144,7 @@ static bool FscryptMountMetadataEncryptedWithTimeout(
 	const std::string& mount_point,
 	const std::string& fs_type,
 	const std::string& extra_fstab,
+	const std::string& zoned_device,
 	int timeout_seconds) {
 	pid_t pid = fork();
 	if (pid < 0) {
@@ -156,7 +159,7 @@ static bool FscryptMountMetadataEncryptedWithTimeout(
 			false,
 			false,
 			fs_type,
-			"",
+			zoned_device,
 			extra_fstab);
 		_exit(ok ? 0 : 1);
 	}
@@ -743,6 +746,58 @@ int TWPartitionManager::Write_Fstab(void) {
 	return true;
 }
 
+// Fox (malibu zoned userdata): resolve the zoned device node FRESH from
+// /etc/recovery.fstab on every call, with a bounded wait for late UFS
+// enumeration. libfstab bakes an access() existence gate into data_rec
+// ONCE at parse time; on units where the zoned LUN enumerates late the
+// gate misses and vold permanently reads the base metadata key dir
+// instead of <dir>/default/ (field-proven: kodiak resolves, grizzly does
+// not, identical binaries). The resolved path rides the existing vold
+// zoned_device parameter (empty = stock fallback to the parsed entry,
+// i.e. today's behavior).
+static std::string FoxResolveZonedDevice(void) {
+	std::string fstab_path = "/etc/recovery.fstab";
+	std::ifstream fp(fstab_path.c_str());
+	if (!fp.is_open()) {
+		LOGINFO("FoxResolveZonedDevice: cannot open %s\n", fstab_path.c_str());
+		return "";
+	}
+	std::string line, zoned;
+	while (std::getline(fp, line)) {
+		if (line.empty() || line[0] == '#')
+			continue;
+		std::istringstream ss(line);
+		std::string blk, mnt;
+		if (!(ss >> blk >> mnt) || mnt != "/data")
+			continue;
+		std::string::size_type p = line.find("device=zoned:");
+		if (p == std::string::npos)
+			return "";
+		p += strlen("device=zoned:");
+		std::string::size_type e = line.find_first_of(" \t,", p);
+		zoned = line.substr(p, e == std::string::npos ? e : e - p);
+		break;
+	}
+	if (zoned.empty())
+		return "";
+	struct stat st;
+	if (stat(zoned.c_str(), &st) == 0) {
+		LOGINFO("FoxResolveZonedDevice: %s present\n", zoned.c_str());
+		return zoned;
+	}
+	// Declared but not enumerated yet (ufs.async_probe): bounded wait.
+	// Zero penalty when present (kodiak path); slow units get one wait.
+	for (int i = 0; i < 12; i++) {
+		sleep(1);
+		if (stat(zoned.c_str(), &st) == 0) {
+			LOGINFO("FoxResolveZonedDevice: %s appeared after %ds\n", zoned.c_str(), i + 1);
+			return zoned;
+		}
+	}
+	LOGINFO("FoxResolveZonedDevice: %s still absent after 12s, leaving empty\n", zoned.c_str());
+	return "";
+}
+
 void TWPartitionManager::Decrypt_Data() {
 	#ifdef TW_INCLUDE_CRYPTO
 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
@@ -769,17 +824,38 @@ void TWPartitionManager::Decrypt_Data() {
 				// while kodiak passes with identical binaries. Retry the
 				// helper instead of failing the whole boot decrypt on a
 				// transient miss.
+				//
+				// Fox (malibu zoned userdata): the vold zoned_device param
+				// is resolved FRESH here, per attempt, from
+				// /etc/recovery.fstab — not from the one-shot libfstab
+				// parse whose access() gate bakes UFS enumeration timing
+				// into data_rec permanently. On units where the zoned LUN
+				// (by-name/zoned_device, sde) enumerates late
+				// (ufs.async_probe), the gate misses and vold reads the
+				// base metadata key dir instead of <dir>/default/ — while
+				// the key was provisioned under default/ (kodiak works,
+				// grizzly fails, identical binaries). Bounded wait covers
+				// the late-enumeration case; truly absent node = "" =
+				// today's behavior (plus the read-path fallback below).
+				std::string fox_zoned = FoxResolveZonedDevice();
 				bool md_ok = false;
 				for (int md_try = 0; md_try < 3 && !md_ok; md_try++) {
 					if (md_try > 0) {
 						LOGINFO("Metadata decrypt: retry %d/3 after 5s settle\n", md_try + 1);
 						sleep(5);
 					}
+					// meta-fix (pixelrunatboot boot stage) umounts
+					// /metadata concurrently; a stolen mount turns this
+					// attempt into rootfs garbage (seen in the field).
+					// Re-mount is a no-op when already mounted.
+					if (!Decrypt_Data->Key_Directory.empty())
+						Mount_By_Path("/metadata", false);
 					md_ok = FscryptMountMetadataEncryptedWithTimeout(
 						Decrypt_Data->Actual_Block_Device,
 						Decrypt_Data->Mount_Point,
 						Decrypt_Data->Current_File_System,
 						TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
+						fox_zoned,
 						120);
 				}
 				if (md_ok) {

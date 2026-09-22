@@ -1,6 +1,15 @@
 --- a/bootable/recovery/partitionmanager.cpp
 +++ b/bootable/recovery/partitionmanager.cpp
-@@ -137,6 +137,49 @@
+@@ -27,6 +27,8 @@
+ #include <unistd.h>
+ #include <map>
+ #include <vector>
++#include <fstream>
++#include <sstream>
+ #include <dirent.h>
+ #include <time.h>
+ #include <errno.h>
+@@ -137,6 +139,50 @@
  
  std::string additional_fstab = "/etc/additional.fstab";
  
@@ -9,6 +18,7 @@
 +	const std::string& mount_point,
 +	const std::string& fs_type,
 +	const std::string& extra_fstab,
++	const std::string& zoned_device,
 +	int timeout_seconds) {
 +	pid_t pid = fork();
 +	if (pid < 0) {
@@ -23,7 +33,7 @@
 +			false,
 +			false,
 +			fs_type,
-+			"",
++			zoned_device,
 +			extra_fstab);
 +		_exit(ok ? 0 : 1);
 +	}
@@ -50,7 +60,7 @@
  TWPartitionManager::TWPartitionManager(void) {
  	mtp_was_enabled = false;
  	mtp_write_fd = -1;
-@@ -243,8 +286,32 @@
+@@ -243,8 +289,32 @@
  	#endif
  	return ver;
  }
@@ -84,7 +94,66 @@
  	// Fetch the Keymaster Service version to be started
  	std::string version;
  #ifndef TW_FORCE_KEYMASTER_VER
-@@ -687,9 +754,35 @@
+@@ -676,6 +746,58 @@
+ 	return true;
+ }
+ 
++// Fox (malibu zoned userdata): resolve the zoned device node FRESH from
++// /etc/recovery.fstab on every call, with a bounded wait for late UFS
++// enumeration. libfstab bakes an access() existence gate into data_rec
++// ONCE at parse time; on units where the zoned LUN enumerates late the
++// gate misses and vold permanently reads the base metadata key dir
++// instead of <dir>/default/ (field-proven: kodiak resolves, grizzly does
++// not, identical binaries). The resolved path rides the existing vold
++// zoned_device parameter (empty = stock fallback to the parsed entry,
++// i.e. today's behavior).
++static std::string FoxResolveZonedDevice(void) {
++	std::string fstab_path = "/etc/recovery.fstab";
++	std::ifstream fp(fstab_path.c_str());
++	if (!fp.is_open()) {
++		LOGINFO("FoxResolveZonedDevice: cannot open %s\n", fstab_path.c_str());
++		return "";
++	}
++	std::string line, zoned;
++	while (std::getline(fp, line)) {
++		if (line.empty() || line[0] == '#')
++			continue;
++		std::istringstream ss(line);
++		std::string blk, mnt;
++		if (!(ss >> blk >> mnt) || mnt != "/data")
++			continue;
++		std::string::size_type p = line.find("device=zoned:");
++		if (p == std::string::npos)
++			return "";
++		p += strlen("device=zoned:");
++		std::string::size_type e = line.find_first_of(" \t,", p);
++		zoned = line.substr(p, e == std::string::npos ? e : e - p);
++		break;
++	}
++	if (zoned.empty())
++		return "";
++	struct stat st;
++	if (stat(zoned.c_str(), &st) == 0) {
++		LOGINFO("FoxResolveZonedDevice: %s present\n", zoned.c_str());
++		return zoned;
++	}
++	// Declared but not enumerated yet (ufs.async_probe): bounded wait.
++	// Zero penalty when present (kodiak path); slow units get one wait.
++	for (int i = 0; i < 12; i++) {
++		sleep(1);
++		if (stat(zoned.c_str(), &st) == 0) {
++			LOGINFO("FoxResolveZonedDevice: %s appeared after %ds\n", zoned.c_str(), i + 1);
++			return zoned;
++		}
++	}
++	LOGINFO("FoxResolveZonedDevice: %s still absent after 12s, leaving empty\n", zoned.c_str());
++	return "";
++}
++
+ void TWPartitionManager::Decrypt_Data() {
+ 	#ifdef TW_INCLUDE_CRYPTO
+ 	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
+@@ -687,9 +809,56 @@
  				Mount_By_Path(Decrypt_Data->Key_Directory, false);
  		if (!Decrypt_Data->Key_Directory.empty()) {
  			Set_Crypto_Type("file");
@@ -104,24 +173,45 @@
 +				// while kodiak passes with identical binaries. Retry the
 +				// helper instead of failing the whole boot decrypt on a
 +				// transient miss.
++				//
++				// Fox (malibu zoned userdata): the vold zoned_device param
++				// is resolved FRESH here, per attempt, from
++				// /etc/recovery.fstab — not from the one-shot libfstab
++				// parse whose access() gate bakes UFS enumeration timing
++				// into data_rec permanently. On units where the zoned LUN
++				// (by-name/zoned_device, sde) enumerates late
++				// (ufs.async_probe), the gate misses and vold reads the
++				// base metadata key dir instead of <dir>/default/ — while
++				// the key was provisioned under default/ (kodiak works,
++				// grizzly fails, identical binaries). Bounded wait covers
++				// the late-enumeration case; truly absent node = "" =
++				// today's behavior (plus the read-path fallback below).
++				std::string fox_zoned = FoxResolveZonedDevice();
 +				bool md_ok = false;
 +				for (int md_try = 0; md_try < 3 && !md_ok; md_try++) {
 +					if (md_try > 0) {
 +						LOGINFO("Metadata decrypt: retry %d/3 after 5s settle\n", md_try + 1);
 +						sleep(5);
 +					}
++					// meta-fix (pixelrunatboot boot stage) umounts
++					// /metadata concurrently; a stolen mount turns this
++					// attempt into rootfs garbage (seen in the field).
++					// Re-mount is a no-op when already mounted.
++					if (!Decrypt_Data->Key_Directory.empty())
++						Mount_By_Path("/metadata", false);
 +					md_ok = FscryptMountMetadataEncryptedWithTimeout(
 +						Decrypt_Data->Actual_Block_Device,
 +						Decrypt_Data->Mount_Point,
 +						Decrypt_Data->Current_File_System,
 +						TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
++						fox_zoned,
 +						120);
 +				}
 +				if (md_ok) {
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +792,45 @@
+@@ -699,9 +868,45 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -167,7 +257,7 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -709,6 +838,7 @@
+@@ -709,6 +914,7 @@
  			} else {
  				LOGINFO("Unable to decrypt metadata encryption\n");
  			}
@@ -175,7 +265,7 @@
  #else
  			LOGERR("Metadata FBE decrypt support not present in this build\n");
  #endif
-@@ -2194,7 +2324,10 @@
+@@ -2194,7 +2400,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -187,7 +277,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2467,20 @@
+@@ -2334,6 +2543,20 @@
  #endif
  }
  
@@ -208,7 +298,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2543,17 @@
+@@ -2396,6 +2619,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -226,7 +316,7 @@
  
  			return 0;
  		} else {
-@@ -4840,6 +4998,29 @@
+@@ -4840,6 +5074,29 @@
  	}
  }
  
@@ -256,7 +346,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5038,13 @@
+@@ -4857,13 +5114,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -272,7 +362,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4884,7 +5065,7 @@
+@@ -4884,7 +5141,7 @@
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){
  					LOGINFO("removing dynamic partition: %s\n", partition.c_str());

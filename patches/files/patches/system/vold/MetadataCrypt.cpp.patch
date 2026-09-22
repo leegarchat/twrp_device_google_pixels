@@ -1,6 +1,14 @@
 --- a/system/vold/MetadataCrypt.cpp
 +++ b/system/vold/MetadataCrypt.cpp
-@@ -63,7 +63,7 @@
+@@ -19,6 +19,7 @@
+ 
+ #include <string>
+ 
++#include <dirent.h>
+ #include <fcntl.h>
+ #include <sys/param.h>
+ #include <sys/stat.h>
+@@ -63,7 +64,7 @@
  };
  
  static const std::string kDmNameUserdata = "userdata";
@@ -9,7 +17,52 @@
  
  // The first entry in this table is the default crypto type.
  constexpr CryptoType supported_crypto_types[] = {aes_256_xts, adiantum};
-@@ -311,8 +311,13 @@
+@@ -125,6 +126,44 @@
+     std::string sKey;
+     auto dir = metadata_key_dir + "/key";
+     LOG(INFO) << "metadata_key_dir/key: " << dir;
++    // Fox (malibu zoned userdata): the key location follows PROVISIONING,
++    // not current LUN visibility. When the zoned LUN enumerates late (or
++    // the libfstab access() gate missed it), the caller reads the base
++    // dir while the key was provisioned under <dir>/default/ (and vice
++    // versa on legacy-provisioned units). Probe the alternate location
++    // when the primary is absent — read-only, first-hit-wins. Field case:
++    // grizzly reads base/key (absent) while kodiak reads default/key
++    // (present), identical binaries.
++    if (!pathExists(dir)) {
++        std::string alt = dir;
++        const std::string dflt = "/default/key";
++        if (dir.size() > dflt.size() && dir.compare(dir.size() - dflt.size(), dflt.size(), dflt) == 0) {
++            alt = dir.substr(0, dir.size() - dflt.size()) + "/key";
++        } else {
++            alt = metadata_key_dir + "/default/key";
++        }
++        if (pathExists(alt)) {
++            LOG(INFO) << "Fox: primary key absent, using alternate: " << alt;
++            dir = alt;
++        } else {
++            // Diagnostics for the next flog: list what IS in the key dir
++            // so provisioning state is readable instead of guessed.
++            LOG(ERROR) << "Fox: key absent in both " << dir << " and " << alt << "; contents of "
++                       << metadata_key_dir << ":";
++            auto d = opendir(metadata_key_dir.c_str());
++            if (d) {
++                struct dirent* e;
++                while ((e = readdir(d)) != nullptr) {
++                    std::string n = e->d_name;
++                    if (n != "." && n != "..")
++                        LOG(ERROR) << "Fox: keydir entry: " << n;
++                }
++                closedir(d);
++            } else {
++                LOG(ERROR) << "Fox: cannot opendir " << metadata_key_dir;
++            }
++        }
++    }
+     if (!MkdirsSync(dir, 0700)) return false;
+     auto in_dsu = android::base::GetBoolProperty("ro.gsid.image_running", false);
+     // !pathExists(dir) does not imply there's a factory reset when in DSU mode.
+@@ -311,8 +350,13 @@
          return false;
      }
  
@@ -24,7 +77,7 @@
          default_metadata_key_dir = default_metadata_key_dir + "/default";
      }
      auto gen = needs_encrypt ? makeGen(options) : neverGen();
-@@ -332,17 +337,37 @@
+@@ -332,17 +376,37 @@
  
      // create dm-default-key for zoned device
      std::string crypto_zoned_blkdev;
