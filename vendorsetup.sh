@@ -168,7 +168,11 @@ USBCTRL=${_FAM_USBCTRL}
 KEYMINT=${_FAM_KEYMINT}
 FAMILY_DEVICES=${_ALL_DEVS:-}
 LGZ_LEVEL=${_LGZ_LEVEL}
+# First-stage kill-switch (build.sh -N refreshes this key at build time;
+# lunch-time default is empty = first-stage included).
+_NO_FIRST_STAGE="${FOX_NO_FIRST_STAGE:-}"
 RECOVERY_IN_PLATFORM=${_RECOVERY_IN_PLATFORM}
+NO_FIRST_STAGE=${_NO_FIRST_STAGE}
 REWORK_THEME=${_REWORK_THEME}
 _PLATFORM_EOF
 echo "  Wrote $_conf_file"

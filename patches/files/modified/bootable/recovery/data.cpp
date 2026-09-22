@@ -27,6 +27,7 @@
 #include <cctype>
 #include <cutils/properties.h>
 #include <unistd.h>
+#include <sys/mount.h>
 #include <private/android_filesystem_config.h>
 #include "variables.h"
 #include "data.hpp"
@@ -327,6 +328,15 @@ int DataManager::LoadPersistValues(void)
   // below always misses and settings silently reset every boot (save
   // mounts it, load never did). Mount first; no-op when absent.
   PartitionManager.Mount_By_Path("/persist", false);
+  if (!TWFunc::Path_Exists(PERSIST_SETTINGS_FILE)) {
+    // Flags-pass timing: /persist comes from twrp.flags (recovery.fstab
+    // has no persist entry), so during flags processing the partition
+    // may not be in the manager list yet and Mount_By_Path misses.
+    // Bypass the manager with a direct by-name mount (ueventd symlink,
+    // family-agnostic); silent no-op when already mounted or absent.
+    mount("/dev/block/by-name/persist", "/persist", "ext4",
+          MS_NOATIME | MS_NOSUID | MS_NODEV, NULL);
+  }
 
   // Only run this function once, and make sure normal settings file has not yet been read
   if (loaded || !mBackingFile.empty()

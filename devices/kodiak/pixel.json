@@ -44,7 +44,7 @@
   "tcpc_driver": "",
   "thermal_soc_type": "soc_therm",
   "props": {
-    "ro.recovery.vibro_scale": "50",
+    "ro.recovery.vibro_scale": "30",
     "ro.quick_start.device_id": "kodiak",
     "ro.lineage.device": "kodiak",
     "ro.crdroid.device": "kodiak",

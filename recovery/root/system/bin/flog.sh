@@ -5,7 +5,9 @@
 #   flog.sh
 #
 # Collects recovery.log, weaver.log, dmesg, logcat, props, slot info,
-# reflash/install logs and backlight state into ONE archive:
+# reflash/install logs, backlight state and a hardware inventory
+# (by-name map, UDC/role, i2c/gpio, DT flash node, power, drm, mounts)
+# into ONE archive:
 #   /data/media/0/fox_logs/fox_logs_<timestamp>.tar.gz
 # (userdata decrypted + writable). When userdata is unavailable, falls
 # back to /tmp/fox_logs/fox_logs_<timestamp>.tar.gz and prints an
@@ -104,6 +106,67 @@ echo "flog: + props.txt"
     done
 } > "$DEST/backlight.txt" 2>/dev/null
 echo "flog: + backlight.txt"
+
+# --- hardware inventory (which silicon/partition layout this unit has) ---
+# by-name: GPT partition -> sdX mapping (UFS LUN order differs per unit:
+# kodiak userdata=sda42, grizzly=sdb42). Missing userdata_exp.* here =
+# never-expanded userdata (decrypt/mount suspect #1).
+# sys dumps: UDC (gadget bind target), usb_role (role voter), i2c drivers
+# (TCPC switch), gpio chips (torch HWEN), power_supply (VBUS/charger),
+# devicetree flash@ (torch LWIS), drm (panel), block queue (UFS).
+{
+    echo "## /dev/block/by-name"
+    ls -la /dev/block/by-name/ 2>/dev/null
+    echo ""
+    echo "## sdX partition tables"
+    for _d in /sys/block/sd*/; do
+        _b=$(basename "$_d")
+        printf '%s: %s\n' "$_b" "$(cat "$_d/device/model" 2>/dev/null) $(cat "$_d/size" 2>/dev/null) sectors"
+    done
+    echo ""
+    echo "## /sys/class/udc"
+    ls /sys/class/udc/ 2>/dev/null
+    echo ""
+    echo "## /sys/class/usb_role (role voter)"
+    for _r in /sys/class/usb_role/*/role; do
+        [ -f "$_r" ] && printf '%s=%s\n' "$_r" "$(cat "$_r" 2>/dev/null)"
+    done
+    echo ""
+    echo "## /sys/bus/i2c/drivers (TCPC candidates)"
+    ls /sys/bus/i2c/drivers/ 2>/dev/null
+    echo ""
+    echo "## /sys/bus/i2c/devices (clients: *-0063 = LM3644, i2c-N of_node)"
+    ls /sys/bus/i2c/devices/ 2>/dev/null
+    echo ""
+    echo "## /sys/bus/gpio/devices"
+    ls /sys/bus/gpio/devices/ 2>/dev/null
+    echo ""
+    echo "## devicetree flash@ (torch LWIS node)"
+    for _f in $(find /sys/firmware/devicetree/base -name "flash@*" -type d 2>/dev/null); do
+        echo "== $_f"
+        printf '  compatible=%s\n' "$(tr '\0' ' ' < "$_f/compatible" 2>/dev/null)"
+        for _p in i2c-addr i2c-bus enable-gpios; do
+            [ -f "$_f/$_p" ] && printf '  %s=%s\n' "$_p" "$(od -An -tx1 "$_f/$_p" 2>/dev/null | tr -d ' \n')"
+        done
+    done
+    echo ""
+    echo "## power_supply (VBUS/charger/otg)"
+    for _p in /sys/class/power_supply/*/; do
+        _n=$(basename "$_p")
+        printf '%s: online=%s present=%s type=%s\n' "$_n" \
+            "$(cat "$_p/online" 2>/dev/null)" "$(cat "$_p/present" 2>/dev/null)" "$(cat "$_p/type" 2>/dev/null)"
+    done
+    echo ""
+    echo "## /sys/class/leds (vibrator/haptics)"
+    ls /sys/class/leds/ 2>/dev/null
+    echo ""
+    echo "## drm cards"
+    ls /sys/class/drm/ 2>/dev/null | head -20
+    echo ""
+    echo "## mounts"
+    mount 2>/dev/null | grep -E "^/dev" || cat /proc/mounts 2>/dev/null | grep -E "^/dev"
+} > "$DEST/hardware.txt" 2>/dev/null
+echo "flog: + hardware.txt"
 
 # --- pstore (survives reboot; empty dir listing is also an answer) ---
 if [ -d /sys/fs/pstore ] && ls -la /sys/fs/pstore/ > "$DEST/pstore_ls.txt" 2>/dev/null; then

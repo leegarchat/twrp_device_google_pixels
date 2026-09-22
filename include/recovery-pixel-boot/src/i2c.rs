@@ -53,16 +53,29 @@ pub fn find_tcpc_dev(sysfs_dir: &Path) -> Option<(u32, u16)> {
 
 pub fn patch_max77759_i2c_with_driver(driver: &str) -> Result<(), String> {
     // Fox (laguna): the TCPC driver dirname differs per SoC generation
-    // (exynos "max77759tcpc" vs laguna variants). Try the configured name
-    // first, then known alternates — the first hit wins.
-    let mut names: Vec<&str> = vec![driver];
+    // and may not match any known spelling (laguna: no max77759* dir at
+    // all). Strategy: configured name first, known alternates second,
+    // then auto-discover any i2c driver dir whose name hints at a
+    // type-C port controller. First hit wins.
+    let mut names: Vec<String> = vec![driver.to_string()];
     for alt in ["max77759tcpc", "max77759-tcpc", "max77759tcpc-spmi"] {
-        if !names.contains(&alt) {
-            names.push(alt);
+        if !names.iter().any(|n| n == alt) {
+            names.push(alt.to_string());
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir("/sys/bus/i2c/drivers") {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let low = name.to_lowercase();
+            if (low.contains("tcpc") || low.contains("77759") || low.contains("typec"))
+                && !names.iter().any(|n| n == &name)
+            {
+                names.push(name);
+            }
         }
     }
     let mut last_err = String::new();
-    for name in names {
+    for name in &names {
         let tcpc_dir = format!("/sys/bus/i2c/drivers/{name}");
         let tcpc_sysfs = Path::new(&tcpc_dir);
         match find_tcpc_dev(tcpc_sysfs) {
@@ -70,7 +83,7 @@ pub fn patch_max77759_i2c_with_driver(driver: &str) -> Result<(), String> {
             None => last_err = format!("{name} TCPC not found in sysfs"),
         }
     }
-    Err(last_err)
+    Err(format!("no TCPC driver matched (tried: {}); {last_err}", names.join(",")))
 }
 
 /// Former body of patch_max77759_i2c_with_driver: drive the switch at a

@@ -75,6 +75,14 @@ case "$RECOVERY_IN_PLATFORM" in
     *) echo "    [CONFIG] WARNING: bad RECOVERY_IN_PLATFORM='$RECOVERY_IN_PLATFORM', need empty|1; using empty"; RECOVERY_IN_PLATFORM="" ;;
 esac
 [ -n "$RECOVERY_IN_PLATFORM" ] && echo "    [CONFIG] RECOVERY_IN_PLATFORM=$RECOVERY_IN_PLATFORM"
+# First-stage kill-switch (build.sh -N persists NO_FIRST_STAGE=1 in
+# .build_platform.conf at build time). Empty (default) = first-stage kept.
+: "${NO_FIRST_STAGE:=}"
+case "$NO_FIRST_STAGE" in
+    ""|1) ;;
+    *) echo "    [CONFIG] WARNING: bad NO_FIRST_STAGE='$NO_FIRST_STAGE', need empty|1; using empty"; NO_FIRST_STAGE="" ;;
+esac
+[ -n "$NO_FIRST_STAGE" ] && echo "    [CONFIG] NO_FIRST_STAGE=$NO_FIRST_STAGE"
 # Reworked (wide-variant) theme, test-gated (build.sh --new-theme sets
 # REWORK_THEME=1 in .build_platform.conf at build time).
 # Empty (default) = stock base theme only: no variant generation, no
@@ -767,6 +775,14 @@ case "$CALL_TYPE" in
                 echo "    [PLATFORM] WARNING: RECOVERY_IN_PLATFORM=1 but $_vr_dir/first_stage_ramdisk missing, payload stays split"
             fi
             unset _vr_dir _merged
+        fi
+        # --no-first-stage wins over the merge above: the installer
+        # preserves stock first_stage, so the merged copy is dead weight
+        # (~9MB). Strip it; the file lists below are generated after, so
+        # they never reference the removed dir.
+        if [ -n "$NO_FIRST_STAGE" ] && [ -d "$TARGET_DIR/first_stage_ramdisk" ]; then
+            rm -rf "$TARGET_DIR/first_stage_ramdisk"
+            echo "    [PLATFORM]   - first_stage_ramdisk stripped (NO_FIRST_STAGE=1)"
         fi
         fam_flags="$TREE_ROOT/families/$platform/twrp.flags"
         default_flags="$TARGET_DIR/system/etc/twrp.flags"

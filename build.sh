@@ -314,9 +314,23 @@ export LGZ_LEVEL
 export FOX_BUILD_TYPE
 # First-stage kill-switch for device.mk (make imports env): set only when
 # -N/--no-first-stage was passed, so normal builds see an empty var.
+# Also persisted to .build_platform.conf: the callback must strip the
+# first_stage_ramdisk copy out of the recovery root even after the
+# RECOVERY_IN_PLATFORM merge below (that merge would otherwise resurrect
+# ~9MB of stock first_stage the installer preserves anyway).
 if [[ -n "$FOX_NO_FIRST_STAGE" ]]; then
     export FOX_NO_FIRST_STAGE
     echo "[build] First-stage components DISABLED (FOX_NO_FIRST_STAGE=1)"
+    _plat_conf="$SCRIPT_DIR/.build_platform.conf"
+    if [[ -f "$_plat_conf" ]]; then
+        if grep -q '^NO_FIRST_STAGE=' "$_plat_conf" 2>/dev/null; then
+            sed -i 's/^NO_FIRST_STAGE=.*/NO_FIRST_STAGE=1/' "$_plat_conf"
+        else
+            echo "NO_FIRST_STAGE=1" >> "$_plat_conf"
+        fi
+        echo "[build] .build_platform.conf updated: NO_FIRST_STAGE=1"
+    fi
+    unset _plat_conf
 fi
 # Recovery-in-platform test layout (var2-AIO): empty by default, so normal
 # builds see an empty var. Exported for BoardConfig.mk (make imports env);
