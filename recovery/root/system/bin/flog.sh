@@ -138,6 +138,12 @@ echo "flog: + backlight.txt"
     echo "## /sys/bus/i2c/devices (clients: *-0063 = LM3644, i2c-N of_node)"
     ls /sys/bus/i2c/devices/ 2>/dev/null
     echo ""
+    echo "## /sys/bus/spmi (laguna TCPC lives here, not on i2c)"
+    echo "-- drivers:"
+    ls /sys/bus/spmi/drivers/ 2>/dev/null
+    echo "-- devices:"
+    ls /sys/bus/spmi/devices/ 2>/dev/null
+    echo ""
     echo "## /sys/bus/gpio/devices"
     ls /sys/bus/gpio/devices/ 2>/dev/null
     echo ""

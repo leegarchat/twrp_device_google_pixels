@@ -1,7 +1,18 @@
-//! i2c — MAX77759 TCPC USB-switch control.
+//! i2c — MAX77759 TCPC USB-switch control (+ SPMI TCPC recognition).
 //!
 //! Port of the tail of otg_patch.sh: discover the TCPC on its I2C bus via
 //! sysfs, grab the address with I2C_SLAVE_FORCE, write USBSW_CTRL(0x93) <- USBSW_CONNECT(0x09).
+//!
+//! Fox (laguna/Tensor G5+): the port controller is an SPMI device
+//! (max77759tcpc-spmi, `spmi-max77759tcpc`), NOT an I2C client —
+//! `/sys/bus/i2c/drivers/*` has no `<bus>-<addr>` entry for it, so the
+//! I2C scan misses by design. The stock driver self-manages the data
+//! path ("Downstream phy mux found" in the probe log), so no manual
+//! register patch is needed or even possible there (no i2c-dev node).
+//! Recognizing the probed SPMI device counts as success: CC sensing,
+//! role votes and muxing stay with the stock driver.
+
+use crate::ko_picker::log_msg;
 
 use std::ffi::CString;
 use std::fs::OpenOptions;
@@ -83,7 +94,41 @@ pub fn patch_max77759_i2c_with_driver(driver: &str) -> Result<(), String> {
             None => last_err = format!("{name} TCPC not found in sysfs"),
         }
     }
+    // Fox (laguna): no I2C client — check the SPMI bus. A probed
+    // `spmi-max77759tcpc` means the stock driver owns CC sensing, role
+    // votes and the phy mux; patching registers from userspace is neither
+    // needed nor possible (SPMI has no i2c-dev equivalent here).
+    if let Some(drv) = find_spmi_tcpc(Path::new("/sys/bus/spmi/drivers")) {
+        log_msg(
+            "otg",
+            "INFO",
+            &format!("TCPC on SPMI via {drv} (driver-managed phy mux), no manual switch patch needed"),
+        );
+        return Ok(());
+    }
     Err(format!("no TCPC driver matched (tried: {}); {last_err}", names.join(",")))
+}
+
+/// Scan an SPMI drivers dir for a bound port-controller client: a driver
+/// dir containing a `spmi-*` entry (e.g. max77759tcpc-spmi/spmi-max77759tcpc).
+/// Returns the driver name. Base-path parameterized for tests.
+pub fn find_spmi_tcpc(drivers_base: &Path) -> Option<String> {
+    let rd = std::fs::read_dir(drivers_base).ok()?;
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let low = name.to_lowercase();
+        if !(low.contains("tcpc") || low.contains("77759") || low.contains("typec") || low.contains("tcpci")) {
+            continue;
+        }
+        let dir = entry.path();
+        let hit = std::fs::read_dir(&dir).ok()?.flatten().any(|e| {
+            e.file_name().to_string_lossy().starts_with("spmi-")
+        });
+        if hit {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// Former body of patch_max77759_i2c_with_driver: drive the switch at a
@@ -211,5 +256,31 @@ mod tests {
             find_tcpc_dev(Path::new("/definitely/not/here")),
             None
         );
+    }
+
+    #[test]
+    fn spmi_tcpc_found_by_client_entry() {
+        let d = std::env::temp_dir().join(format!("fox_test_spmi_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("max77759tcpc-spmi/spmi-max77759tcpc")).unwrap();
+        std::fs::create_dir_all(d.join("dummy")).unwrap();
+        assert_eq!(
+            find_spmi_tcpc(&d),
+            Some("max77759tcpc-spmi".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn spmi_tcpc_rejects_driver_without_client() {
+        let d = std::env::temp_dir().join(format!("fox_test_spmi2_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        // Driver dir exists but no spmi-* client bound (recovery state
+        // before probe, or unrelated driver) -> None, not a false hit.
+        std::fs::create_dir_all(d.join("max77759tcpc-spmi")).unwrap();
+        std::fs::write(d.join("max77759tcpc-spmi/uevent"), b"junk").unwrap();
+        std::fs::create_dir_all(d.join("unrelated")).unwrap();
+        assert_eq!(find_spmi_tcpc(&d), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
