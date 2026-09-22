@@ -10,3 +10,4 @@ test_*
 # Never commit: reproducible from families/*/family.json + devices/*/pixel.json.
 .gen_kernel.mk__pycache__/
 installer/OrangeFox-*.ramdisk.lz4
+**__pycache__**
