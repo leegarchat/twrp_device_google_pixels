@@ -7,9 +7,8 @@
 # On interactive terminal runs (no --force, not --help) the script
 # pauses for Enter at the end, so a window opened by double-clicking
 # (or install.AppImage) stays readable until RESULT is confirmed.
-# After a successful flash it also offers to reboot the device to
-# recovery via fastboot (paths and serial taken from export.txt and
-# the run's install.log; default answer is No).
+# (The reboot-to-recovery question lives inside the binary now, so
+# the launcher never asks twice.)
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,8 +45,7 @@ if [ -z "$BIN" ]; then
 fi
 
 # Which export.txt this run uses (caller's --export wins, else the one
-# next to this script). Needed below for the backup dir, fastboot
-# paths and the reboot offer; the binary gets the same file pinned.
+# next to this script). The binary gets the same file pinned.
 EXPORT_FILE="$ROOT/export.txt"
 PREV=""
 for a in "$@"; do
@@ -58,17 +56,6 @@ for a in "$@"; do
     esac
 done
 case "$EXPORT_FILE" in /*) ;; *) EXPORT_FILE="$PWD/$EXPORT_FILE";; esac
-EBASE="$(dirname "$EXPORT_FILE")"
-# One KEY=VALUE out of export.txt (# comments, CR and quotes tolerated).
-cfg_val() {
-    local v=""
-    [ -f "$EXPORT_FILE" ] && v="$(grep -E "^$1=" "$EXPORT_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' | sed 's/^ *//;s/ *$//;s/^"\(.*\)"$/\1/;s/^'"'"'\(.*\)'"'"'$/\1/')"
-    [ -n "$v" ] || v="$2"
-    printf '%s' "$v"
-}
-BACKUP_DIR="$(cfg_val BACKUP_DIR backup)"
-case "$BACKUP_DIR" in /*) ;; *) BACKUP_DIR="$EBASE/$BACKUP_DIR";; esac
-BEFORE="$(ls -t "$BACKUP_DIR" 2>/dev/null | head -1)"
 
 # Menu runs are interactive; usage/help/--force/--file are not.
 INTERACTIVE=1
@@ -93,56 +80,6 @@ if [ "$HAS_EXPORT" = 0 ]; then
 fi
 "$BIN" install "$@"
 RC=$?
-
-# After a successful flash (fresh backup stamp whose install.log says
-# RESULT: OK), offer to reboot the device to recovery. Aborts and
-# failures never reach the question. Default answer is No.
-if [ -t 0 ] && [ -t 1 ] && [ "$RC" = 0 ]; then
-    ASK=1
-    for a in "$@"; do
-        case "$a" in
-            --force|--file) ASK=0; break;;
-        esac
-    done
-    if [ "$ASK" = 1 ]; then
-        AFTER="$(ls -t "$BACKUP_DIR" 2>/dev/null | head -1)"
-        RUNLOG="$BACKUP_DIR/$AFTER/install.log"
-        if [ -n "$AFTER" ] && [ "$AFTER" != "$BEFORE" ] && [ -f "$RUNLOG" ] \
-            && grep -q "RESULT: OK" "$RUNLOG" 2>/dev/null; then
-            SERIAL="$(grep -E '^device=' "$RUNLOG" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r ')"
-            if [ -n "$SERIAL" ]; then
-                ans=""
-                printf '%s' "Reboot the device to recovery now? [y/N] "
-                read -r ans < /dev/tty 2>/dev/null || read -r ans || true
-                case "$ans" in
-                    [yY]*)
-                        PT="$(cfg_val PLATFORM_TOOLS_LINUX platform-tools-linux)"
-                        case "$PT" in /*) ;; *) PT="$EBASE/$PT";; esac
-                        FB="$PT/$(cfg_val FASTBOOT_BIN fastboot)"
-                        if [ ! -x "$FB" ]; then
-                            echo "  fastboot not found ($FB): reboot manually (bootloader menu -> Recovery mode)"
-                        else
-                            echo "  rebooting $SERIAL to recovery..."
-                            if command -v timeout >/dev/null 2>&1; then
-                                timeout 60 "$FB" -s "$SERIAL" reboot recovery
-                                FRC=$?
-                            else
-                                "$FB" -s "$SERIAL" reboot recovery
-                                FRC=$?
-                            fi
-                            if [ "$FRC" = 0 ]; then
-                                echo "  reboot command sent"
-                            else
-                                echo "  reboot failed: select Recovery mode in the bootloader menu manually"
-                            fi
-                        fi
-                        ;;
-                    *) echo "  (leaving the device in the bootloader)";;
-                esac
-            fi
-        fi
-    fi
-fi
 
 # Keep a double-click terminal window readable: pause on interactive
 # runs (tty on stdin+stdout, no --force, not --help) so the RESULT

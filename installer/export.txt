@@ -13,6 +13,8 @@
 
 RECOVERY_IMG=OrangeFox-R12.0-test7.1-aio.ramdisk.lz4
 BACKUP_DIR=backup
+# Per-run logs live apart from image backups: logs/<datetime>/install.log.
+LOG_DIR=logs
 PLATFORM_TOOLS_LINUX=bin/linux/platform-tools
 PLATFORM_TOOLS_WINDOWS=bin/windows/platform-tools
 FASTBOOT_BIN=fastboot
