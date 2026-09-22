@@ -167,7 +167,15 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -2194,7 +2323,10 @@
+@@ -709,6 +838,7 @@
+ 			} else {
+ 				LOGINFO("Unable to decrypt metadata encryption\n");
+ 			}
++			} // end Fox metadata-decrypt retry block
+ #else
+ 			LOGERR("Metadata FBE decrypt support not present in this build\n");
+ #endif
+@@ -2194,7 +2324,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -179,7 +187,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2466,20 @@
+@@ -2334,6 +2467,20 @@
  #endif
  }
  
@@ -200,7 +208,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2542,17 @@
+@@ -2396,6 +2543,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -218,7 +226,7 @@
  
  			return 0;
  		} else {
-@@ -4840,6 +4997,29 @@
+@@ -4840,6 +4998,29 @@
  	}
  }
  
@@ -248,7 +256,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5037,13 @@
+@@ -4857,13 +5038,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -264,7 +272,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4884,7 +5064,7 @@
+@@ -4884,7 +5065,7 @@
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){
  					LOGINFO("removing dynamic partition: %s\n", partition.c_str());

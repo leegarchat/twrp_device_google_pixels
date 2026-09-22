@@ -953,7 +953,9 @@ done
 
 # --- Telegram push (AIO installer zip only, --push GROUP) ---
 # Non-fatal by design: network/API flakes must never fail a good build.
-if [[ -n "${FOX_PUSH_GROUP:-}" ]]; then
+# Guarded on the post-process vars: if the pack loop never ran (failed or
+# skipped build), there is no zip to push and no garbage path is built.
+if [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
     _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$OFOX_PREFIX" | cut -d'-' -f2)-${BUILD_NAME:-Beta}-aio.zip"
     if [[ -f "$_push_zip" ]]; then
         python3 "$SCRIPT_DIR/tools/tg_push.py" "$_push_zip" "$FOX_PUSH_GROUP" \

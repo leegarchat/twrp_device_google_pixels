@@ -838,6 +838,7 @@ void TWPartitionManager::Decrypt_Data() {
 			} else {
 				LOGINFO("Unable to decrypt metadata encryption\n");
 			}
+			} // end Fox metadata-decrypt retry block
 #else
 			LOGERR("Metadata FBE decrypt support not present in this build\n");
 #endif
