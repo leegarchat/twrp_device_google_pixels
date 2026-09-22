@@ -56,6 +56,11 @@
 #                     other families → recovery fragment
 #                     (`fastboot flash vendor_boot:recovery`). The .img/.zip
 #                     are NOT copied to builds/ in this mode.
+#   --push GROUP      Push the finished AIO installer zip to a Telegram chat
+#                     via tools/tg_push.py (bot token + chat ids live in the
+#                     gitignored .tg_push.json: {"token": "...",
+#                     "group": {"name": id}}). Non-fatal: a push failure only
+#                     warns, the build itself is already delivered.
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -253,6 +258,15 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             ;;
         --new-theme)
             FOX_REWORK_THEME=1
+            shift
+            ;;
+        --push)
+            shift
+            FOX_PUSH_GROUP="${1:-}"
+            if [[ -z "$FOX_PUSH_GROUP" ]]; then
+                echo "ERROR: --push requires a group name (see .tg_push.json)"
+                fox_safe_exit 1
+            fi
             shift
             ;;
         --build-type)
@@ -935,6 +949,19 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
         || echo "[build] WARNING: installer pack failed (payload is fine: $RAMDISK_DEST)"
     fi
 done
+
+# --- Telegram push (AIO installer zip only, --push GROUP) ---
+# Non-fatal by design: network/API flakes must never fail a good build.
+if [[ -n "${FOX_PUSH_GROUP:-}" ]]; then
+    _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$OFOX_PREFIX" | cut -d'-' -f2)-${BUILD_NAME:-Beta}-aio.zip"
+    if [[ -f "$_push_zip" ]]; then
+        python3 "$SCRIPT_DIR/tools/tg_push.py" "$_push_zip" "$FOX_PUSH_GROUP" \
+        || echo "[build] WARNING: telegram push failed (zip is fine: $_push_zip)"
+    else
+        echo "[build] WARNING: --push requested but no AIO zip at $_push_zip (aio pack skipped?)"
+    fi
+    unset _push_zip
+fi
 
 # Stale generated overrides would silently reconfigure later manual builds
 # (dumpvars parses BoardConfig.mk on every lunch). Remove everything this

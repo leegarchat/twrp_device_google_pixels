@@ -4,6 +4,7 @@
 /subpatch/__pycache__
 /__pycache__
 test_*
+.tg_push.json
 /**/target**
 # Generated kernel-profile override (gen_kernel_mk.py via build.sh -k).
 # Never commit: reproducible from families/*/family.json + devices/*/pixel.json.
