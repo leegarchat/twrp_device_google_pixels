@@ -375,6 +375,14 @@ pub fn run_usb_rebind() -> Result<(), String> {
             continue;
         }
         let controller = resolve_udc();
+        // Already bound (by an init trigger or otg-auto's rebind)? Then
+        // there is nothing to do — writing the same UDC again just fails
+        // EBUSY and spams the log for the rest of the 30 attempts.
+        let current = std::fs::read_to_string(UDC_FILE).unwrap_or_default();
+        if current.trim() == controller {
+            info(&format!("usb-rebind: UDC already bound to {controller}, done"));
+            return Ok(());
+        }
         match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
             Ok(_) => {
                 info(&format!(

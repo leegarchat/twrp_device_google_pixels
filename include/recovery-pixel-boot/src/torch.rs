@@ -285,9 +285,18 @@ pub fn find_i2c_bus_by_phandle(phandle: u32, i2c_base: &Path) -> Option<u32> {
         if !name.starts_with("i2c-") {
             continue;
         }
-        let bus: u32 = name[4..].parse().ok()?;
+        // NOTE: plain `continue` (never `?`) on every per-entry failure:
+        // one adapter without of_node/phandle must not abort the scan
+        // (kodiak: first entries lack it, the flash bus sorts later).
+        let bus: u32 = match name[4..].parse() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
         // of_node may be a symlink; join() follows it either way.
-        let ph = std::fs::read(entry.path().join("of_node/phandle")).ok()?;
+        let ph = match std::fs::read(entry.path().join("of_node/phandle")) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         if parse_be_u32(&ph) == Some(phandle) {
             return Some(bus);
         }
@@ -304,7 +313,11 @@ pub fn find_gpiochip_by_phandle(phandle: u32, gpio_base: &Path) -> Option<String
         if !name.starts_with("gpiochip") {
             continue;
         }
-        let ph = std::fs::read(entry.path().join("of_node/phandle")).ok()?;
+        // Same no-`?`-in-loop rule as the i2c scan above.
+        let ph = match std::fs::read(entry.path().join("of_node/phandle")) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         if parse_be_u32(&ph) == Some(phandle) {
             return Some(name);
         }
