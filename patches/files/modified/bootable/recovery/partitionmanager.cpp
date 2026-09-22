@@ -763,12 +763,26 @@ void TWPartitionManager::Decrypt_Data() {
 			std::string keymint_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
 			if (!keymint_state.empty() && keymint_state != "running") {
 				LOGINFO("Skipping metadata decrypt: keymint service state is '%s'\n", keymint_state.c_str());
-			} else if (FscryptMountMetadataEncryptedWithTimeout(
-				Decrypt_Data->Actual_Block_Device,
-				Decrypt_Data->Mount_Point,
-				Decrypt_Data->Current_File_System,
-				TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
-				120)) {
+			} else {
+				// Fox (malibu): Trusty/keystore2 can still be settling when
+				// the first helper runs — grizzly fails the single attempt
+				// while kodiak passes with identical binaries. Retry the
+				// helper instead of failing the whole boot decrypt on a
+				// transient miss.
+				bool md_ok = false;
+				for (int md_try = 0; md_try < 3 && !md_ok; md_try++) {
+					if (md_try > 0) {
+						LOGINFO("Metadata decrypt: retry %d/3 after 5s settle\n", md_try + 1);
+						sleep(5);
+					}
+					md_ok = FscryptMountMetadataEncryptedWithTimeout(
+						Decrypt_Data->Actual_Block_Device,
+						Decrypt_Data->Mount_Point,
+						Decrypt_Data->Current_File_System,
+						TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
+						120);
+				}
+				if (md_ok) {
 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
 				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
 				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());

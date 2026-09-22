@@ -52,10 +52,31 @@ pub fn find_tcpc_dev(sysfs_dir: &Path) -> Option<(u32, u16)> {
 }
 
 pub fn patch_max77759_i2c_with_driver(driver: &str) -> Result<(), String> {
-    let tcpc_dir = format!("/sys/bus/i2c/drivers/{driver}");
-    let tcpc_sysfs = Path::new(&tcpc_dir);
-    let (bus, addr) = find_tcpc_dev(tcpc_sysfs)
-        .ok_or_else(|| format!("{driver} TCPC not found in sysfs"))?;
+    // Fox (laguna): the TCPC driver dirname differs per SoC generation
+    // (exynos "max77759tcpc" vs laguna variants). Try the configured name
+    // first, then known alternates — the first hit wins.
+    let mut names: Vec<&str> = vec![driver];
+    for alt in ["max77759tcpc", "max77759-tcpc", "max77759tcpc-spmi"] {
+        if !names.contains(&alt) {
+            names.push(alt);
+        }
+    }
+    let mut last_err = String::new();
+    for name in names {
+        let tcpc_dir = format!("/sys/bus/i2c/drivers/{name}");
+        let tcpc_sysfs = Path::new(&tcpc_dir);
+        match find_tcpc_dev(tcpc_sysfs) {
+            Some((bus, addr)) => return patch_tcpc_at(name, bus, addr),
+            None => last_err = format!("{name} TCPC not found in sysfs"),
+        }
+    }
+    Err(last_err)
+}
+
+/// Former body of patch_max77759_i2c_with_driver: drive the switch at a
+/// resolved (driver, bus, addr). Split out so the fallback loop above
+/// stays readable.
+fn patch_tcpc_at(_driver: &str, bus: u32, addr: u16) -> Result<(), String> {
 
     let dev_node = format!("/dev/i2c-{bus}");
     let dev_path = Path::new(&dev_node);

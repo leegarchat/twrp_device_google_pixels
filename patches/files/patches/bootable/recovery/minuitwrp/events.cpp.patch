@@ -1,6 +1,14 @@
 --- a/bootable/recovery/minuitwrp/events.cpp
 +++ b/bootable/recovery/minuitwrp/events.cpp
-@@ -126,7 +126,9 @@
+@@ -27,6 +27,7 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <fstream>
++#include <cutils/properties.h>
+ #ifdef USE_QTI_AIDL_HAPTICS_FIX_OFF
+ #include <thread>
+ #endif
+@@ -126,7 +127,9 @@
  static struct ev evs[MAX_DEVICES];
  static unsigned ev_count = 0;
  static struct timeval lastInputStat;
@@ -11,7 +19,7 @@
  static int has_mouse = 0;
  
  static inline int ABS(int x) {
-@@ -134,19 +136,109 @@
+@@ -134,19 +137,128 @@
  }
  
  int write_to_file(const std::string& fn, const std::string& line) {
@@ -60,11 +68,30 @@
 +    }
 +}
 +
++// Fox: per-device haptic strength. ro.recovery.vibro_scale is a percent
++// of stock FF magnitude (100 = stock, stamped per device from
++// devices/*/pixel.json props by recovery-pixel-boot; e.g. 50 halves the
++// CS40L26 kick on malibu where stock is painfully strong). Absent or
++// out of range = 100 (no change for other families). Cached: props are
++// process-stable here.
++static int fox_vibro_scale(void) {
++    static int cached = -1;
++    if (cached < 0) {
++        char v[PROPERTY_VALUE_MAX];
++        int n = 0;
++        if (property_get("ro.recovery.vibro_scale", v, "") > 0)
++            n = atoi(v);
++        cached = (n > 0 && n <= 100) ? n : 100;
++        if (cached != 100)
++            printf("fox_vibro_scale: strength %d%% of stock\n", cached);
++    }
++    return cached;
++}
++
 +static int vibrate_ff(int timeout_ms)
 +{
 +    static int ff_fd = -1;
 +    static int effect_id = -1;
-+
 +    if (ff_fd < 0) {
 +        char path[64], syspath[128];
 +        for (int i = 0; i < 10; i++) {
@@ -105,7 +132,7 @@
 +    effect.replay.delay = 0;
 +    effect.u.periodic.waveform = FF_SINE;
 +    effect.u.periodic.period = 10;
-+    effect.u.periodic.magnitude = 0x7fff;
++    effect.u.periodic.magnitude = (0x7fff * fox_vibro_scale()) / 100;
 +
 +    if (ioctl(ff_fd, EVIOCSFF, &effect) < 0) {
 +        LOGE("[TRACE] vibrate_ff: ioctl EVIOCSFF failed!\n");
@@ -130,7 +157,7 @@
  int vibrate(int timeout_ms)
  {
      if (timeout_ms > 10000) timeout_ms = 1000;
-@@ -185,8 +277,11 @@
+@@ -185,8 +297,11 @@
      if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good()) {
          write_to_file(LEDS_HAPTICS_DURATION_FILE, tout);
          write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "1");
@@ -143,7 +170,7 @@
  #endif
      return 0;
  }
-@@ -405,7 +500,7 @@
+@@ -405,7 +520,7 @@
  
      struct stat st;
      if(stat("/dev/input", &st) >= 0)
@@ -152,7 +179,7 @@
      gettimeofday(&lastInputStat, NULL);
  
      return 0;
-@@ -819,12 +914,14 @@
+@@ -819,12 +934,14 @@
      {
          struct stat st;
          stat("/dev/input", &st);

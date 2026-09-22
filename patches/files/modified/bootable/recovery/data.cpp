@@ -323,6 +323,11 @@ int DataManager::LoadPersistValues(void)
   static bool loaded = false;
   string dev_id;
 
+  // Fox (malibu): /persist is not mounted this early, so Path_Exists
+  // below always misses and settings silently reset every boot (save
+  // mounts it, load never did). Mount first; no-op when absent.
+  PartitionManager.Mount_By_Path("/persist", false);
+
   // Only run this function once, and make sure normal settings file has not yet been read
   if (loaded || !mBackingFile.empty()
       || !TWFunc::Path_Exists(PERSIST_SETTINGS_FILE))

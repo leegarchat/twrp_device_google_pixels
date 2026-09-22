@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <fstream>
+#include <cutils/properties.h>
 #ifdef USE_QTI_AIDL_HAPTICS_FIX_OFF
 #include <thread>
 #endif
@@ -172,11 +173,30 @@ static void ff_wake_device(const char *sysfs_path)
     }
 }
 
+// Fox: per-device haptic strength. ro.recovery.vibro_scale is a percent
+// of stock FF magnitude (100 = stock, stamped per device from
+// devices/*/pixel.json props by recovery-pixel-boot; e.g. 50 halves the
+// CS40L26 kick on malibu where stock is painfully strong). Absent or
+// out of range = 100 (no change for other families). Cached: props are
+// process-stable here.
+static int fox_vibro_scale(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        char v[PROPERTY_VALUE_MAX];
+        int n = 0;
+        if (property_get("ro.recovery.vibro_scale", v, "") > 0)
+            n = atoi(v);
+        cached = (n > 0 && n <= 100) ? n : 100;
+        if (cached != 100)
+            printf("fox_vibro_scale: strength %d%% of stock\n", cached);
+    }
+    return cached;
+}
+
 static int vibrate_ff(int timeout_ms)
 {
     static int ff_fd = -1;
     static int effect_id = -1;
-
     if (ff_fd < 0) {
         char path[64], syspath[128];
         for (int i = 0; i < 10; i++) {
@@ -217,7 +237,7 @@ static int vibrate_ff(int timeout_ms)
     effect.replay.delay = 0;
     effect.u.periodic.waveform = FF_SINE;
     effect.u.periodic.period = 10;
-    effect.u.periodic.magnitude = 0x7fff;
+    effect.u.periodic.magnitude = (0x7fff * fox_vibro_scale()) / 100;
 
     if (ioctl(ff_fd, EVIOCSFF, &effect) < 0) {
         LOGE("[TRACE] vibrate_ff: ioctl EVIOCSFF failed!\n");
