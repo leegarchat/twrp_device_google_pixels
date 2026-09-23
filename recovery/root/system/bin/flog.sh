@@ -143,6 +143,12 @@ echo "flog: + backlight.txt"
     ls /sys/bus/spmi/drivers/ 2>/dev/null
     echo "-- devices:"
     ls /sys/bus/spmi/devices/ 2>/dev/null
+    echo "-- tcpc driver bindings (bound client = 0-XX symlink, its absence = unbound):"
+    for _d in /sys/bus/spmi/drivers/*tcpc* /sys/bus/spmi/drivers/*typec* /sys/bus/spmi/drivers/*tcpci* /sys/bus/spmi/drivers/*77759*; do
+        [ -d "$_d" ] || continue
+        echo "== $_d"
+        ls -la "$_d" 2>/dev/null | grep -E "^l" || echo "  (no symlinks)"
+    done
     echo ""
     echo "## /sys/bus/gpio/devices"
     ls /sys/bus/gpio/devices/ 2>/dev/null

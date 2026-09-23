@@ -110,8 +110,11 @@ pub fn patch_max77759_i2c_with_driver(driver: &str) -> Result<(), String> {
 }
 
 /// Scan an SPMI drivers dir for a bound port-controller client: a driver
-/// dir containing a `spmi-*` entry (e.g. max77759tcpc-spmi/spmi-max77759tcpc).
-/// Returns the driver name. Base-path parameterized for tests.
+/// dir with a bound device entry. SPMI devices are named `<ctrl>-<usid>`
+/// (e.g. `0-04` for DT `max77759tcpc-spmi@4`), NOT `spmi-*` — bound ones
+/// show up as symlinks inside the driver dir (plus the ever-present
+/// `module` link, which the name pattern excludes). Returns the driver
+/// name. Base-path parameterized for tests.
 pub fn find_spmi_tcpc(drivers_base: &Path) -> Option<String> {
     let rd = std::fs::read_dir(drivers_base).ok()?;
     for entry in rd.flatten() {
@@ -122,7 +125,18 @@ pub fn find_spmi_tcpc(drivers_base: &Path) -> Option<String> {
         }
         let dir = entry.path();
         let hit = std::fs::read_dir(&dir).ok()?.flatten().any(|e| {
-            e.file_name().to_string_lossy().starts_with("spmi-")
+            let n = e.file_name().to_string_lossy().into_owned();
+            // Bound SPMI client: symlink named "<ctrl>-<usid>", both parts hex.
+            let mut parts = n.split('-');
+            let is_dev = match (parts.next(), parts.next(), parts.next()) {
+                (Some(a), Some(b), None) => {
+                    !a.is_empty() && !b.is_empty()
+                        && a.bytes().all(|c| c.is_ascii_hexdigit())
+                        && b.bytes().all(|c| c.is_ascii_hexdigit())
+                }
+                _ => false,
+            };
+            is_dev && e.file_type().map(|t| t.is_symlink()).unwrap_or(false)
         });
         if hit {
             return Some(name);
@@ -259,10 +273,12 @@ mod tests {
     }
 
     #[test]
-    fn spmi_tcpc_found_by_client_entry() {
+    fn spmi_tcpc_found_by_bound_client_entry() {
         let d = std::env::temp_dir().join(format!("fox_test_spmi_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(d.join("max77759tcpc-spmi/spmi-max77759tcpc")).unwrap();
+        // SPMI naming: driver dir + bound client symlink "<ctrl>-<usid>".
+        std::fs::create_dir_all(d.join("max77759tcpc-spmi")).unwrap();
+        std::os::unix::fs::symlink("0-04-target", d.join("max77759tcpc-spmi/0-04")).unwrap();
         std::fs::create_dir_all(d.join("dummy")).unwrap();
         assert_eq!(
             find_spmi_tcpc(&d),
@@ -272,13 +288,14 @@ mod tests {
     }
 
     #[test]
-    fn spmi_tcpc_rejects_driver_without_client() {
+    fn spmi_tcpc_rejects_unbound_driver() {
         let d = std::env::temp_dir().join(format!("fox_test_spmi2_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        // Driver dir exists but no spmi-* client bound (recovery state
-        // before probe, or unrelated driver) -> None, not a false hit.
+        // Driver dir exists but no bound client (only stock sysfs files
+        // and the ever-present `module` symlink) -> None, not a false hit.
         std::fs::create_dir_all(d.join("max77759tcpc-spmi")).unwrap();
         std::fs::write(d.join("max77759tcpc-spmi/uevent"), b"junk").unwrap();
+        std::os::unix::fs::symlink("module-target", d.join("max77759tcpc-spmi/module")).unwrap();
         std::fs::create_dir_all(d.join("unrelated")).unwrap();
         assert_eq!(find_spmi_tcpc(&d), None);
         let _ = std::fs::remove_dir_all(&d);
