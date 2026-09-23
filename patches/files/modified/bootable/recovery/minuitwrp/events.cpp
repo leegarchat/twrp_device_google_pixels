@@ -28,9 +28,7 @@
 #include <string.h>
 #include <fstream>
 #include <cutils/properties.h>
-#ifdef USE_QTI_AIDL_HAPTICS_FIX_OFF
 #include <thread>
-#endif
 
 #ifdef USE_QTI_HAPTICS
 #include <android/hardware/vibrator/1.2/IVibrator.h>
@@ -193,6 +191,25 @@ static int fox_vibro_scale(void) {
     return cached;
 }
 
+// Fox: gs101 runtime detector for the LEDS auto-deassert below (same
+// contract as is_gs101_family() in recovery-pixel-boot/otg.rs:
+// soc_family prop primary, codename fallback). Cached, props are
+// process-stable here.
+static int fox_vib_on_count = 0;
+static int fox_is_gs101(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        char f[PROPERTY_VALUE_MAX];
+        char h[PROPERTY_VALUE_MAX];
+        property_get("ro.recovery.soc_family", f, "");
+        property_get("ro.hardware", h, "");
+        cached = (strcmp(f, "gs101") == 0 ||
+                  strcmp(h, "oriole") == 0 || strcmp(h, "raven") == 0 ||
+                  strcmp(h, "bluejay") == 0) ? 1 : 0;
+    }
+    return cached;
+}
+
 static int vibrate_ff(int timeout_ms)
 {
     static int ff_fd = -1;
@@ -319,6 +336,24 @@ int vibrate(int timeout_ms)
     if (vib_backend == 0) {
         write_to_file(LEDS_HAPTICS_DURATION_FILE, tout);
         write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "1");
+        // Fox (gs101 latching LEDS driver): field-proven on raven — the
+        // effect runs on after activate=1 (duration ignored/stale) and
+        // nothing ever deasserts it, so one tap becomes a continuous
+        // buzz. Deassert after the requested duration on a detached
+        // thread, refcounted so rapid taps don't cut each other short
+        // (mirrors the QTI AIDL FIX_OFF pattern above). On a healthy
+        // driver the trailing 0-write is a no-op. gs101-gated: no other
+        // family changes behavior.
+        if (fox_is_gs101()) {
+            fox_vib_on_count++;
+            int vib_ms = timeout_ms;
+            std::thread([vib_ms] {
+                usleep(vib_ms * 1000);
+                fox_vib_on_count--;
+                if (!fox_vib_on_count)
+                    write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "0");
+            }).detach();
+        }
     } else if (vib_backend == 1) {
         write_to_file(VIBRATOR_TIMEOUT_FILE, tout);
     } else {
