@@ -332,7 +332,7 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             ;;
         -h|--help)
-            sed -n '2,70p' "${BASH_SOURCE[0]}"
+            sed -n '2,77p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
             ;;
         *)
