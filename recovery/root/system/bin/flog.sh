@@ -178,8 +178,27 @@ echo "flog: + backlight.txt"
             "$(cat "$_p/online" 2>/dev/null)" "$(cat "$_p/present" 2>/dev/null)" "$(cat "$_p/type" 2>/dev/null)"
     done
     echo ""
-    echo "## /sys/class/leds (vibrator/haptics)"
+    echo "## /sys/class/leds (vibrator/haptics: driver + duration semantics)"
     ls /sys/class/leds/ 2>/dev/null
+    for _l in /sys/class/leds/*/; do
+        [ -d "$_l" ] || continue
+        echo "== $_l"
+        printf '  device -> %s\n' "$(readlink "${_l}device" 2>/dev/null)"
+        for _n in brightness max_brightness duration activate trigger; do
+            [ -f "$_l/$_n" ] && printf '  %s=%s\n' "$_n" "$(cat "$_l/$_n" 2>/dev/null)"
+        done
+    done
+    echo ""
+    echo "## /sys/class/timed_output (legacy vibrator)"
+    ls -R /sys/class/timed_output/ 2>/dev/null
+    echo ""
+    echo "## input devices (touch + FF haptics nodes)"
+    for _i in /sys/class/input/input*/; do
+        [ -d "$_i" ] || continue
+        printf '%s: name=%s\n' "$_i" "$(cat "$_i/name" 2>/dev/null)"
+    done
+    echo "-- /dev/input:"
+    ls /dev/input/ 2>/dev/null
     echo ""
     echo "## drm cards"
     ls /sys/class/drm/ 2>/dev/null | head -20
