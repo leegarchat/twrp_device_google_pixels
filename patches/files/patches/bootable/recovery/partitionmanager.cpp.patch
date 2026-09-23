@@ -9,7 +9,16 @@
  #include <dirent.h>
  #include <time.h>
  #include <errno.h>
-@@ -137,6 +139,50 @@
+@@ -40,6 +42,8 @@
+ #include <linux/fs.h>
+ #include <sys/mount.h>
+ #include <sys/poll.h>
++#include <sys/ioctl.h>
++#include <linux/dm-ioctl.h>
+ #include <sys/socket.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+@@ -137,6 +141,50 @@
  
  std::string additional_fstab = "/etc/additional.fstab";
  
@@ -60,7 +69,7 @@
  TWPartitionManager::TWPartitionManager(void) {
  	mtp_was_enabled = false;
  	mtp_write_fd = -1;
-@@ -243,8 +289,32 @@
+@@ -243,8 +291,32 @@
  	#endif
  	return ver;
  }
@@ -94,7 +103,7 @@
  	// Fetch the Keymaster Service version to be started
  	std::string version;
  #ifndef TW_FORCE_KEYMASTER_VER
-@@ -676,6 +746,58 @@
+@@ -676,6 +748,58 @@
  	return true;
  }
  
@@ -153,7 +162,7 @@
  void TWPartitionManager::Decrypt_Data() {
  	#ifdef TW_INCLUDE_CRYPTO
  	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
-@@ -687,9 +809,56 @@
+@@ -687,9 +811,56 @@
  				Mount_By_Path(Decrypt_Data->Key_Directory, false);
  		if (!Decrypt_Data->Key_Directory.empty()) {
  			Set_Crypto_Type("file");
@@ -211,7 +220,7 @@
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +868,45 @@
+@@ -699,9 +870,45 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -257,7 +266,7 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -709,6 +914,7 @@
+@@ -709,6 +916,7 @@
  			} else {
  				LOGINFO("Unable to decrypt metadata encryption\n");
  			}
@@ -265,7 +274,7 @@
  #else
  			LOGERR("Metadata FBE decrypt support not present in this build\n");
  #endif
-@@ -2194,7 +2400,10 @@
+@@ -2194,7 +2402,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -277,7 +286,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2543,20 @@
+@@ -2334,6 +2545,20 @@
  #endif
  }
  
@@ -298,7 +307,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2619,17 @@
+@@ -2396,6 +2621,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -316,7 +325,7 @@
  
  			return 0;
  		} else {
-@@ -4840,6 +5074,29 @@
+@@ -4840,6 +5076,75 @@
  	}
  }
  
@@ -325,6 +334,7 @@
 +// (our own fw/ko staging mounts, vold/ueventd probes) or transiently open,
 +// which used to fail the whole format with "Unable to unmap dynamic
 +// partitions" until a manual retry. Unmount (lazy fallback) + retries.
++static bool FoxRemoveDmDevice(const std::string& name);
 +static bool DestroyLogicalPartition_Retry(const std::string& name) {
 +	std::string path = "/dev/block/mapper/" + name;
 +	umount2(path.c_str(), 0);
@@ -339,14 +349,59 @@
 +		sleep(1);
 +		umount2(path.c_str(), MNT_DETACH);
 +	}
++	// Fox (malibu format-data): the mapper sweep can hit a dm node with
++	// NO LP metadata entry (field case: bare vendor_dlkm on grizzly while
++	// metadata holds vendor_dlkm_b — creator unknown, node is real).
++	// liblp answers ENOENT and retrying is futile; remove the device
++	// directly via DM_DEV_REMOVE so one stray node no longer fails the
++	// whole format. A mounted/in-use node still fails EBUSY (correct).
++	if (errno == ENOENT || errno == ENXIO) {
++		LOGINFO("no LP entry for %s, removing dm device directly\n", name.c_str());
++		if (FoxRemoveDmDevice(name))
++			return true;
++	}
 +	LOGERR("destroy logical partition %s failed after retries: %s\n", name.c_str(), strerror(errno));
 +	return false;
++}
++
++// Fox: direct DM_DEV_REMOVE for mapper nodes liblp doesn't know about.
++// True when the device is gone (or was never there); false otherwise
++// (EBUSY keeps failing the format, as it should).
++static bool FoxRemoveDmDevice(const std::string& name) {
++	int fd = open("/dev/device-mapper", O_RDWR);
++	if (fd < 0) {
++		LOGERR("FoxRemoveDmDevice: cannot open /dev/device-mapper: %s\n", strerror(errno));
++		return false;
++	}
++	const size_t bufsize = sizeof(struct dm_ioctl) + 4096;
++	struct dm_ioctl* io = (struct dm_ioctl*)calloc(1, bufsize);
++	if (!io) {
++		close(fd);
++		return false;
++	}
++	io->version[0] = DM_VERSION_MAJOR;
++	io->version[1] = DM_VERSION_MINOR;
++	io->version[2] = DM_VERSION_PATCHLEVEL;
++	io->data_size = bufsize;
++	io->data_start = sizeof(struct dm_ioctl);
++	snprintf(io->name, sizeof(io->name), "%s", name.c_str());
++	bool ok = ioctl(fd, DM_DEV_REMOVE, io) == 0;
++	int e = errno;
++	if (ok)
++		LOGINFO("FoxRemoveDmDevice: removed dm device %s directly (no LP entry)\n", name.c_str());
++	else
++		LOGERR("FoxRemoveDmDevice: remove %s failed: %s\n", name.c_str(), strerror(e));
++	free(io);
++	close(fd);
++	if (ok)
++		return true;
++	return e == ENOENT || e == ENXIO;
 +}
 +
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5114,13 @@
+@@ -4857,13 +5162,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -362,7 +417,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4884,7 +5141,7 @@
+@@ -4884,7 +5189,7 @@
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){
  					LOGINFO("removing dynamic partition: %s\n", partition.c_str());

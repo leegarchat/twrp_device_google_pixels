@@ -42,6 +42,8 @@
 #include <linux/fs.h>
 #include <sys/mount.h>
 #include <sys/poll.h>
+#include <sys/ioctl.h>
+#include <linux/dm-ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -5079,6 +5081,7 @@ void TWPartitionManager::Unlock_Block_Partitions() {
 // (our own fw/ko staging mounts, vold/ueventd probes) or transiently open,
 // which used to fail the whole format with "Unable to unmap dynamic
 // partitions" until a manual retry. Unmount (lazy fallback) + retries.
+static bool FoxRemoveDmDevice(const std::string& name);
 static bool DestroyLogicalPartition_Retry(const std::string& name) {
 	std::string path = "/dev/block/mapper/" + name;
 	umount2(path.c_str(), 0);
@@ -5093,8 +5096,53 @@ static bool DestroyLogicalPartition_Retry(const std::string& name) {
 		sleep(1);
 		umount2(path.c_str(), MNT_DETACH);
 	}
+	// Fox (malibu format-data): the mapper sweep can hit a dm node with
+	// NO LP metadata entry (field case: bare vendor_dlkm on grizzly while
+	// metadata holds vendor_dlkm_b — creator unknown, node is real).
+	// liblp answers ENOENT and retrying is futile; remove the device
+	// directly via DM_DEV_REMOVE so one stray node no longer fails the
+	// whole format. A mounted/in-use node still fails EBUSY (correct).
+	if (errno == ENOENT || errno == ENXIO) {
+		LOGINFO("no LP entry for %s, removing dm device directly\n", name.c_str());
+		if (FoxRemoveDmDevice(name))
+			return true;
+	}
 	LOGERR("destroy logical partition %s failed after retries: %s\n", name.c_str(), strerror(errno));
 	return false;
+}
+
+// Fox: direct DM_DEV_REMOVE for mapper nodes liblp doesn't know about.
+// True when the device is gone (or was never there); false otherwise
+// (EBUSY keeps failing the format, as it should).
+static bool FoxRemoveDmDevice(const std::string& name) {
+	int fd = open("/dev/device-mapper", O_RDWR);
+	if (fd < 0) {
+		LOGERR("FoxRemoveDmDevice: cannot open /dev/device-mapper: %s\n", strerror(errno));
+		return false;
+	}
+	const size_t bufsize = sizeof(struct dm_ioctl) + 4096;
+	struct dm_ioctl* io = (struct dm_ioctl*)calloc(1, bufsize);
+	if (!io) {
+		close(fd);
+		return false;
+	}
+	io->version[0] = DM_VERSION_MAJOR;
+	io->version[1] = DM_VERSION_MINOR;
+	io->version[2] = DM_VERSION_PATCHLEVEL;
+	io->data_size = bufsize;
+	io->data_start = sizeof(struct dm_ioctl);
+	snprintf(io->name, sizeof(io->name), "%s", name.c_str());
+	bool ok = ioctl(fd, DM_DEV_REMOVE, io) == 0;
+	int e = errno;
+	if (ok)
+		LOGINFO("FoxRemoveDmDevice: removed dm device %s directly (no LP entry)\n", name.c_str());
+	else
+		LOGERR("FoxRemoveDmDevice: remove %s failed: %s\n", name.c_str(), strerror(e));
+	free(io);
+	close(fd);
+	if (ok)
+		return true;
+	return e == ENOENT || e == ENXIO;
 }
 
 bool TWPartitionManager::Unmap_Super_Devices() {

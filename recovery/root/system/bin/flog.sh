@@ -18,7 +18,16 @@
 DEST_BASE_CANDS="/data/media/0/fox_logs /tmp/fox_logs"
 STAMP="$(date '+%Y%m%d_%H%M%S' 2>/dev/null)"
 [ -n "$STAMP" ] || STAMP="unknown_time"
-ARCH="fox_logs_$STAMP.tar.gz"
+# Archive prefix {device}_{family} (e.g. fox_logs_grizzly_malibu_<stamp>):
+# with 25 devices in the field, bare timestamps are unmatchable.
+_FOX_DEV="$(getprop ro.product.device 2>/dev/null)"
+_FOX_FAM="$(getprop ro.recovery.soc_family 2>/dev/null)"
+[ -n "$_FOX_DEV" ] || _FOX_DEV="unknown"
+[ -n "$_FOX_FAM" ] || _FOX_FAM="unknown"
+# Sanitize: alnum + underscore only (props can carry anything).
+_FOX_DEV="$(printf '%s' "$_FOX_DEV" | tr -c '[:alnum:]_' '_' | tr '[:upper:]' '[:lower:]')"
+_FOX_FAM="$(printf '%s' "$_FOX_FAM" | tr -c '[:alnum:]_' '_' | tr '[:upper:]' '[:lower:]')"
+ARCH="fox_logs_${_FOX_DEV}_${_FOX_FAM}_$STAMP.tar.gz"
 
 BASE=""
 for _cand in $DEST_BASE_CANDS; do
