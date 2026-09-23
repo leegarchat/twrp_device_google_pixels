@@ -294,10 +294,32 @@ int vibrate(int timeout_ms)
         write_to_file(VIBRATOR_TIMEOUT_FILE, tout);
     }
 #else
-    if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good()) {
+    // Fox (gs101 stuck-vibration): the LEDS activate API is
+    // duration-based, but the old code only checked for the activate
+    // file. On Pixel 6 (raven leds/vibrator) the effect runs
+    // stale/default — possibly stuck — while activate is never
+    // deasserted, so every tap turns into a continuous buzz. Require
+    // BOTH activate and duration files; otherwise fall through to the
+    // FF path below, which terminates precisely via replay.length (and
+    // honors ro.recovery.vibro_scale). Devices with a healthy LEDS pair
+    // behave exactly as before. Backend is picked once (modules are up
+    // before the first tap) and traced so flog shows which path a unit
+    // took: 0=leds 1=timed_output 2=ff.
+    static int vib_backend = -1;
+    if (vib_backend < 0) {
+        if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good() &&
+            std::ifstream(LEDS_HAPTICS_DURATION_FILE).good())
+            vib_backend = 0;
+        else if (std::ifstream(VIBRATOR_TIMEOUT_FILE).good())
+            vib_backend = 1;
+        else
+            vib_backend = 2;
+        LOGE("[TRACE] vibrate: backend %d (0=leds 1=timed_output 2=ff)\n", vib_backend);
+    }
+    if (vib_backend == 0) {
         write_to_file(LEDS_HAPTICS_DURATION_FILE, tout);
         write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "1");
-    } else if (std::ifstream(VIBRATOR_TIMEOUT_FILE).good()) {
+    } else if (vib_backend == 1) {
         write_to_file(VIBRATOR_TIMEOUT_FILE, tout);
     } else {
         vibrate_ff(timeout_ms);
