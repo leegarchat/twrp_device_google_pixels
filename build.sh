@@ -67,6 +67,13 @@
 #                     build on a dirty tree (uncommitted changes = error
 #                     before anything runs). The tag is deleted automatically
 #                     if the build fails; pushing is manual (VS Code).
+#   -D, --diff-tag    With --push: collect `git log` between the previous
+#                     reachable tag and the fresh -g tag (or HEAD) and send
+#                     it after the zip — as a text message, or as a
+#                     changes_<tag>.txt file ("changes" caption) when longer
+#                     than 2400 chars. Warns and sends zip-only without history.
+#   -T, --text TEXT   With --push: append TEXT to the zip message after the
+#                     md5 line (e.g. -T "looks like OTG is fixed on P10").
 #   -h, --help        Show this help.
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -180,6 +187,8 @@ FOX_BUILD_TYPE="Stable"
 FOX_NO_FIRST_STAGE=""
 CPIO_ONLY=false
 FOX_GIT_TAG=""
+FOX_DIFF_TAG=""
+FOX_PUSH_TEXT=""
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -285,6 +294,19 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             ;;
         -g|--git-tag)
             FOX_GIT_TAG=1
+            shift
+            ;;
+        -D|--diff-tag)
+            FOX_DIFF_TAG=1
+            shift
+            ;;
+        -T|--text)
+            shift
+            FOX_PUSH_TEXT="${1:-}"
+            if [[ -z "$FOX_PUSH_TEXT" ]]; then
+                echo "ERROR: --text requires a message (e.g. -T \"OTG fixed on P10?\")"
+                fox_safe_exit 1
+            fi
             shift
             ;;
         --build-type)
@@ -1044,13 +1066,42 @@ done
 # skipped build), there is no zip to push and no garbage path is built.
 if [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
     _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$OFOX_PREFIX" | cut -d'-' -f2)-${BUILD_NAME:-Beta}-aio.zip"
+    # -D/--diff-tag: range = previous reachable tag .. fresh -g tag (or
+    # HEAD when built without -g). A fresh tag sits exactly on HEAD, so
+    # step past it to find the previous one. Warns (zip-only) when the
+    # history has no earlier tag.
+    _diff_args=()
+    if [[ -n "${FOX_DIFF_TAG:-}" ]]; then
+        _diff_base="HEAD"
+        _diff_cur="HEAD"
+        if [[ -n "${FOX_TAG_NAME:-}" ]]; then
+            _diff_base="HEAD~1"
+            _diff_cur="$FOX_TAG_NAME"
+        fi
+        _prev_tag=$(git -C "$SCRIPT_DIR" describe --tags --abbrev=0 "$_diff_base" 2>/dev/null || true)
+        if [[ -n "$_prev_tag" ]]; then
+            _diff_args=(--diff "$_prev_tag..$_diff_cur")
+            echo "[build] Change list: $_prev_tag..$_diff_cur"
+        else
+            echo "[build] WARNING: --diff-tag requested but no previous tag reachable, sending zip only"
+        fi
+        unset _diff_base _diff_cur _prev_tag
+    fi
+    # -T/--text: postscript after the md5 line of the zip message.
+    _text_args=()
+    if [[ -n "${FOX_PUSH_TEXT:-}" ]]; then
+        _text_args=(--text "$FOX_PUSH_TEXT")
+    fi
     if [[ -f "$_push_zip" ]]; then
-        python3 "$SCRIPT_DIR/tools/tg_push.py" "$_push_zip" "$FOX_PUSH_GROUP" \
+        python3 "$SCRIPT_DIR/tools/tg_push.py" "$_push_zip" "$FOX_PUSH_GROUP" "${_diff_args[@]}" "${_text_args[@]}" \
         || echo "[build] WARNING: telegram push failed (zip is fine: $_push_zip)"
     else
         echo "[build] WARNING: --push requested but no AIO zip at $_push_zip (aio pack skipped?)"
     fi
-    unset _push_zip
+    unset _push_zip _diff_args _text_args
+fi
+if [[ -n "${FOX_DIFF_TAG:-}${FOX_PUSH_TEXT:-}" && -z "${FOX_PUSH_GROUP:-}" ]]; then
+    echo "[build] WARNING: --diff-tag/--text have no effect without --push"
 fi
 
 # Stale generated overrides would silently reconfigure later manual builds
