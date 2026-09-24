@@ -245,10 +245,6 @@ struct drm_msm_spr_init_cfg_v2 {
 
 static drm_surface *drm_surfaces[2];
 static int current_buffer;
-/* Fox fps_boost: index of the dumb buffer handed out for drawing (the
- * other one is on scanout). Replaces the draw_buf shadow (kept allocated
- * but unused to keep init error paths untouched). */
-static int fox_draw_idx = 0;
 static GRSurface *draw_buf = nullptr;
 
 static drmModeCrtc *main_monitor_crtc;
@@ -1240,21 +1236,19 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
 
   drm_blank(nullptr, false);
 
-  fox_draw_idx = 0;
-  /* drm_surface starts with GRSurface base: hand out the dumb buffer's
-   * own descriptor, no shadow copy. */
-  return &drm_surfaces[0]->base;
+  return draw_buf;
 }
 
 static GRSurface* drm_flip(minui_backend* backend __unused) {
-    /* No shadow memcpy: commit the just-drawn dumb buffer directly and
-     * hand out the other one. The page-flip wait in update_plane_fb()
-     * guarantees the handed-out buffer finished scanout (blocking
-     * fallback covers drivers without flip events). */
-    update_plane_fb(fox_draw_idx);
-    fox_draw_idx = 1 - fox_draw_idx;
-    current_buffer = fox_draw_idx;
-    return &drm_surfaces[fox_draw_idx]->base;
+    /* Fox fps_boost: direct dumb draw REVERTED — blending reads from the
+     * write-combined scanout mapping were glacial (render avg 476-713ms
+     * on shiba file list vs fast cached-DRAM shadow). The shadow memcpy
+     * (~10ms) is back; modeset-once + NONBLOCK/event pipelining stays. */
+    memcpy(drm_surfaces[current_buffer]->base.data,
+            draw_buf->data, draw_buf->height * draw_buf->row_bytes);
+    update_plane_fb(current_buffer);
+    current_buffer = 1 - current_buffer;
+    return draw_buf;
 }
 
 static void drm_exit(minui_backend* backend __unused) {

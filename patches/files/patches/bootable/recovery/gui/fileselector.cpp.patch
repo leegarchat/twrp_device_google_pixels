@@ -1,0 +1,18 @@
+--- a/bootable/recovery/gui/fileselector.cpp
++++ b/bootable/recovery/gui/fileselector.cpp
+@@ -224,8 +224,13 @@
+ 
+ 	if (mUpdate) {
+ 		mUpdate = 0;
+-		if (Render() == 0)
+-			return 2;
++		// Fox fps_boost: Update() must NOT draw. It rendered here
++		// (inherited GUIScrollList::Render) and runPages rendered the
++		// page again on the returned 2 — the file list was drawn twice
++		// per frame (same double-draw class as progressbar). runPages
++		// always follows Update()->2 with Render() in the same frame,
++		// and the forced path calls Render() directly.
++		return 2;
+ 	}
+ 	return 0;
+ }

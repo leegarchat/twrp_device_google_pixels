@@ -28,18 +28,7 @@
  
  struct drm_surface {
      GRSurface base;
-@@ -224,6 +245,10 @@
- 
- static drm_surface *drm_surfaces[2];
- static int current_buffer;
-+/* Fox fps_boost: index of the dumb buffer handed out for drawing (the
-+ * other one is on scanout). Replaces the draw_buf shadow (kept allocated
-+ * but unused to keep init error paths untouched). */
-+static int fox_draw_idx = 0;
- static GRSurface *draw_buf = nullptr;
- 
- static drmModeCrtc *main_monitor_crtc;
-@@ -678,9 +703,15 @@
+@@ -678,9 +699,15 @@
      }
  
  #if defined(RECOVERY_ABGR)
@@ -58,7 +47,7 @@
  #elif defined(RECOVERY_BGRA)
      format = DRM_FORMAT_ARGB8888;
      base_format = GGL_PIXEL_FORMAT_RGBA_8888;
-@@ -803,18 +834,23 @@
+@@ -803,18 +830,23 @@
  static drmModeConnector *find_used_connector_by_type(int fd,
                                   drmModeRes *resources,
                                   unsigned type) {
@@ -86,7 +75,7 @@
  }
  
  static drmModeConnector *find_first_connected_connector(int fd,
-@@ -898,8 +934,53 @@
+@@ -898,8 +930,53 @@
    drmModeAtomicFree(atomic_req);
  }
  
@@ -141,7 +130,7 @@
  
    /* Set atomic req */
    drmModeAtomicReqPtr atomic_req = drmModeAtomicAlloc();
-@@ -917,14 +998,30 @@
+@@ -917,14 +994,30 @@
    /* Add property */
    for(i = 0; i < number_of_lms; i++)
      drmModeAtomicAddProperty(atomic_req, plane_res[i].plane->plane_id,
@@ -177,31 +166,18 @@
  
    if (ret)
      printf("Atomic commit failed ret=%d\n", ret);
-@@ -1143,15 +1240,21 @@
- 
-   drm_blank(nullptr, false);
- 
--  return draw_buf;
-+  fox_draw_idx = 0;
-+  /* drm_surface starts with GRSurface base: hand out the dumb buffer's
-+   * own descriptor, no shadow copy. */
-+  return &drm_surfaces[0]->base;
+@@ -1147,9 +1240,13 @@
  }
  
  static GRSurface* drm_flip(minui_backend* backend __unused) {
--    memcpy(drm_surfaces[current_buffer]->base.data,
--            draw_buf->data, draw_buf->height * draw_buf->row_bytes);
++    /* Fox fps_boost: direct dumb draw REVERTED — blending reads from the
++     * write-combined scanout mapping were glacial (render avg 476-713ms
++     * on shiba file list vs fast cached-DRAM shadow). The shadow memcpy
++     * (~10ms) is back; modeset-once + NONBLOCK/event pipelining stays. */
+     memcpy(drm_surfaces[current_buffer]->base.data,
+             draw_buf->data, draw_buf->height * draw_buf->row_bytes);
 -    update_plane_fb();
--    current_buffer = 1 - current_buffer;
--    return draw_buf;
-+    /* No shadow memcpy: commit the just-drawn dumb buffer directly and
-+     * hand out the other one. The page-flip wait in update_plane_fb()
-+     * guarantees the handed-out buffer finished scanout (blocking
-+     * fallback covers drivers without flip events). */
-+    update_plane_fb(fox_draw_idx);
-+    fox_draw_idx = 1 - fox_draw_idx;
-+    current_buffer = fox_draw_idx;
-+    return &drm_surfaces[fox_draw_idx]->base;
++    update_plane_fb(current_buffer);
+     current_buffer = 1 - current_buffer;
+     return draw_buf;
  }
- 
- static void drm_exit(minui_backend* backend __unused) {
