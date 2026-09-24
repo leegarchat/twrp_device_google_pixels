@@ -900,6 +900,24 @@ static drmModeConnector *find_main_monitor(int fd, drmModeRes *resources,
         }
     }
 
+    /* Fox fps_boost: prefer the highest refresh at the preferred
+     * resolution. Panels report 60Hz preferred while offering 90/120;
+     * with a ~30ms CPU frame, 60Hz shows every other vsync (~30fps
+     * visible) while 120Hz shows every other vsync as smooth 60fps.
+     * Same resolution, so timings/clocks stay in the panel's list. */
+    {
+        int pw = main_monitor_connector->modes[*mode_index].hdisplay;
+        int ph = main_monitor_connector->modes[*mode_index].vdisplay;
+        int pv = main_monitor_connector->modes[*mode_index].vrefresh;
+        for (int modes = 0; modes < main_monitor_connector->count_modes; modes++) {
+            const drmModeModeInfo *m = &main_monitor_connector->modes[modes];
+            if (m->hdisplay == pw && m->vdisplay == ph && m->vrefresh > pv) {
+                *mode_index = modes;
+                pv = m->vrefresh;
+            }
+        }
+    }
+
     return main_monitor_connector;
 }
 
@@ -1093,7 +1111,8 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
   int width = main_monitor_crtc->mode.hdisplay;
   int height = main_monitor_crtc->mode.vdisplay;
 
-  printf("width: %d, height: %d\n", width, height);
+  printf("width: %d, height: %d, refresh: %d\n", width, height,
+         main_monitor_crtc->mode.vrefresh);
 
   drmModeFreeResources(res);
 

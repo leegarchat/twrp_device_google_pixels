@@ -75,7 +75,32 @@
  }
  
  static drmModeConnector *find_first_connected_connector(int fd,
-@@ -898,8 +930,53 @@
+@@ -865,6 +897,24 @@
+                 DRM_MODE_TYPE_PREFERRED) {
+             *mode_index = modes;
+             break;
++        }
++    }
++
++    /* Fox fps_boost: prefer the highest refresh at the preferred
++     * resolution. Panels report 60Hz preferred while offering 90/120;
++     * with a ~30ms CPU frame, 60Hz shows every other vsync (~30fps
++     * visible) while 120Hz shows every other vsync as smooth 60fps.
++     * Same resolution, so timings/clocks stay in the panel's list. */
++    {
++        int pw = main_monitor_connector->modes[*mode_index].hdisplay;
++        int ph = main_monitor_connector->modes[*mode_index].vdisplay;
++        int pv = main_monitor_connector->modes[*mode_index].vrefresh;
++        for (int modes = 0; modes < main_monitor_connector->count_modes; modes++) {
++            const drmModeModeInfo *m = &main_monitor_connector->modes[modes];
++            if (m->hdisplay == pw && m->vdisplay == ph && m->vrefresh > pv) {
++                *mode_index = modes;
++                pv = m->vrefresh;
++            }
+         }
+     }
+ 
+@@ -898,8 +948,53 @@
    drmModeAtomicFree(atomic_req);
  }
  
@@ -130,7 +155,7 @@
  
    /* Set atomic req */
    drmModeAtomicReqPtr atomic_req = drmModeAtomicAlloc();
-@@ -917,14 +994,30 @@
+@@ -917,14 +1012,30 @@
    /* Add property */
    for(i = 0; i < number_of_lms; i++)
      drmModeAtomicAddProperty(atomic_req, plane_res[i].plane->plane_id,
@@ -166,7 +191,17 @@
  
    if (ret)
      printf("Atomic commit failed ret=%d\n", ret);
-@@ -1147,9 +1240,13 @@
+@@ -1000,7 +1111,8 @@
+   int width = main_monitor_crtc->mode.hdisplay;
+   int height = main_monitor_crtc->mode.vdisplay;
+ 
+-  printf("width: %d, height: %d\n", width, height);
++  printf("width: %d, height: %d, refresh: %d\n", width, height,
++         main_monitor_crtc->mode.vrefresh);
+ 
+   drmModeFreeResources(res);
+ 
+@@ -1147,9 +1259,13 @@
  }
  
  static GRSurface* drm_flip(minui_backend* backend __unused) {
