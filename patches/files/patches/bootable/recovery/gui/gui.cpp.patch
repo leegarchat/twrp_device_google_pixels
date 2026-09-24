@@ -8,10 +8,11 @@
  #include "../openrecoveryscript.hpp"
  #include "../orscmd/orscmd.h"
  #include "blanktimer.hpp"
-@@ -66,6 +67,43 @@
+@@ -65,6 +66,43 @@
+ #endif
  
  using namespace rapidxml;
- 
++
 +// Dynamic wide-panel theme selection (OrangeFox pixels).
 +// recovery-pixel-boot stamps DOF_THEME (e.g. "twres_1440") at
 +// early-init for wide slabs (pixel.json wide_theme + tools/theme_wide.py
@@ -48,10 +49,9 @@
 +	}
 +	return std::string(TWRES) + file;
 +}
-+
+ 
  // Global values
  static int gGuiInitialized = 0;
- static TWAtomicInt gForceRender;
 @@ -211,10 +249,20 @@
  
  	case EV_KEY:
@@ -101,7 +101,45 @@
  				LOGEVENT("POWER Key Released\n");
  				long long now = nowMs();
  				if (now < g_suppress_power_toggle_until_ms) {
-@@ -899,7 +948,7 @@
+@@ -725,11 +774,36 @@
+ 			else
+ 				idle_frames = 0;
+ 			// due to possible animation objects, we need to delay activating the input timeout
+-			input_timeout_ms = idle_frames > 15 ? 1000 : 0;
++			// Fox fps_boost: 1000ms idle poll made the first tap after idle
++			// feel like a render stall (up to 1s input lag); 100ms keeps
++			// battery behavior sane while restoring tap response.
++			input_timeout_ms = idle_frames > 15 ? 100 : 0;
+ 
+ #ifndef PRINT_RENDER_TIME
+ 			if (ret > 1)
++			{
++				// Fox fps_boost branch: throttled frame-cost stats (avg over
++				// 120 rendered frames) so field logs show whether a change
++				// actually moves the needle. Remove before merge to main.
++				timespec fox_start, fox_mid, fox_end;
++				static uint64_t fox_r_sum = 0, fox_f_sum = 0;
++				static unsigned fox_n = 0;
++				clock_gettime(CLOCK_MONOTONIC, &fox_start);
+ 				PageManager::Render();
++				clock_gettime(CLOCK_MONOTONIC, &fox_mid);
++				flip();
++				clock_gettime(CLOCK_MONOTONIC, &fox_end);
++				fox_r_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_start, fox_mid);
++				fox_f_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_mid, fox_end);
++				if (++fox_n >= 120)
++				{
++					LOGINFO("foxfps: render avg %llu ms, flip avg %llu ms (%u frames)\n",
++						(unsigned long long)(fox_r_sum / fox_n),
++						(unsigned long long)(fox_f_sum / fox_n), fox_n);
++					fox_r_sum = fox_f_sum = 0;
++					fox_n = 0;
++				}
++			}
+ 
+ 			if (ret > 0)
+ 				flip();
+@@ -899,7 +973,7 @@
  #endif
  
  	// load and show splash screen
@@ -110,7 +148,7 @@
  		LOGERR("Failed to load splash screen XML.\n");
  	}
  	else {
-@@ -934,7 +983,7 @@
+@@ -934,7 +1008,7 @@
  
  	if (check)
  	{
@@ -119,7 +157,7 @@
  		{
  			gui_err("base_pkg_err=Failed to load base packages.");
  			goto error;
-@@ -968,7 +1017,7 @@
+@@ -968,7 +1042,7 @@
  		if (check || PageManager::LoadPackage("OrangeFox", theme_path, "main"))
  		{
  #endif // ifndef TW_OEM_BUILD
@@ -128,7 +166,7 @@
  			{
  				gui_err("base_pkg_err=Failed to load base packages.");
  				goto error;
-@@ -1018,7 +1067,7 @@
+@@ -1018,7 +1092,7 @@
  		if (PageManager::ReloadPackage("OrangeFox", theme_path)) 
  		{
  			// Custom theme failed to load, try to load stock theme

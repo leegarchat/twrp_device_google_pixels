@@ -245,6 +245,10 @@ struct drm_msm_spr_init_cfg_v2 {
 
 static drm_surface *drm_surfaces[2];
 static int current_buffer;
+/* Fox fps_boost: index of the dumb buffer handed out for drawing (the
+ * other one is on scanout). Replaces the draw_buf shadow (kept allocated
+ * but unused to keep init error paths untouched). */
+static int fox_draw_idx = 0;
 static GRSurface *draw_buf = nullptr;
 
 static drmModeCrtc *main_monitor_crtc;
@@ -930,8 +934,51 @@ static void disable_non_main_crtcs(int fd,
   drmModeAtomicFree(atomic_req);
 }
 
-static void update_plane_fb() {
+/* Fox fps_boost: page-flip event plumbing. Steady-state commits are
+ * NONBLOCK + PAGE_FLIP_EVENT so scanout pipelines with the next frame's
+ * drawing (no tearing queue); the wait below caps one commit in flight.
+ * If the driver never delivers the event, the wait disables itself
+ * permanently and commits fall back to blocking (pre-boost behavior). */
+static volatile int fox_flip_pending = 0;
+static bool fox_flip_wait_broken = false;
+
+static void fox_page_flip_handler(int /*fd*/, unsigned int /*frame*/,
+                                  unsigned int /*sec*/, unsigned int /*usec*/,
+                                  void *user_data) {
+  volatile int *pending = (volatile int *)user_data;
+  *pending = 0;
+}
+
+static void fox_wait_flip(void) {
+  if (fox_flip_wait_broken)
+    return;
+  struct pollfd pfd;
+  pfd.fd = drm_fd;
+  pfd.events = POLLIN;
+  drmEventContext evctx;
+  memset(&evctx, 0, sizeof(evctx));
+  evctx.version = DRM_EVENT_CONTEXT_VERSION;
+  evctx.page_flip_handler = fox_page_flip_handler;
+  int waited = 0;
+  while (fox_flip_pending && waited < 100) {
+    int r = poll(&pfd, 1, 20);
+    if (r > 0)
+      drmHandleEvent(drm_fd, &evctx);
+    waited += 20;
+  }
+  if (fox_flip_pending) {
+    printf("foxfps: page-flip event missing, flip wait disabled\n");
+    fox_flip_pending = 0;
+    fox_flip_wait_broken = true;
+  }
+}
+
+static void update_plane_fb(int fox_buf) {
   uint32_t i, prop_id;
+  /* Fox fps_boost: the first commit performs the modeset (blocking +
+   * ALLOW_MODESET); every later frame only swaps FB_ID via NONBLOCK +
+   * page-flip event. drm_blank() keeps its own modeset path, untouched. */
+  static bool fox_modeset_done = false;
 
   /* Set atomic req */
   drmModeAtomicReqPtr atomic_req = drmModeAtomicAlloc();
@@ -949,14 +996,30 @@ static void update_plane_fb() {
   /* Add property */
   for(i = 0; i < number_of_lms; i++)
     drmModeAtomicAddProperty(atomic_req, plane_res[i].plane->plane_id,
-                             fb_prop_id, drm_surfaces[current_buffer]->fb_id);
+                             fb_prop_id, drm_surfaces[fox_buf]->fb_id);
 
   /* Commit changes */
   int32_t ret;
-  ret = drmModeAtomicCommit(drm_fd, atomic_req,
-                 DRM_MODE_ATOMIC_ALLOW_MODESET, NULL);
-
-  drmModeAtomicFree(atomic_req);
+  if (fox_modeset_done && !fox_flip_wait_broken) {
+    fox_flip_pending = 1;
+    ret = drmModeAtomicCommit(drm_fd, atomic_req,
+            DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT,
+            &fox_flip_pending);
+    if (ret == 0) {
+      drmModeAtomicFree(atomic_req);
+      fox_wait_flip();
+    } else {
+      fox_flip_pending = 0;
+      ret = drmModeAtomicCommit(drm_fd, atomic_req, 0, NULL);
+      drmModeAtomicFree(atomic_req);
+    }
+  } else {
+    uint32_t fox_flags = fox_modeset_done ? 0 : DRM_MODE_ATOMIC_ALLOW_MODESET;
+    ret = drmModeAtomicCommit(drm_fd, atomic_req, fox_flags, NULL);
+    drmModeAtomicFree(atomic_req);
+  }
+  if (ret == 0)
+    fox_modeset_done = true;
 
   if (ret)
     printf("Atomic commit failed ret=%d\n", ret);
@@ -1175,15 +1238,19 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
 
   drm_blank(nullptr, false);
 
-  return draw_buf;
+  fox_draw_idx = 0;
+  return drm_surfaces[0];
 }
 
 static GRSurface* drm_flip(minui_backend* backend __unused) {
-    memcpy(drm_surfaces[current_buffer]->base.data,
-            draw_buf->data, draw_buf->height * draw_buf->row_bytes);
-    update_plane_fb();
-    current_buffer = 1 - current_buffer;
-    return draw_buf;
+    /* No shadow memcpy: commit the just-drawn dumb buffer directly and
+     * hand out the other one. The page-flip wait in update_plane_fb()
+     * guarantees the handed-out buffer finished scanout (blocking
+     * fallback covers drivers without flip events). */
+    update_plane_fb(fox_draw_idx);
+    fox_draw_idx = 1 - fox_draw_idx;
+    current_buffer = fox_draw_idx;
+    return drm_surfaces[fox_draw_idx];
 }
 
 static void drm_exit(minui_backend* backend __unused) {

@@ -1,0 +1,95 @@
+--- a/bootable/recovery/gui/scrolllist.cpp
++++ b/bootable/recovery/gui/scrolllist.cpp
+@@ -20,6 +20,7 @@
+ */
+ 
+ #include <string.h>
++#include <vector>
+ 
+ extern "C" {
+ #include "../twcommon.h"
+@@ -387,6 +388,59 @@
+ 	RenderStdItem(yPos, selected, NULL, "implement RenderItem!");
+ }
+ 
++// Fox fps_boost: cache for rounded group-background shapes. RenderStdItem
++// used to rebuild (malloc + per-pixel fill + free) the same bitmaps for
++// every grouped row on every frame; rows share a handful of
++// (w,h,r,s,corners,color) combos, so a small static cache kills the
++// per-frame churn. Keyed by full params (colors included), so theme
++// changes can't go stale. Bounded (24 entries, cleared on overflow).
++// Single-threaded render loop, no locking. Returned pointer is borrowed
++// (valid until a cache clear) — never free() it.
++struct FoxShapeKey {
++	int w, h, r, s;
++	uint32_t color;
++	int corners;
++	bool operator==(const FoxShapeKey& o) const {
++		return w == o.w && h == o.h && r == o.r && s == o.s &&
++			color == o.color && corners == o.corners;
++	}
++};
++struct FoxShapeEntry {
++	FoxShapeKey key;
++	uint32_t* img;
++};
++static std::vector<FoxShapeEntry> fox_shape_cache;
++
++static uint32_t fox_color_key(COLOR c) {
++	return ((uint32_t)c.alpha << 24) | ((uint32_t)c.blue << 16) |
++		((uint32_t)c.green << 8) | (uint32_t)c.red;
++}
++
++static uint32_t* fox_cached_shape(int w, int h, int r, int s, COLOR color,
++		RoundedCornerFlags corners) {
++	FoxShapeKey k;
++	k.w = w; k.h = h; k.r = r; k.s = s;
++	k.color = fox_color_key(color);
++	k.corners = (int)corners;
++	for (size_t i = 0; i < fox_shape_cache.size(); i++) {
++		if (fox_shape_cache[i].key == k)
++			return fox_shape_cache[i].img;
++	}
++	uint32_t* img = createShape(w, h, r, s, color, corners);
++	if (!img)
++		return nullptr;
++	if (fox_shape_cache.size() >= 24) {
++		for (size_t i = 0; i < fox_shape_cache.size(); i++)
++			free(fox_shape_cache[i].img);
++		fox_shape_cache.clear();
++	}
++	FoxShapeEntry e;
++	e.key = k;
++	e.img = img;
++	fox_shape_cache.push_back(e);
++	return img;
++}
++
+ void GUIScrollList::RenderStdItem(int yPos, bool selected, ImageResource* icon, const char* text, const char* addtext, int groupStatus)
+ {
+ 	COLOR highlightColor = {0, 0, 0, 0};
+@@ -447,7 +501,8 @@
+ 			corners = RoundedCornerFlags::ALL;
+ 		}
+ 
+-		img = createShape(w, h, r, s, groupColor, corners);
++		// Fox fps_boost: borrowed cached shape, do NOT free (see above).
++		img = fox_cached_shape(w, h, r, s, groupColor, corners);
+ 
+ 		surface->width = w;
+ 		surface->height = h;
+@@ -457,13 +512,11 @@
+ 
+ 		gr_blit((gr_surface)surface, 0, 0, w, h, x, y);
+ 		if (isHighlight) {
+-			hl_img = createShape(w, h, r, s, highlightColor, corners);
++			hl_img = fox_cached_shape(w, h, r, s, highlightColor, corners);
+ 			surface->data = (GGLubyte*)hl_img;
+ 			gr_blit((gr_surface)surface, 0, 0, w, h, x, y);
+ 		}
+ 		res_free_surface(surface);
+-		free(img);
+-		free(hl_img);
+ 
+ 		// render group arrow
+ 		if (groupArrow && groupArrow->GetResource()) {

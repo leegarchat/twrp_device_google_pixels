@@ -774,11 +774,36 @@ static int runPages(const char *page_name, const int stop_on_page_done)
 			else
 				idle_frames = 0;
 			// due to possible animation objects, we need to delay activating the input timeout
-			input_timeout_ms = idle_frames > 15 ? 1000 : 0;
+			// Fox fps_boost: 1000ms idle poll made the first tap after idle
+			// feel like a render stall (up to 1s input lag); 100ms keeps
+			// battery behavior sane while restoring tap response.
+			input_timeout_ms = idle_frames > 15 ? 100 : 0;
 
 #ifndef PRINT_RENDER_TIME
 			if (ret > 1)
+			{
+				// Fox fps_boost branch: throttled frame-cost stats (avg over
+				// 120 rendered frames) so field logs show whether a change
+				// actually moves the needle. Remove before merge to main.
+				timespec fox_start, fox_mid, fox_end;
+				static uint64_t fox_r_sum = 0, fox_f_sum = 0;
+				static unsigned fox_n = 0;
+				clock_gettime(CLOCK_MONOTONIC, &fox_start);
 				PageManager::Render();
+				clock_gettime(CLOCK_MONOTONIC, &fox_mid);
+				flip();
+				clock_gettime(CLOCK_MONOTONIC, &fox_end);
+				fox_r_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_start, fox_mid);
+				fox_f_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_mid, fox_end);
+				if (++fox_n >= 120)
+				{
+					LOGINFO("foxfps: render avg %llu ms, flip avg %llu ms (%u frames)\n",
+						(unsigned long long)(fox_r_sum / fox_n),
+						(unsigned long long)(fox_f_sum / fox_n), fox_n);
+					fox_r_sum = fox_f_sum = 0;
+					fox_n = 0;
+				}
+			}
 
 			if (ret > 0)
 				flip();

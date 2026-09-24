@@ -1,0 +1,31 @@
+--- a/bootable/recovery/gui/progressbar.cpp
++++ b/bootable/recovery/gui/progressbar.cpp
+@@ -114,6 +114,13 @@
+ 	if (!isConditionTrue())
+ 		return 0;
+ 
++	// Fox fps_boost: resource check without drawing (see below).
++	if (!mEmptyBar || !mEmptyBar->GetResource())
++		return -1;
++
++	if (!mFullBar || !mFullBar->GetResource())
++		return -1;
++
+ 	std::string str;
+ 	int min, max, cur, pos;
+ 
+@@ -177,8 +184,12 @@
+ 
+ 	mLastPos = pos;
+ 
+-	if (RenderInternal() != 0)
+-		return -1;
++	// Fox fps_boost: Update() must NOT draw. It used to call
++	// RenderInternal() here, and Render() below calls Update() +
++	// RenderInternal() again — every progress frame was blitted twice.
++	// runPages() always follows Update()->2 with Render() in the same
++	// frame, and the forced path calls Render() directly, so a single
++	// draw in RenderInternal() covers all cases.
+ 	return 2;
+ }
+ 
