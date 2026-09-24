@@ -7,9 +7,9 @@
 2. First-stage: `IsRecoveryMode()` (`access /system/bin/recovery`, открыт)
    → exec нашего `/system/bin/init` — это **статический стаб**, не настоящий init.
 3. Стаб: снапшот рамдиска (для reflash) → анпак LGZ-кластера → exec
-   настоящего `init.fox_real`. Фейл в recovery-режиме = `reboot bootloader`.
-   Legacy-путь в `SecondStageMain` пропускается (handoff по `init.fox_real`).
-   (`.fox_real`, а не `init.real`: без коллизий с цепочками Magisk/KSU.)
+   настоящего `fox.init`. Фейл в recovery-режиме = `reboot bootloader`.
+   Legacy-путь в `SecondStageMain` пропускается (handoff по `fox.init`).
+   (`fox.init`, а не `init.real`: без коллизий с цепочками Magisk/KSU.)
 4. `early-init exec` → `recovery-pixel-boot init` (резолв девайса, пропсы,
    hinge-детект).
 5. `on init exec` → `setup-temp`; стартуют Trusty/keymint/weaver-сервисы.
@@ -22,18 +22,18 @@
 
 Статический C (`static_executable`, без логов) PID 1 на месте
 `/system/bin/init`; настоящий init едет **внутри LGZ-кластера** как
-`init.fox_real` (`init` в exclude-списке, `init.fox_real` — нет; свап делает
+`fox.init` (`init` в exclude-списке, `fox.init` — нет; свап делает
 колбэк до паковки и манифестов).
 
-- **Первое invocation** (`init.fox_real` отсутствует): встроенный снапшот
+- **Первое invocation** (`fox.init` отсутствует): встроенный снапшот
   (`snapshot.c`, порт Rust-версии; Rust-бинарь `ramdisk_snapshot`
   оставлен фолбэком) → `lgz decompress` → маркеры
-  (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `init.fox_real`.
+  (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `fox.init`.
 - **Цепочка фолбэков, первое совпадение побеждает**: маркеры →
-  `init.fox_real` → анпак сейчас → хендофф на `/init` (хук Magisk/KSU;
+  `fox.init` → анпак сейчас → хендофф на `/init` (хук Magisk/KSU;
   защита от петли через readlink — если `/init` это сам стаб, то
   ребут в bootloader).
-- Распаковка обязана случиться до `selinux_setup`: `init.fox_real`,
+- Распаковка обязана случиться до `selinux_setup`: `fox.init`,
   sepolicy и пропсы должны лежать на месте до `SetupSelinux`/`PropertyInit`.
 
 Зачем стаб вообще: файлы, нужные **до** анпака (сам анпаковщик, `recovery`,

@@ -1014,17 +1014,31 @@ case "$CALL_TYPE" in
 
         # --- INIT-STUB: real init rides the cluster, stub takes its place ---
         # Must run BEFORE lgz_compress_ramdisk + manifest generation below:
-        # "init" is in LGZ_EXCLUDE_LIST (stays open), "init.fox_real" is not
+        # "init" is in LGZ_EXCLUDE_LIST (stays open), "fox.init" is not
         # (packs via system/bin), and the file lists must reference final
-        # names. The .fox_real name (not init.real) avoids collisions with
+        # names. The fox.init name (not init.real) avoids collisions with
         # Magisk/KSU chains, which use init.real for the stock init backup.
         # If the swap is skipped the build still boots via the
         # init.cpp unpack fallback — warn loudly, do not fail.
         if [ -x "$TARGET_DIR/system/bin/init" ] && [ -f "$TARGET_DIR/system/bin/recovery_init_stub" ]; then
-            mv -f "$TARGET_DIR/system/bin/init" "$TARGET_DIR/system/bin/init.fox_real"
+            mv -f "$TARGET_DIR/system/bin/init" "$TARGET_DIR/system/bin/fox.init"
             mv -f "$TARGET_DIR/system/bin/recovery_init_stub" "$TARGET_DIR/system/bin/init"
             chmod 0755 "$TARGET_DIR/system/bin/init"
-            echo "    [INIT-STUB] real init -> init.fox_real, stub installed as init"
+            echo "    [INIT-STUB] real init -> fox.init, stub installed as init"
+            # Magisk hexpatch canary assert: the installed stub must expose
+            # exactly ONE 16B "/system/bin/init" site (kCanaryInit in stub.c).
+            # Zero = detector dead (magisk would boot-loop silently, no logs);
+            # more = hexpatch would corrupt exec paths or guards. Fail LOUD,
+            # but ONLY on the swapped path: a skipped swap (stock init in
+            # place) keeps the warn-and-continue init.cpp fallback below.
+            _canary_n=$(grep -a -o '/system/bin/init' "$TARGET_DIR/system/bin/init" 2>/dev/null | wc -l)
+            if [ "${_canary_n:-0}" != "1" ]; then
+                echo "    [INIT-STUB] ERROR: canary sites in stub = ${_canary_n:-?}, need exactly 1"
+                unset _canary_n
+                return 1
+            fi
+            echo "    [INIT-STUB] + magisk canary OK (1 site)"
+            unset _canary_n
         else
             echo "    [INIT-STUB] WARNING: init or recovery_init_stub missing, swap skipped (init.cpp fallback)"
         fi

@@ -24,13 +24,13 @@
      SelinuxSetupKernelLogging();
  
 +    // --- OFOX STUB HANDOFF ---
-+    // If recovery-init-stub already unpacked the cluster (/system/bin/init.fox_real
++    // If recovery-init-stub already unpacked the cluster (/system/bin/fox.init
 +    // exists), the pre-unpack snapshot is taken and the tree is final: skip the
 +    // legacy snapshot+unpack+verify entirely. Re-running unpack here would
-+    // overwrite the RUNNING init.fox_real and its mapped libs (ETXTBSY) and fail
++    // overwrite the RUNNING fox.init and its mapped libs (ETXTBSY) and fail
 +    // the verify below. Legacy path stays for stub-less boots only.
-+    // NOTE: .fox_real (not init.real) avoids collisions with Magisk/KSU chains.
-+    bool ofox_stub_done = (access("/system/bin/init.fox_real", F_OK) == 0);
++    // NOTE: fox.init (not init.real) avoids collisions with Magisk/KSU chains.
++    bool ofox_stub_done = (access("/system/bin/fox.init", F_OK) == 0);
 +    if (ofox_stub_done) {
 +        LOG(INFO) << "[OFOX] stub handoff: cluster already unpacked, skipping legacy bootstrap";
 +    } else {

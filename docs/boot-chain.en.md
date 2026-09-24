@@ -8,9 +8,9 @@
 2. First-stage: `IsRecoveryMode()` (`access /system/bin/recovery`, open)
    → exec of our `/system/bin/init` — this is a **static stub**, not the real init.
 3. Stub: ramdisk snapshot (for reflash) → unpack of the LGZ cluster → exec
-   of the real `init.fox_real`. Failure in recovery mode = `reboot bootloader`.
-   The legacy path in `SecondStageMain` is skipped (handoff via `init.fox_real`).
-   (`.fox_real`, not `init.real`: avoids collisions with Magisk/KSU chains.)
+   of the real `fox.init`. Failure in recovery mode = `reboot bootloader`.
+   The legacy path in `SecondStageMain` is skipped (handoff via `fox.init`).
+   (`fox.init`, not `init.real`: avoids collisions with Magisk/KSU chains.)
 4. `early-init exec` → `recovery-pixel-boot init` (device resolution, props,
    hinge detection).
 5. `on init exec` → `setup-temp`; Trusty/keymint/weaver services start.
@@ -23,17 +23,17 @@
 
 Static C (`static_executable`, no logs) PID 1 in place of
 `/system/bin/init`; the real init travels **inside the LGZ cluster** as
-`init.fox_real` (`init` is on the exclude list, `init.fox_real` is not; the swap is done by
+`fox.init` (`init` is on the exclude list, `fox.init` is not; the swap is done by
 the callback before packing and manifests).
 
-- **First invocation** (`init.fox_real` missing): built-in snapshot
+- **First invocation** (`fox.init` missing): built-in snapshot
   (`snapshot.c`, a port of the Rust version; the Rust `ramdisk_snapshot`
   binary is kept as a fallback) → `lgz decompress` → marker files
-  (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `init.fox_real`.
-- **Fallback chain, first match wins**: markers → `init.fox_real` →
+  (`/lgz_complite`, `/system/etc/lgz_complite`) → exec `fox.init`.
+- **Fallback chain, first match wins**: markers → `fox.init` →
   unpack now → `/init` handoff (Magisk/KSU hook; loop-guarded by
   readlink — if `/init` is this stub, reboot to bootloader instead).
-- Unpacking must happen before `selinux_setup`: `init.fox_real`,
+- Unpacking must happen before `selinux_setup`: `fox.init`,
   sepolicy and props must be in place before `SetupSelinux`/`PropertyInit`.
 
 Why the stub exists at all: files needed **before** unpacking (the unpacker itself, `recovery`,

@@ -101,7 +101,7 @@ PRODUCT_SOONG_NAMESPACES += $(LOCAL_PATH)
 
 # Static PID 1 stub: unpacks the LGZ cluster, then execs the real init.
 # Installed as recovery_init_stub; the build callback swaps it over
-# /system/bin/init (real init rides inside the cluster as init.fox_real).
+# /system/bin/init (real init rides inside the cluster as fox.init).
 PRODUCT_PACKAGES += \
     recovery_init_stub
 
