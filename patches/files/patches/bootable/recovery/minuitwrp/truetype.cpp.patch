@@ -1,0 +1,51 @@
+--- a/bootable/recovery/minuitwrp/truetype.cpp
++++ b/bootable/recovery/minuitwrp/truetype.cpp
+@@ -438,18 +438,18 @@
+ }
+ 
+ void twrpTruetype::gr_ttf_string_cache_truncate(TrueTypeFont *font) {
+-	StringCacheMap::iterator stringCacheItr;
+-
+-	if (font->string_cache.size() == STRING_CACHE_MAX_ENTRIES) {
+-		StringCacheEntry *truncateEntry = nullptr;
+-		stringCacheItr = font->string_cache.begin();
+-		int deleteCtr = 0;
+-		while (stringCacheItr != font->string_cache.end() || deleteCtr == (STRING_CACHE_MAX_ENTRIES - 1)) {
+-			truncateEntry = stringCacheItr->second;
+-			gr_ttf_freeStringCache(truncateEntry->key, truncateEntry, nullptr);
+-			stringCacheItr = font->string_cache.erase(stringCacheItr);
+-			deleteCtr++;
+-		}
++	// Fox fps_boost: the old code wiped the WHOLE cache when it hit
++	// exactly MAX entries (broken || loop condition erased to end) —
++	// on file lists with 200+ files (name + size strings) this
++	// re-rasterized every string every frame (~15ms forever). Trim only
++	// the first TRUNCATE batch now; hot entries survive. Callers: only
++	// the insert-miss branch below (steady-state hits never trim).
++	if (font->string_cache.size() < STRING_CACHE_MAX_ENTRIES)
++		return;
++	StringCacheMap::iterator it = font->string_cache.begin();
++	for (int i = 0; i < STRING_CACHE_TRUNCATE_ENTRIES && it != font->string_cache.end(); i++) {
++		gr_ttf_freeStringCache(it->second->key, it->second, nullptr);
++		it = font->string_cache.erase(it);
+ 	}
+ }
+ 
+@@ -464,6 +464,9 @@
+ 
+ 	stringCacheItr = font->string_cache.find(k);
+ 	if (stringCacheItr == font->string_cache.end()) {
++		// Fox fps_boost: bound the cache only when inserting (see
++		// truncate). Callers hold font->mutex here (measureEx, textExWH).
++		gr_ttf_string_cache_truncate(font);
+ 		res = new StringCacheEntry;
+ 		res->rendered_bytes = gr_ttf_render_text(font, &res->surface, text, max_width);
+ 		if(res->rendered_bytes < 0) {
+@@ -489,7 +492,6 @@
+ 	int res = -1;
+ 
+ 	pthread_mutex_lock(&f->mutex);
+-	gr_ttf_string_cache_truncate(f);
+ 	StringCacheEntry *e = gr_ttf_string_cache_get(f, s, -1);
+ 	if(e)
+ 		res = e->surface.width;
