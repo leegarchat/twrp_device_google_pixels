@@ -44,7 +44,7 @@ patches/files/
 
 TWRP: `data.cpp` (letterbox), `action.cpp` (`cmd:`-torch), `gui.cpp`,
 `objects.hpp`, `pages.cpp`, `patternpassword.cpp`, темы;
-`minuitwrp`: `events.cpp` (вибро), `graphics.cpp`, `graphics_drm.cpp`
+`minuitwrp`: `events.cpp` (вибро; GS101 — импульс `brightness` с таймером, так как `activate` недоступен для записи в recovery), `graphics.cpp`, `graphics_drm.cpp`
 (cover-панель), `resources.cpp`; `partition*.cpp/hpp`,
 `twrp-functions.cpp`, `twrpRepacker.cpp`, `install.cpp`, `spl_check.cpp`.
 Система: vold (`Decrypt`, `MetadataCrypt`, `Weaver1`, `FsCrypt` + headers),

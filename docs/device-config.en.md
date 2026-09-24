@@ -39,7 +39,7 @@ Vendor specifics do not live in code — only in JSON. Code reads the finished
 
 | Key | Read by | Meaning |
 |---|---|---|
-| `touch_modules[]` | `boot` stage | Touch stack load order (verify against stock `vendor_dlkm`) |
+| `touch_modules[]` | `boot` stage | Dependency-ordered device modules from stock `vendor_dlkm` (touch, haptics, and required support such as Laguna `i2c-dev`) |
 | `part_touch` / `part_vendor` / `part_sysdlkm` | `ko-fetch` | Partitions supplying modules and firmware |
 | `preload_modules[]` | `boot` stage | Providers before the touch matrix (e.g. `pwrseq-core` for `lwis` on 6.12) |
 | `cs40l26_pm` | `boot` stage | Haptics power control |

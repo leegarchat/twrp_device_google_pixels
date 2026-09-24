@@ -9,8 +9,9 @@
   "status_h": 130,
   "progressive_scale": 0,
   "touch_modules": [
-    "focal_touch",
+    "i2c-dev",
     "stm_core",
+    "focal_touch",
     "syna_touch",
     "cs40l26-core",
     "cs40l26-i2c"

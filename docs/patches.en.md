@@ -44,7 +44,7 @@ patches/files/
 
 TWRP: `data.cpp` (letterbox), `action.cpp` (`cmd:`-torch), `gui.cpp`,
 `objects.hpp`, `pages.cpp`, `patternpassword.cpp`, themes;
-`minuitwrp`: `events.cpp` (vibration), `graphics.cpp`, `graphics_drm.cpp`
+`minuitwrp`: `events.cpp` (vibration; GS101 uses a timed `brightness` pulse because `activate` cannot be written in recovery), `graphics.cpp`, `graphics_drm.cpp`
 (cover panel), `resources.cpp`; `partition*.cpp/hpp`,
 `twrp-functions.cpp`, `twrpRepacker.cpp`, `install.cpp`, `spl_check.cpp`.
 System: vold (`Decrypt`, `MetadataCrypt`, `Weaver1`, `FsCrypt` + headers),

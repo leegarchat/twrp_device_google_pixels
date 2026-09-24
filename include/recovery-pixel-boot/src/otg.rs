@@ -21,6 +21,14 @@ const PROC_READY: &str = "/proc/otg_host_ready";
 const USB_ROLE_CLASS: &str = "/sys/class/usb_role";
 const TYPEC_CLASS: &str = "/sys/class/typec";
 const PSY_CLASS: &str = "/sys/class/power_supply";
+const LAGUNA_HOST_ROLE_REQUESTS: &[(&str, &str)] = &[
+    ("preferred_role", "source"),
+    ("port_type", "source"),
+];
+const LAGUNA_DEVICE_ROLE_REQUESTS: &[(&str, &str)] = &[
+    ("port_type", "dual"),
+    ("preferred_role", "sink"),
+];
 /// gvotable CHARGER_MODE force values driving VBUS in host mode (6.1 trick).
 /// ABSENT on laguna 6.6 stock kernels (verified: zero gvotables/CHARGER_MODE
 /// strings in mustang bp4a 6.6.98 + cp2a 6.6.118 images) — laguna must use
@@ -75,8 +83,8 @@ fn is_gs101() -> bool {
 /// c450000.usb3-role-switch directly is a hardware no-op (field-proven:
 /// sysfs reads back "host" while _dwc3_google_set_role host never fires),
 /// and the gvotable CHARGER_MODE VBUS force does not exist on laguna 6.6
-/// kernels — so laguna drives host mode through the standard TCPM typec
-/// API (power_role=source) instead. Family-level: all four devices share
+/// kernels — so laguna drives host mode through TCPM's preferred_role/
+/// port_type controls instead of power_role. Family-level: all four devices share
 /// the max77759 SPMI TCPC + glue topology (stock DT).
 fn is_laguna_family(soc_family: &str, hardware: &str) -> bool {
     soc_family.trim() == "laguna"
@@ -131,22 +139,42 @@ fn read_trim(p: &Path) -> String {
     std::fs::read_to_string(p).unwrap_or_default().trim().to_string()
 }
 
-/// Idempotent power_role drive with read-back. Returns the final value.
-fn drive_power_role(port: &Path, want: &str) -> String {
-    let f = port.join("power_role");
-    let cur = read_trim(&f);
-    if cur == want {
-        info(&format!("typec power_role already {want}"));
-        return cur;
+/// The stock Laguna kernel rejects `power_role` writes when the Type-C
+/// port has no `pr_set` callback. Request the unattached DRP preference
+/// (`preferred_role`/`try_role`) and set `port_type`; both are standard TCPM
+/// controls with independent kernel callbacks.
+fn laguna_role_requests(host: bool) -> &'static [(&'static str, &'static str)] {
+    if host {
+        LAGUNA_HOST_ROLE_REQUESTS
+    } else {
+        LAGUNA_DEVICE_ROLE_REQUESTS
     }
-    info(&format!("typec power_role {cur} -> {want}"));
-    if let Err(e) = std::fs::write(&f, format!("{want}\n").as_bytes()) {
-        info(&format!("typec power_role write FAILED: {e}"));
+}
+
+fn write_typec_role_attr(port: &Path, attribute: &str, value: &str) -> bool {
+    let path = port.join(attribute);
+    if !path.exists() {
+        info(&format!("typec {attribute} unavailable"));
+        return false;
     }
-    sleep(Duration::from_secs(2));
-    let back = read_trim(&f);
-    info(&format!("typec power_role now: {back}"));
-    back
+    match std::fs::write(&path, format!("{value}\n").as_bytes()) {
+        Ok(()) => {
+            info(&format!("typec {attribute} <- {value}: {}", read_trim(&path)));
+            true
+        }
+        Err(e) => {
+            info(&format!("typec {attribute}={value} write FAILED: {e}"));
+            false
+        }
+    }
+}
+
+fn drive_laguna_role(port: &Path, host: bool) -> bool {
+    let mut accepted = false;
+    for &(attribute, value) in laguna_role_requests(host) {
+        accepted |= write_typec_role_attr(port, attribute, value);
+    }
+    accepted
 }
 
 /// First dwc3_exynos_otg_id node found under the platform bus
@@ -178,7 +206,7 @@ fn find_otg_id() -> Option<PathBuf> {
     None
 }
 
-/// Native host path dispatcher: laguna goes through TCPM (power_role),
+/// Native host path dispatcher: laguna goes through TCPM Type-C role controls,
 /// everything else keeps the role-switch + gvotable path.
 fn native_activate() -> Result<(), String> {
     if is_laguna() {
@@ -187,26 +215,27 @@ fn native_activate() -> Result<(), String> {
     native_activate_legacy()
 }
 
-/// laguna host path via the TCPM typec API.
+/// Laguna host path via TCPM's preferred-role/port-type API.
 ///
-/// power_role=source makes TCPM source VBUS (max77779 charger OTG usecase),
-/// vote host into goog_usb_role_sw (downstream role-sw-dev,
-// _dwc3_google_set_role, eusb2 repeater regulators + mux). Success is
+/// preferred_role=source / port_type=source lets TCPM source VBUS
+/// (max77779 charger OTG usecase), vote host into goog_usb_role_sw (downstream role-sw-dev,
+/// _dwc3_google_set_role, eusb2 repeater regulators + mux). The 6.6
+/// power_role attribute is read-only when the port has no pr_set callback;
+/// preferred_role uses try_role and port_type uses the TCPM port_type_set
+/// callback instead. Success is
 /// verified on hardware state — data_role reads host AND the TCPM source
-/// psy reports online — never on the write alone. No typec port (shouldn't
-/// happen: TCPM registers port0) falls back to the legacy path.
+/// psy reports online — never on the request alone. No Type-C port or
+/// writable request fails loudly rather than reporting a false host state.
 fn native_activate_laguna() -> Result<(), String> {
     let port = match find_typec_port() {
         Some(p) => p,
         None => {
-            info("laguna: no /sys/class/typec port, legacy fallback");
-            return native_activate_legacy();
+            return Err("laguna: no /sys/class/typec port".into());
         }
     };
     info(&format!("laguna: typec port {}", port.display()));
-    let role = drive_power_role(&port, "source");
-    if role != "source" {
-        return Err(format!("typec power_role did not stick (now {role:?})"));
+    if !drive_laguna_role(&port, true) {
+        return Err("laguna: kernel rejected preferred_role and port_type host requests".into());
     }
     for i in 0..10 {
         let data = read_trim(&port.join("data_role"));
@@ -226,10 +255,8 @@ fn native_activate_laguna() -> Result<(), String> {
     Err("laguna: host not confirmed (data_role/source psy)".into())
 }
 
-/// Legacy native host path (role switch to host + gvotable VBUS force).
-/// Proven live on 6.12-era trees; on laguna 6.6 the gvotable side is a
-/// verified no-op (framework absent from stock kernels) — laguna never
-/// reaches this except as a typec-missing fallback.
+/// Legacy native host path (role switch to host + gvotable VBUS force), used
+/// for non-Laguna families on kernels where the shim is unavailable.
 fn native_activate_legacy() -> Result<(), String> {
     let role = find_usb_role().ok_or_else(|| "no usb_role switch found".to_string())?;
     info("switching controller role to host");
@@ -434,14 +461,13 @@ fn switch_to_host(current: &mut String) {
     let _ = std::fs::write(UDC_FILE, b"\n");
     let _ = std::fs::write(CHARGER_VALUE, b"49\n");
     let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
-    // laguna: the downstream role-switch write above is a hardware no-op
-    // and the gvotable force is absent on 6.6 kernels — drive the real
-    // voter (TCPM power_role=source); TCPM then sources VBUS, votes host
-    // into the glue (repeater regulators + mux follow). Idempotent:
-    // already-source is a no-op read.
+    // Laguna: request host through Type-C policy instead of the downstream
+    // role switch/gvotable path, which does not source VBUS on 6.6.
     if is_laguna() {
         if let Some(port) = find_typec_port() {
-            drive_power_role(&port, "source");
+            if !drive_laguna_role(&port, true) {
+                info("laguna: no writable Type-C host control");
+            }
         } else {
             info("laguna: no typec port for host drive");
         }
@@ -464,11 +490,13 @@ fn switch_to_device(current: &mut String) {
     }
     info(">>> SWITCHING TO DEVICE MODE <<<");
     let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
-    // laguna mirror of the host drive: hand the port back to sink so TCPM
-    // drops source/VBUS and votes device into the glue. Idempotent.
+    // Laguna: restore DRP mode and prefer sink so TCPM drops source/VBUS and
+    // votes device into the USB role-switch glue.
     if is_laguna() {
         if let Some(port) = find_typec_port() {
-            drive_power_role(&port, "sink");
+            if !drive_laguna_role(&port, false) {
+                info("laguna: no writable Type-C device control");
+            }
         } else {
             info("laguna: no typec port for device drive");
         }
@@ -782,5 +810,21 @@ mod tests {
         );
         let empty: Vec<String> = Vec::new();
         assert_eq!(pick_source_psy(&empty), None);
+    }
+
+    #[test]
+    fn laguna_host_uses_kernel_typec_requests() {
+        assert_eq!(
+            laguna_role_requests(true),
+            &[("preferred_role", "source"), ("port_type", "source")]
+        );
+    }
+
+    #[test]
+    fn laguna_device_restores_drp_and_prefers_sink() {
+        assert_eq!(
+            laguna_role_requests(false),
+            &[("port_type", "dual"), ("preferred_role", "sink")]
+        );
     }
 }

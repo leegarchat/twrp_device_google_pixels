@@ -39,7 +39,7 @@
 
 | Ключ | Кто читает | Смысл |
 |---|---|---|
-| `touch_modules[]` | `boot`-стадия | Порядок загрузки тач-стека (проверять по стоковому `vendor_dlkm`) |
+| `touch_modules[]` | `boot`-стадия | Модули устройства из стокового `vendor_dlkm` в порядке зависимостей (тач, хаптика и нужная обвязка, например Laguna `i2c-dev`) |
 | `part_touch` / `part_vendor` / `part_sysdlkm` | `ko-fetch` | Разделы-поставщики модулей и firmware |
 | `preload_modules[]` | `boot`-стадия | Провайдеры до тач-матрицы (напр. `pwrseq-core` для `lwis` на 6.12) |
 | `cs40l26_pm` | `boot`-стадия | Power-control хаптики |
