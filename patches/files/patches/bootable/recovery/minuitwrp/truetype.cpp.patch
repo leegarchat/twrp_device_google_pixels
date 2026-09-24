@@ -31,17 +31,28 @@
  	}
  }
  
-@@ -464,6 +464,9 @@
+@@ -464,6 +464,20 @@
  
  	stringCacheItr = font->string_cache.find(k);
  	if (stringCacheItr == font->string_cache.end()) {
++		// Fox fps_boost: canonical-key reuse. measureEx() warms the
++		// cache under max_width=-1 while every draw passes its own
++		// max_width, so each string occupied 2+ entries and file lists
++		// churned past the cap even after the trim fix. If the
++		// unclipped render fits, reuse it — no duplicate rasterization,
++		// no extra entry. Callers hold font->mutex (peek is a pure find).
++		if (max_width != -1) {
++			StringCacheEntry *canon = gr_ttf_string_cache_peek(font, text, -1);
++			if (canon && canon->surface.width <= max_width)
++				return canon;
++		}
 +		// Fox fps_boost: bound the cache only when inserting (see
 +		// truncate). Callers hold font->mutex here (measureEx, textExWH).
 +		gr_ttf_string_cache_truncate(font);
  		res = new StringCacheEntry;
  		res->rendered_bytes = gr_ttf_render_text(font, &res->surface, text, max_width);
  		if(res->rendered_bytes < 0) {
-@@ -489,7 +492,6 @@
+@@ -489,7 +503,6 @@
  	int res = -1;
  
  	pthread_mutex_lock(&f->mutex);

@@ -464,6 +464,17 @@ StringCacheEntry* twrpTruetype::gr_ttf_string_cache_get(TrueTypeFont *font, cons
 
 	stringCacheItr = font->string_cache.find(k);
 	if (stringCacheItr == font->string_cache.end()) {
+		// Fox fps_boost: canonical-key reuse. measureEx() warms the
+		// cache under max_width=-1 while every draw passes its own
+		// max_width, so each string occupied 2+ entries and file lists
+		// churned past the cap even after the trim fix. If the
+		// unclipped render fits, reuse it — no duplicate rasterization,
+		// no extra entry. Callers hold font->mutex (peek is a pure find).
+		if (max_width != -1) {
+			StringCacheEntry *canon = gr_ttf_string_cache_peek(font, text, -1);
+			if (canon && canon->surface.width <= max_width)
+				return canon;
+		}
 		// Fox fps_boost: bound the cache only when inserting (see
 		// truncate). Callers hold font->mutex here (measureEx, textExWH).
 		gr_ttf_string_cache_truncate(font);
