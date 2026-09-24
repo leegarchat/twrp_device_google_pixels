@@ -49,6 +49,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <android-base/properties.h>
@@ -1263,9 +1264,29 @@ static GRSurface* drm_flip(minui_backend* backend __unused) {
      * write-combined scanout mapping were glacial (render avg 476-713ms
      * on shiba file list vs fast cached-DRAM shadow). The shadow memcpy
      * (~10ms) is back; modeset-once + NONBLOCK/event pipelining stays. */
+    struct timespec fox_m0, fox_m1, fox_m2;
+    static unsigned long long fox_cp_sum = 0, fox_cm_sum = 0;
+    static unsigned fox_n = 0;
+    clock_gettime(CLOCK_MONOTONIC, &fox_m0);
     memcpy(drm_surfaces[current_buffer]->base.data,
             draw_buf->data, draw_buf->height * draw_buf->row_bytes);
+    clock_gettime(CLOCK_MONOTONIC, &fox_m1);
     update_plane_fb(current_buffer);
+    clock_gettime(CLOCK_MONOTONIC, &fox_m2);
+    {
+        long fox_cp = (fox_m1.tv_sec - fox_m0.tv_sec) * 1000L +
+            (fox_m1.tv_nsec - fox_m0.tv_nsec) / 1000000L;
+        long fox_cm = (fox_m2.tv_sec - fox_m1.tv_sec) * 1000L +
+            (fox_m2.tv_nsec - fox_m1.tv_nsec) / 1000000L;
+        fox_cp_sum += (unsigned long long)(fox_cp > 0 ? fox_cp : 0);
+        fox_cm_sum += (unsigned long long)(fox_cm > 0 ? fox_cm : 0);
+        if (++fox_n >= 120) {
+            printf("foxflip: memcpy avg %llu ms, commit+wait avg %llu ms (%u flips)\n",
+                fox_cp_sum / fox_n, fox_cm_sum / fox_n, fox_n);
+            fox_cp_sum = fox_cm_sum = 0;
+            fox_n = 0;
+        }
+    }
     current_buffer = 1 - current_buffer;
     return draw_buf;
 }

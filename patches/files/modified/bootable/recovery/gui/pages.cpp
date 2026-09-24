@@ -556,9 +556,16 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 
 int Page::Render(void)
 {
+	// Fox fps_boost: split timing (fill vs objects), throttled. Remove
+	// before merge. Correlate with foxfps: lines from gui.cpp.
+	timespec fox_f0, fox_f1, fox_f2;
+	static uint64_t fox_fill_sum = 0, fox_obj_sum = 0;
+	static unsigned fox_n = 0;
+	clock_gettime(CLOCK_MONOTONIC, &fox_f0);
 	// Render background
 	gr_color(mBackground.red, mBackground.green, mBackground.blue, mBackground.alpha);
 	gr_fill(0, 0, gr_fb_width(), gr_fb_height());
+	clock_gettime(CLOCK_MONOTONIC, &fox_f1);
 
 	// Render remaining objects
 	std::vector<RenderObject*>::iterator iter;
@@ -566,6 +573,17 @@ int Page::Render(void)
 	{
 		if ((*iter)->Render())
 			LOGERR("A render request has failed.\n");
+	}
+	clock_gettime(CLOCK_MONOTONIC, &fox_f2);
+	fox_fill_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_f0, fox_f1);
+	fox_obj_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_f1, fox_f2);
+	if (++fox_n >= 120)
+	{
+		LOGINFO("foxpage: fill avg %llu ms, objects avg %llu ms (%u frames)\n",
+			(unsigned long long)(fox_fill_sum / fox_n),
+			(unsigned long long)(fox_obj_sum / fox_n), fox_n);
+		fox_fill_sum = fox_obj_sum = 0;
+		fox_n = 0;
 	}
 	return 0;
 }

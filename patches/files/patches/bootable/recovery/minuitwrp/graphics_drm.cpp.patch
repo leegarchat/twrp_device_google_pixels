@@ -1,6 +1,14 @@
 --- a/bootable/recovery/minuitwrp/graphics_drm.cpp
 +++ b/bootable/recovery/minuitwrp/graphics_drm.cpp
-@@ -66,6 +66,27 @@
+@@ -49,6 +49,7 @@
+ #include <string.h>
+ #include <sys/mman.h>
+ #include <sys/types.h>
++#include <time.h>
+ #include <unistd.h>
+ 
+ #include <android-base/properties.h>
+@@ -66,6 +67,27 @@
  #include <pixelflinger/pixelflinger.h>
  
  #define ARRAY_SIZE(A) (sizeof(A)/sizeof(*(A)))
@@ -28,7 +36,7 @@
  
  struct drm_surface {
      GRSurface base;
-@@ -678,9 +699,15 @@
+@@ -678,9 +700,15 @@
      }
  
  #if defined(RECOVERY_ABGR)
@@ -47,7 +55,7 @@
  #elif defined(RECOVERY_BGRA)
      format = DRM_FORMAT_ARGB8888;
      base_format = GGL_PIXEL_FORMAT_RGBA_8888;
-@@ -803,18 +830,23 @@
+@@ -803,18 +831,23 @@
  static drmModeConnector *find_used_connector_by_type(int fd,
                                   drmModeRes *resources,
                                   unsigned type) {
@@ -75,7 +83,7 @@
  }
  
  static drmModeConnector *find_first_connected_connector(int fd,
-@@ -865,6 +897,24 @@
+@@ -865,6 +898,24 @@
                  DRM_MODE_TYPE_PREFERRED) {
              *mode_index = modes;
              break;
@@ -100,7 +108,7 @@
          }
      }
  
-@@ -898,8 +948,53 @@
+@@ -898,8 +949,53 @@
    drmModeAtomicFree(atomic_req);
  }
  
@@ -155,7 +163,7 @@
  
    /* Set atomic req */
    drmModeAtomicReqPtr atomic_req = drmModeAtomicAlloc();
-@@ -917,14 +1012,30 @@
+@@ -917,14 +1013,30 @@
    /* Add property */
    for(i = 0; i < number_of_lms; i++)
      drmModeAtomicAddProperty(atomic_req, plane_res[i].plane->plane_id,
@@ -191,7 +199,7 @@
  
    if (ret)
      printf("Atomic commit failed ret=%d\n", ret);
-@@ -1000,7 +1111,8 @@
+@@ -1000,7 +1112,8 @@
    int width = main_monitor_crtc->mode.hdisplay;
    int height = main_monitor_crtc->mode.vdisplay;
  
@@ -201,7 +209,7 @@
  
    drmModeFreeResources(res);
  
-@@ -1147,9 +1259,13 @@
+@@ -1147,9 +1260,33 @@
  }
  
  static GRSurface* drm_flip(minui_backend* backend __unused) {
@@ -209,10 +217,30 @@
 +     * write-combined scanout mapping were glacial (render avg 476-713ms
 +     * on shiba file list vs fast cached-DRAM shadow). The shadow memcpy
 +     * (~10ms) is back; modeset-once + NONBLOCK/event pipelining stays. */
++    struct timespec fox_m0, fox_m1, fox_m2;
++    static unsigned long long fox_cp_sum = 0, fox_cm_sum = 0;
++    static unsigned fox_n = 0;
++    clock_gettime(CLOCK_MONOTONIC, &fox_m0);
      memcpy(drm_surfaces[current_buffer]->base.data,
              draw_buf->data, draw_buf->height * draw_buf->row_bytes);
 -    update_plane_fb();
++    clock_gettime(CLOCK_MONOTONIC, &fox_m1);
 +    update_plane_fb(current_buffer);
++    clock_gettime(CLOCK_MONOTONIC, &fox_m2);
++    {
++        long fox_cp = (fox_m1.tv_sec - fox_m0.tv_sec) * 1000L +
++            (fox_m1.tv_nsec - fox_m0.tv_nsec) / 1000000L;
++        long fox_cm = (fox_m2.tv_sec - fox_m1.tv_sec) * 1000L +
++            (fox_m2.tv_nsec - fox_m1.tv_nsec) / 1000000L;
++        fox_cp_sum += (unsigned long long)(fox_cp > 0 ? fox_cp : 0);
++        fox_cm_sum += (unsigned long long)(fox_cm > 0 ? fox_cm : 0);
++        if (++fox_n >= 120) {
++            printf("foxflip: memcpy avg %llu ms, commit+wait avg %llu ms (%u flips)\n",
++                fox_cp_sum / fox_n, fox_cm_sum / fox_n, fox_n);
++            fox_cp_sum = fox_cm_sum = 0;
++            fox_n = 0;
++        }
++    }
      current_buffer = 1 - current_buffer;
      return draw_buf;
  }
