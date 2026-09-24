@@ -569,9 +569,37 @@ int Page::Render(void)
 
 	// Render remaining objects
 	std::vector<RenderObject*>::iterator iter;
-	for (iter = mRenders.begin(); iter != mRenders.end(); iter++)
+	int fox_idx = 0;
+	// Fox fps_boost: top-3 slowest objects by worst single sample per
+	// 120-frame window (index in theme order + rect + ms). Remove
+	// before merge.
+	static long fox_top_ms[3] = {-1, -1, -1};
+	static int fox_top_idx[3] = {-1, -1, -1};
+	static int fox_top_rect[3][4] = {{0}, {0}, {0}};
+	for (iter = mRenders.begin(); iter != mRenders.end(); iter++, fox_idx++)
 	{
-		if ((*iter)->Render())
+		timespec fox_o0, fox_o1;
+		clock_gettime(CLOCK_MONOTONIC, &fox_o0);
+		int fox_rc = (*iter)->Render();
+		clock_gettime(CLOCK_MONOTONIC, &fox_o1);
+		long fox_ms = (fox_o1.tv_sec - fox_o0.tv_sec) * 1000L +
+			(fox_o1.tv_nsec - fox_o0.tv_nsec) / 1000000L;
+		if (fox_ms < 0) fox_ms = 0;
+		for (int fox_k = 0; fox_k < 3; fox_k++) {
+			if (fox_ms > fox_top_ms[fox_k]) {
+				for (int fox_j = 2; fox_j > fox_k; fox_j--) {
+					fox_top_ms[fox_j] = fox_top_ms[fox_j - 1];
+					fox_top_idx[fox_j] = fox_top_idx[fox_j - 1];
+					memcpy(fox_top_rect[fox_j], fox_top_rect[fox_j - 1], sizeof(fox_top_rect[fox_j]));
+				}
+				fox_top_ms[fox_k] = fox_ms;
+				fox_top_idx[fox_k] = fox_idx;
+				(*iter)->GetRenderPos(fox_top_rect[fox_k][0], fox_top_rect[fox_k][1],
+					fox_top_rect[fox_k][2], fox_top_rect[fox_k][3]);
+				break;
+			}
+		}
+		if (fox_rc)
 			LOGERR("A render request has failed.\n");
 	}
 	clock_gettime(CLOCK_MONOTONIC, &fox_f2);
@@ -582,8 +610,17 @@ int Page::Render(void)
 		LOGINFO("foxpage: fill avg %llu ms, objects avg %llu ms (%u frames)\n",
 			(unsigned long long)(fox_fill_sum / fox_n),
 			(unsigned long long)(fox_obj_sum / fox_n), fox_n);
+		LOGINFO("foxpage: slowest obj idx=%d rect=%dx%d+%d+%d %ldms, idx=%d rect=%dx%d+%d+%d %ldms, idx=%d rect=%dx%d+%d+%d %ldms\n",
+			fox_top_idx[0], fox_top_rect[0][2], fox_top_rect[0][3],
+			fox_top_rect[0][0], fox_top_rect[0][1], fox_top_ms[0],
+			fox_top_idx[1], fox_top_rect[1][2], fox_top_rect[1][3],
+			fox_top_rect[1][0], fox_top_rect[1][1], fox_top_ms[1],
+			fox_top_idx[2], fox_top_rect[2][2], fox_top_rect[2][3],
+			fox_top_rect[2][0], fox_top_rect[2][1], fox_top_ms[2]);
 		fox_fill_sum = fox_obj_sum = 0;
 		fox_n = 0;
+		fox_top_ms[0] = fox_top_ms[1] = fox_top_ms[2] = -1;
+		fox_top_idx[0] = fox_top_idx[1] = fox_top_idx[2] = -1;
 	}
 	return 0;
 }
