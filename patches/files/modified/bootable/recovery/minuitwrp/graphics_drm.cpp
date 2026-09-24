@@ -938,14 +938,16 @@ static void disable_non_main_crtcs(int fd,
  * NONBLOCK + PAGE_FLIP_EVENT so scanout pipelines with the next frame's
  * drawing (no tearing queue); the wait below caps one commit in flight.
  * If the driver never delivers the event, the wait disables itself
- * permanently and commits fall back to blocking (pre-boost behavior). */
-static volatile int fox_flip_pending = 0;
+ * permanently and commits fall back to blocking (pre-boost behavior).
+ * Plain int (not volatile): the wait loop re-reads it across opaque
+ * poll()/drmHandleEvent() calls, so the compiler must reload it. */
+static int fox_flip_pending = 0;
 static bool fox_flip_wait_broken = false;
 
 static void fox_page_flip_handler(int /*fd*/, unsigned int /*frame*/,
                                   unsigned int /*sec*/, unsigned int /*usec*/,
                                   void *user_data) {
-  volatile int *pending = (volatile int *)user_data;
+  int *pending = (int *)user_data;
   *pending = 0;
 }
 
@@ -1239,7 +1241,9 @@ static GRSurface* drm_init(minui_backend* backend __unused) {
   drm_blank(nullptr, false);
 
   fox_draw_idx = 0;
-  return drm_surfaces[0];
+  /* drm_surface starts with GRSurface base: hand out the dumb buffer's
+   * own descriptor, no shadow copy. */
+  return &drm_surfaces[0]->base;
 }
 
 static GRSurface* drm_flip(minui_backend* backend __unused) {
@@ -1250,7 +1254,7 @@ static GRSurface* drm_flip(minui_backend* backend __unused) {
     update_plane_fb(fox_draw_idx);
     fox_draw_idx = 1 - fox_draw_idx;
     current_buffer = fox_draw_idx;
-    return drm_surfaces[fox_draw_idx];
+    return &drm_surfaces[fox_draw_idx]->base;
 }
 
 static void drm_exit(minui_backend* backend __unused) {
