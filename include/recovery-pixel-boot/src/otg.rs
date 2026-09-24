@@ -19,8 +19,13 @@ const TAG: &str = "otg";
 const PROC_SHIM: &str = "/proc/otg_host_shim";
 const PROC_READY: &str = "/proc/otg_host_ready";
 const USB_ROLE_CLASS: &str = "/sys/class/usb_role";
-/// gvotable CHARGER_MODE force values driving VBUS in host mode (6.1 trick,
-/// still valid on 6.12).
+const TYPEC_CLASS: &str = "/sys/class/typec";
+const PSY_CLASS: &str = "/sys/class/power_supply";
+/// gvotable CHARGER_MODE force values driving VBUS in host mode (6.1 trick).
+/// ABSENT on laguna 6.6 stock kernels (verified: zero gvotables/CHARGER_MODE
+/// strings in mustang bp4a 6.6.98 + cp2a 6.6.118 images) — laguna must use
+/// the TCPM typec path below instead. Still valid where the framework
+/// exists; writes are now result-checked and logged.
 const CHARGER_FORCE_VALUE: &[u8] = b"49\n";
 const CHARGER_FORCE_ACTIVE: &[u8] = b"1\n";
 
@@ -61,6 +66,89 @@ fn is_gs101() -> bool {
     is_gs101_family(&get_prop("ro.recovery.soc_family"), &get_prop("ro.hardware"))
 }
 
+/// laguna family detector (pure inputs, testable).
+///
+/// OTG on laguna (Tensor G5: frankel/blazer/mustang/rango) is owned
+/// end-to-end by TCPM: TCPCI vote -> goog_usb_role_sw glue -> downstream
+/// role-sw-dev + _dwc3_google_set_role + eusb2 repeater regulators + VBUS
+/// via the max77779 charger OTG usecase. Writing the downstream
+/// c450000.usb3-role-switch directly is a hardware no-op (field-proven:
+/// sysfs reads back "host" while _dwc3_google_set_role host never fires),
+/// and the gvotable CHARGER_MODE VBUS force does not exist on laguna 6.6
+/// kernels — so laguna drives host mode through the standard TCPM typec
+/// API (power_role=source) instead. Family-level: all four devices share
+/// the max77759 SPMI TCPC + glue topology (stock DT).
+fn is_laguna_family(soc_family: &str, hardware: &str) -> bool {
+    soc_family.trim() == "laguna"
+        || matches!(
+            hardware.trim(),
+            "frankel" | "blazer" | "mustang" | "rango"
+        )
+}
+
+fn is_laguna() -> bool {
+    is_laguna_family(&get_prop("ro.recovery.soc_family"), &get_prop("ro.hardware"))
+}
+
+/// Prefer port0, else the first port*. Pure over inputs (testable); the
+/// live readdir wrapper is find_typec_port().
+fn pick_typec_port(entries: &[String]) -> Option<String> {
+    if entries.iter().any(|e| e == "port0") {
+        return Some("port0".to_string());
+    }
+    entries.iter().find(|e| e.starts_with("port")).cloned()
+}
+
+/// Live Type-C port dir (e.g. /sys/class/typec/port0).
+fn find_typec_port() -> Option<PathBuf> {
+    let names: Vec<String> = std::fs::read_dir(TYPEC_CLASS)
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    pick_typec_port(&names).map(|n| Path::new(TYPEC_CLASS).join(n))
+}
+
+/// First tcpm-source-psy-*/online node. Pure over inputs (testable);
+/// live wrapper is find_source_psy_online().
+fn pick_source_psy(entries: &[String]) -> Option<String> {
+    entries
+        .iter()
+        .find(|e| e.starts_with("tcpm-source-psy"))
+        .cloned()
+}
+
+fn find_source_psy_online() -> Option<PathBuf> {
+    let names: Vec<String> = std::fs::read_dir(PSY_CLASS)
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    pick_source_psy(&names).map(|n| Path::new(PSY_CLASS).join(n).join("online"))
+}
+
+fn read_trim(p: &Path) -> String {
+    std::fs::read_to_string(p).unwrap_or_default().trim().to_string()
+}
+
+/// Idempotent power_role drive with read-back. Returns the final value.
+fn drive_power_role(port: &Path, want: &str) -> String {
+    let f = port.join("power_role");
+    let cur = read_trim(&f);
+    if cur == want {
+        info(&format!("typec power_role already {want}"));
+        return cur;
+    }
+    info(&format!("typec power_role {cur} -> {want}"));
+    if let Err(e) = std::fs::write(&f, format!("{want}\n").as_bytes()) {
+        info(&format!("typec power_role write FAILED: {e}"));
+    }
+    sleep(Duration::from_secs(2));
+    let back = read_trim(&f);
+    info(&format!("typec power_role now: {back}"));
+    back
+}
+
 /// First dwc3_exynos_otg_id node found under the platform bus
 /// (e.g. /sys/devices/platform/11210000.usb/dwc3_exynos_otg_id).
 /// None on SoCs without the exynos OTG ID register (laguna/malibu) —
@@ -90,18 +178,70 @@ fn find_otg_id() -> Option<PathBuf> {
     None
 }
 
-/// Native host path (6.12+): role switch to host + gvotable VBUS force.
-/// Proven live: role flips (xHCI enumerates), CHARGER_MODE force sets
-/// otg_on=1, USB mouse works. otg_id follows the role on its own; typec
-/// writes fail on the TCPC side and are skipped by design.
+/// Native host path dispatcher: laguna goes through TCPM (power_role),
+/// everything else keeps the role-switch + gvotable path.
 fn native_activate() -> Result<(), String> {
+    if is_laguna() {
+        return native_activate_laguna();
+    }
+    native_activate_legacy()
+}
+
+/// laguna host path via the TCPM typec API.
+///
+/// power_role=source makes TCPM source VBUS (max77779 charger OTG usecase),
+/// vote host into goog_usb_role_sw (downstream role-sw-dev,
+// _dwc3_google_set_role, eusb2 repeater regulators + mux). Success is
+/// verified on hardware state — data_role reads host AND the TCPM source
+/// psy reports online — never on the write alone. No typec port (shouldn't
+/// happen: TCPM registers port0) falls back to the legacy path.
+fn native_activate_laguna() -> Result<(), String> {
+    let port = match find_typec_port() {
+        Some(p) => p,
+        None => {
+            info("laguna: no /sys/class/typec port, legacy fallback");
+            return native_activate_legacy();
+        }
+    };
+    info(&format!("laguna: typec port {}", port.display()));
+    let role = drive_power_role(&port, "source");
+    if role != "source" {
+        return Err(format!("typec power_role did not stick (now {role:?})"));
+    }
+    for i in 0..10 {
+        let data = read_trim(&port.join("data_role"));
+        let opmode = read_trim(&port.join("power_operation_mode"));
+        let src = find_source_psy_online()
+            .map(|p| read_trim(&p))
+            .unwrap_or_default();
+        info(&format!(
+            "laguna: poll {i} data_role={data} opmode={opmode} source_psy={src}"
+        ));
+        if data == "host" && src == "1" {
+            info("laguna host path ACTIVE (data_role=host, VBUS sourced)");
+            return Ok(());
+        }
+        sleep(Duration::from_secs(1));
+    }
+    Err("laguna: host not confirmed (data_role/source psy)".into())
+}
+
+/// Legacy native host path (role switch to host + gvotable VBUS force).
+/// Proven live on 6.12-era trees; on laguna 6.6 the gvotable side is a
+/// verified no-op (framework absent from stock kernels) — laguna never
+/// reaches this except as a typec-missing fallback.
+fn native_activate_legacy() -> Result<(), String> {
     let role = find_usb_role().ok_or_else(|| "no usb_role switch found".to_string())?;
     info("switching controller role to host");
     let _ = std::fs::write(&role, b"host\n");
     sleep(Duration::from_secs(2));
     info("forcing VBUS via gvotable CHARGER_MODE");
-    let _ = std::fs::write(CHARGER_VALUE, CHARGER_FORCE_VALUE);
-    let _ = std::fs::write(CHARGER_ACTIVE, CHARGER_FORCE_ACTIVE);
+    if let Err(e) = std::fs::write(CHARGER_VALUE, CHARGER_FORCE_VALUE) {
+        info(&format!("gvotable value write FAILED (framework absent?): {e}"));
+    }
+    if let Err(e) = std::fs::write(CHARGER_ACTIVE, CHARGER_FORCE_ACTIVE) {
+        info(&format!("gvotable active write FAILED (framework absent?): {e}"));
+    }
     sleep(Duration::from_secs(2));
     let back = std::fs::read_to_string(&role).unwrap_or_default();
     if back.trim() == "host" {
@@ -294,6 +434,18 @@ fn switch_to_host(current: &mut String) {
     let _ = std::fs::write(UDC_FILE, b"\n");
     let _ = std::fs::write(CHARGER_VALUE, b"49\n");
     let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    // laguna: the downstream role-switch write above is a hardware no-op
+    // and the gvotable force is absent on 6.6 kernels — drive the real
+    // voter (TCPM power_role=source); TCPM then sources VBUS, votes host
+    // into the glue (repeater regulators + mux follow). Idempotent:
+    // already-source is a no-op read.
+    if is_laguna() {
+        if let Some(port) = find_typec_port() {
+            drive_power_role(&port, "source");
+        } else {
+            info("laguna: no typec port for host drive");
+        }
+    }
     // Exynos OTG-ID register; absent on laguna/malibu (skipped, the role
     // switch above already steered the controller). gs101 fallback: skip
     // the write (8.0 behavior — the old hardcoded zuma path never existed
@@ -312,6 +464,15 @@ fn switch_to_device(current: &mut String) {
     }
     info(">>> SWITCHING TO DEVICE MODE <<<");
     let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    // laguna mirror of the host drive: hand the port back to sink so TCPM
+    // drops source/VBUS and votes device into the glue. Idempotent.
+    if is_laguna() {
+        if let Some(port) = find_typec_port() {
+            drive_power_role(&port, "sink");
+        } else {
+            info("laguna: no typec port for device drive");
+        }
+    }
     // Exynos OTG-ID register; absent on laguna/malibu (skipped).
     // gs101 fallback: skip (8.0 behavior, see switch_to_host).
     if is_gs101() {
@@ -559,8 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn gs101_detected_by_family_or_codename() {
-        // soc_family prop is primary (stamped by our early-init).
+    fn gs101_detected_by_family_or_codename() {        // soc_family prop is primary (stamped by our early-init).
         assert!(is_gs101_family("gs101", ""));
         assert!(is_gs101_family("gs101\n", "raven"));
         // ro.hardware fallback covers trees where the prop is missing.
@@ -575,5 +735,52 @@ mod tests {
         assert!(!is_gs101_family("gs201", "cheetah"));
         assert!(!is_gs101_family("", ""));
         assert!(!is_gs101_family("UNKNOWN", "UNKNOWN.dwc3"));
+    }
+
+    #[test]
+    fn laguna_detected_by_family_or_codename() {
+        // All four Tensor G5 devices share the TCPC+glue topology.
+        assert!(is_laguna_family("laguna", ""));
+        assert!(is_laguna_family("laguna\n", "mustang"));
+        assert!(is_laguna_family("", "frankel"));
+        assert!(is_laguna_family("", "blazer"));
+        assert!(is_laguna_family("", "mustang"));
+        assert!(is_laguna_family("", "rango"));
+        // Other families keep their own paths (incl. malibu 6.12 native).
+        assert!(!is_laguna_family("zuma", "shiba"));
+        assert!(!is_laguna_family("zumapro", "komodo"));
+        assert!(!is_laguna_family("malibu", "grizzly"));
+        assert!(!is_laguna_family("gs101", "raven"));
+        assert!(!is_laguna_family("gs201", "cheetah"));
+        assert!(!is_laguna_family("", ""));
+    }
+
+    #[test]
+    fn typec_port_prefers_port0() {
+        let two = vec!["port1".to_string(), "port0".to_string()];
+        assert_eq!(pick_typec_port(&two), Some("port0".to_string()));
+        let one = vec!["port1".to_string()];
+        assert_eq!(pick_typec_port(&one), Some("port1".to_string()));
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(pick_typec_port(&empty), None);
+        // Non-port entries never match.
+        let junk = vec!["power".to_string(), "portX".to_string()];
+        assert_eq!(pick_typec_port(&junk), Some("portX".to_string()));
+    }
+
+    #[test]
+    fn source_psy_picks_tcpm_node() {
+        let entries = vec![
+            "battery".to_string(),
+            "usb".to_string(),
+            "tcpm-source-psy-spmi-max77759tcpc".to_string(),
+            "main-charger".to_string(),
+        ];
+        assert_eq!(
+            pick_source_psy(&entries),
+            Some("tcpm-source-psy-spmi-max77759tcpc".to_string())
+        );
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(pick_source_psy(&empty), None);
     }
 }
