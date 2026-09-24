@@ -313,6 +313,12 @@ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
         return;
     }
 
+    // Fox fps_boost: blit census (count + pixels + ms per 120-frame
+    // window). Temporary, remove before merge.
+    struct timespec fox_b0, fox_b1;
+    static unsigned long long fox_blt_n = 0, fox_blt_px = 0, fox_blt_us = 0;
+    clock_gettime(CLOCK_MONOTONIC, &fox_b0);
+
     GGLContext *gl = gr_context;
     GGLSurface *surface = (GGLSurface*)source;
 
@@ -365,6 +371,22 @@ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
 
     if(surface->format == GGL_PIXEL_FORMAT_RGBX_8888)
         gl->enable(gl, GGL_BLEND);
+
+    clock_gettime(CLOCK_MONOTONIC, &fox_b1);
+    {
+        long long fox_dns = (long long)(fox_b1.tv_sec - fox_b0.tv_sec) * 1000000000LL +
+            (long long)(fox_b1.tv_nsec - fox_b0.tv_nsec);
+        if (fox_dns < 0) fox_dns = 0;
+        fox_blt_n++;
+        fox_blt_px += (unsigned long long)(r_disp - l_disp) * (unsigned long long)(b_disp - t_disp);
+        fox_blt_us += (unsigned long long)fox_dns / 1000ULL;
+        if (fox_blt_n >= 20000) {
+            printf("foxblit: %llu blits, %llu Mpix, %llu ms total (avg %llu us/blt)\n",
+                fox_blt_n, fox_blt_px / 1000000ULL, fox_blt_us / 1000ULL,
+                fox_blt_us / (fox_blt_n ? fox_blt_n : 1));
+            fox_blt_n = fox_blt_px = fox_blt_us = 0;
+        }
+    }
 }
 
 unsigned int gr_get_width(gr_surface surface) {

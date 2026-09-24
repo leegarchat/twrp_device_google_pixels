@@ -101,7 +101,7 @@
  				LOGEVENT("POWER Key Released\n");
  				long long now = nowMs();
  				if (now < g_suppress_power_toggle_until_ms) {
-@@ -725,11 +774,36 @@
+@@ -725,11 +774,38 @@
  			else
  				idle_frames = 0;
  			// due to possible animation objects, we need to delay activating the input timeout
@@ -129,7 +129,9 @@
 +				fox_f_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_mid, fox_end);
 +				if (++fox_n >= 120)
 +				{
-+					LOGINFO("foxfps: render avg %llu ms, flip avg %llu ms (%u frames)\n",
++					// Fox fps_boost mk4 marker: bump when re-cutting the
++					// branch build to verify on device what is flashed.
++					LOGINFO("foxfps/mk4: render avg %llu ms, flip avg %llu ms (%u frames)\n",
 +						(unsigned long long)(fox_r_sum / fox_n),
 +						(unsigned long long)(fox_f_sum / fox_n), fox_n);
 +					fox_r_sum = fox_f_sum = 0;
@@ -139,7 +141,7 @@
  
  			if (ret > 0)
  				flip();
-@@ -899,7 +973,7 @@
+@@ -899,7 +975,7 @@
  #endif
  
  	// load and show splash screen
@@ -148,7 +150,7 @@
  		LOGERR("Failed to load splash screen XML.\n");
  	}
  	else {
-@@ -934,7 +1008,7 @@
+@@ -934,7 +1010,7 @@
  
  	if (check)
  	{
@@ -157,7 +159,7 @@
  		{
  			gui_err("base_pkg_err=Failed to load base packages.");
  			goto error;
-@@ -968,7 +1042,7 @@
+@@ -968,7 +1044,7 @@
  		if (check || PageManager::LoadPackage("OrangeFox", theme_path, "main"))
  		{
  #endif // ifndef TW_OEM_BUILD
@@ -166,7 +168,7 @@
  			{
  				gui_err("base_pkg_err=Failed to load base packages.");
  				goto error;
-@@ -1018,7 +1092,7 @@
+@@ -1018,7 +1094,7 @@
  		if (PageManager::ReloadPackage("OrangeFox", theme_path)) 
  		{
  			// Custom theme failed to load, try to load stock theme
