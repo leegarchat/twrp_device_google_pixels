@@ -1,4 +1,10 @@
 > [Русская версия](README_ru.md)
+>
+> **Status: public testing.** The full OrangeFox feature set will work in
+> the release — right now the **core of a fully working OFox is already
+> up**: ADB, MTP, data encryption/decryption, backup/restore, reflash
+> recovery, image flashing. What remains is minor per-family debugging:
+> vibration, flashlight, OTG and similar device-specific issues.
 
 # OrangeFox for Tensor Pixel — `device/google/pixels`
 
