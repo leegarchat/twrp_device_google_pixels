@@ -58,13 +58,14 @@ fn find_usb_role() -> Option<PathBuf> {
 
 /// gs101 fallback detector (pure inputs, testable).
 ///
-/// Post-8.0 USB churn (OTG_ID register writes via find_otg_id, usb-rebind
+/// Post-8.0 USB churn (unconditional OTG_ID register writes, usb-rebind
 /// service) regressed raven/oriole/bluejay: stuck vibration + frozen
 /// touch on decrypt screens, dead adb — while shiba/laguna/malibu need
-/// the new logic. In 8.0 the OTG_ID write silently missed on gs101 (the
-/// hardcoded zuma path doesn't exist there) and no rebind service ran,
-/// so the fallback restores exactly that: no OTG_ID writes, no rebind.
-/// Everything else (shim, otg-auto, TCPC) is untouched on all families.
+/// the new logic. The fallback keeps: no usb-rebind service on gs101,
+/// and OTG_ID writes only as settled, conditional transitions (host
+/// assert on VBUS=0 entry, device restore on return — never blindly at
+/// boot, so a live ADB session cannot be killed). Everything else
+/// (shim, otg-auto, TCPC) is untouched on all families.
 fn is_gs101_family(soc_family: &str, hardware: &str) -> bool {
     soc_family.trim() == "gs101"
         || matches!(hardware.trim(), "oriole" | "raven" | "bluejay")
@@ -177,6 +178,21 @@ fn drive_laguna_role(port: &Path, host: bool) -> bool {
     accepted
 }
 
+/// Pure gs101 OTG_ID transition decision (testable).
+/// Entering host (settled VBUS=0) always asserts 0; leaving to device
+/// restores 1 ONLY when coming from a host session we asserted ourselves
+/// (prev == "host"). The initial boot-device call (prev empty/device)
+/// never writes, so the proven device/ADB bring-up is untouchable.
+fn gs101_otg_id_value(host: bool, prev_mode: &str) -> Option<&'static str> {
+    if host {
+        Some("0")
+    } else if prev_mode == "host" {
+        Some("1")
+    } else {
+        None
+    }
+}
+/// (e.g. /sys/devices/platform/11210000.usb/dwc3_exynos_otg_id).
 /// First dwc3_exynos_otg_id node found under the platform bus
 /// (e.g. /sys/devices/platform/11210000.usb/dwc3_exynos_otg_id).
 /// None on SoCs without the exynos OTG ID register (laguna/malibu) —
@@ -459,8 +475,22 @@ fn switch_to_host(current: &mut String) {
     // UDC detach is load-bearing: a 0-byte write never reaches the configfs
     // .store callback, leaving the controller stuck in peripheral mode.
     let _ = std::fs::write(UDC_FILE, b"\n");
-    let _ = std::fs::write(CHARGER_VALUE, b"49\n");
-    let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    // VBUS boost vote (max77759 OTG usecase via CHARGER_MODE). Checked here
+    // (unlike the old fire-and-forget): without sourced VBUS the accessory
+    // stays dark even with the controller in host mode. Absence is LOUD —
+    // it means this kernel needs a different boost path.
+    let mut vbus_ok = true;
+    if let Err(e) = std::fs::write(CHARGER_VALUE, b"49\n") {
+        info(&format!("host: gvotable value write FAILED: {e} (no VBUS force?)"));
+        vbus_ok = false;
+    }
+    if let Err(e) = std::fs::write(CHARGER_ACTIVE, b"1\n") {
+        info(&format!("host: gvotable active write FAILED: {e} (no VBUS force?)"));
+        vbus_ok = false;
+    }
+    if vbus_ok {
+        info("host: VBUS force votes written");
+    }
     // Laguna: request host through Type-C policy instead of the downstream
     // role switch/gvotable path, which does not source VBUS on 6.6.
     if is_laguna() {
@@ -472,16 +502,52 @@ fn switch_to_host(current: &mut String) {
             info("laguna: no typec port for host drive");
         }
     }
-    // Exynos OTG-ID register; absent on laguna/malibu (skipped, the role
-    // switch above already steered the controller). gs101 fallback: skip
-    // the write (8.0 behavior — the old hardcoded zuma path never existed
-    // there, so 8.0 never touched this register on Pixel 6).
+    // Exynos OTG-ID register (host_on); absent on laguna/malibu (skipped,
+    // the role switch above already steered the controller).
+    // gs101: write host (0) ONLY on the settled VBUS=0 transition into host
+    // mode — never blindly. The shim sets host_ready, but without host_on
+    // the DWC3 never leaves peripheral mode (field: host switch with no
+    // enumeration, otg_on=0 forever). Writing with a PC attached would kill
+    // adb, which cannot happen here: this branch runs only at VBUS=0.
     if is_gs101() {
-        info("gs101 fallback: OTG_ID write skipped");
+        // gs101_otg_id_value(true, _) is always Some("0"); the option
+        // keeps the node-missing branch explicit and logged.
+        if let Some(v) = gs101_otg_id_value(true, current.as_str()) {
+            match find_otg_id() {
+                Some(otg_id) => match std::fs::write(&otg_id, format!("{v}\n").as_bytes()) {
+                    Ok(()) => info(&format!("gs101: host_on asserted via {}", otg_id.display())),
+                    Err(e) => info(&format!("gs101: OTG_ID host write FAILED: {e}")),
+                },
+                None => info("gs101: no dwc3_exynos_otg_id node, host_on unavailable"),
+            }
+        }
     } else if let Some(otg_id) = find_otg_id() {
         let _ = std::fs::write(otg_id, b"0\n");
     }
     *current = "host".into();
+    if is_gs101() {
+        confirm_gs101_host();
+    }
+}
+
+/// gs101 host confirmation: the TCPM source psy reports online=1 only
+/// while WE source VBUS. Poll 10s; a negative verdict names the missing
+/// half (controller role vs VBUS power) instead of claiming host.
+fn confirm_gs101_host() {
+    for i in 0..10 {
+        let src = find_source_psy_online()
+            .map(|p| read_trim(&p))
+            .unwrap_or_default();
+        if src == "1" {
+            info("gs101 HOST ACTIVE (TCPM source psy online, VBUS sourced)");
+            return;
+        }
+        if i % 3 == 0 {
+            info(&format!("gs101 host poll {i}: source_psy={src} (want 1)"));
+        }
+        sleep(Duration::from_secs(1));
+    }
+    info("gs101 host NOT confirmed (source_psy never online: no VBUS and/or no role switch)");
 }
 
 fn switch_to_device(current: &mut String) {
@@ -502,9 +568,22 @@ fn switch_to_device(current: &mut String) {
         }
     }
     // Exynos OTG-ID register; absent on laguna/malibu (skipped).
-    // gs101 fallback: skip (8.0 behavior, see switch_to_host).
+    // gs101: restore device (1) ONLY when returning from a host session we
+    // asserted ourselves (previous state == host). The initial boot-device
+    // call (previous state empty) keeps the proven no-write path, so a
+    // register write can never break the working device/ADB bring-up; it
+    // only ever undoes our own host assertion above.
     if is_gs101() {
-        info("gs101 fallback: OTG_ID write skipped");
+        match gs101_otg_id_value(false, current.as_str()) {
+            Some(v) => match find_otg_id() {
+                Some(otg_id) => match std::fs::write(&otg_id, format!("{v}\n").as_bytes()) {
+                    Ok(()) => info(&format!("gs101: device restored via {}", otg_id.display())),
+                    Err(e) => info(&format!("gs101: OTG_ID device write FAILED: {e}")),
+                },
+                None => info("gs101: no dwc3_exynos_otg_id node for device restore"),
+            },
+            None => info("gs101 fallback: OTG_ID write skipped (initial device path)"),
+        }
     } else if let Some(otg_id) = find_otg_id() {
         let _ = std::fs::write(otg_id, b"1\n");
     }
@@ -763,6 +842,19 @@ mod tests {
         assert!(!is_gs101_family("gs201", "cheetah"));
         assert!(!is_gs101_family("", ""));
         assert!(!is_gs101_family("UNKNOWN", "UNKNOWN.dwc3"));
+    }
+
+    #[test]
+    fn gs101_otg_id_transition_matrix() {
+        // Host entry always asserts 0 (settled VBUS=0 only — no live ADB to kill).
+        assert_eq!(gs101_otg_id_value(true, ""), Some("0"));
+        assert_eq!(gs101_otg_id_value(true, "device"), Some("0"));
+        assert_eq!(gs101_otg_id_value(true, "host"), Some("0"));
+        // Device restore only undoes our own host assertion.
+        assert_eq!(gs101_otg_id_value(false, "host"), Some("1"));
+        // Initial boot-device path never writes (proven device/ADB bring-up).
+        assert_eq!(gs101_otg_id_value(false, ""), None);
+        assert_eq!(gs101_otg_id_value(false, "device"), None);
     }
 
     #[test]
