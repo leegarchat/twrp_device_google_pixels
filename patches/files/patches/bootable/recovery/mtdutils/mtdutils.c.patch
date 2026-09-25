@@ -1,0 +1,26 @@
+--- a/bootable/recovery/mtdutils/mtdutils.c
++++ b/bootable/recovery/mtdutils/mtdutils.c
+@@ -674,7 +674,6 @@
+     const MtdPartition *partition;
+     char buf[MTD_BLOCK_SIZE + SPARE_SIZE];
+     size_t partition_size;
+-    size_t total;
+     int fd;
+     int wrote;
+     int len;
+@@ -718,7 +717,6 @@
+         return -1;
+     }
+ 
+-    total = 0;
+     while ((len = mtd_read_data(in, buf, MTD_BLOCK_SIZE)) > 0) {
+         wrote = write(fd, buf, len);
+         if (wrote != len) {
+@@ -727,7 +725,6 @@
+             printf("error writing %s", filename);
+             return -1;
+         }
+-        total += MTD_BLOCK_SIZE;
+     }
+ 
+     mtd_read_close(in);

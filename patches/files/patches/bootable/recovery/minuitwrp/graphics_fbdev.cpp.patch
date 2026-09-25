@@ -1,0 +1,69 @@
+--- a/bootable/recovery/minuitwrp/graphics_fbdev.cpp
++++ b/bootable/recovery/minuitwrp/graphics_fbdev.cpp
+@@ -59,19 +59,44 @@
+     return &my_backend;
+ }
+ 
++static int fbdev_max_brightness(const char* brightness_path)
++{
++    char max_path[256];
++    const char* slash = strrchr(brightness_path, '/');
++    int max_brightness = 0;
++
++    if (slash == NULL)
++        return 255;
++
++    int path_len = snprintf(max_path, sizeof(max_path), "%.*s/max_brightness",
++                            (int)(slash - brightness_path), brightness_path);
++    if (path_len < 0 || (size_t)path_len >= sizeof(max_path))
++        return 255;
++
++    FILE* max_file = fopen(max_path, "r");
++    if (max_file == NULL)
++        return 255;
++
++    if (fscanf(max_file, "%d", &max_brightness) != 1 || max_brightness <= 0)
++        max_brightness = 255;
++    fclose(max_file);
++    return max_brightness;
++}
++
+ static void fbdev_blank(minui_backend* backend __unused, bool blank)
+ {
+-#if defined(TW_NO_SCREEN_BLANK) && defined(TW_BRIGHTNESS_PATH) && defined(TW_MAX_BRIGHTNESS)
++#if defined(TW_NO_SCREEN_BLANK) && defined(TW_BRIGHTNESS_PATH)
+     int fd;
+-    char brightness[4];
+-    snprintf(brightness, 4, "%03d", TW_MAX_BRIGHTNESS/2);
++    char brightness[16];
++    int restore_brightness = fbdev_max_brightness(TW_BRIGHTNESS_PATH) / 2;
++    snprintf(brightness, sizeof(brightness), "%d", restore_brightness);
+ 
+     fd = open(TW_BRIGHTNESS_PATH, O_RDWR);
+     if (fd < 0) {
+         perror("cannot open LCD backlight");
+         return;
+     }
+-    write(fd, blank ? "000" : brightness, 3);
++    write(fd, blank ? "000" : brightness, blank ? 3 : strlen(brightness));
+     close(fd);
+ 
+ #ifdef TW_SECONDARY_BRIGHTNESS_PATH
+@@ -80,7 +105,7 @@
+         perror("cannot open LCD backlight 2");
+         return;
+     }
+-    write(fd, blank ? "000" : brightness, 3);
++    write(fd, blank ? "000" : brightness, blank ? 3 : strlen(brightness));
+     close(fd);
+ #endif
+ #else
+@@ -90,6 +115,8 @@
+     ret = ioctl(fb_fd, FBIOBLANK, blank ? FB_BLANK_POWERDOWN : FB_BLANK_UNBLANK);
+     if (ret < 0)
+         perror("ioctl(): blank");
++#else
++    (void)blank;
+ #endif
+ #endif
+ }
