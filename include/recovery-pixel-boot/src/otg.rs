@@ -55,12 +55,14 @@ const OTG_USB_LINK: &str = "/dev/block/otg-usb";
 /// Stock USB chain in dep order (stock modules.dep: glue needs phy +
 /// gvotable; tcpc needs shim + usb_psy + gvotable; charger needs tcpc).
 /// Missing files are skipped LOUDLY (stock-Google trees don't ship them).
+/// TEST-BRANCH (zuma-only): no `phy-exynos-usbdrd-super` — that is the
+/// gs201 PHY name; zuma ships only the `eusb-super` variant, and the
+/// non-existent entry kept the chain summary at all_found=false forever.
 const STOCK_USB_CHAIN: &[&str] = &[
     "gvotable",
     "usb_psy",
     "max77759_helper",
     "phy-exynos-usbdrd-eusb-super",
-    "phy-exynos-usbdrd-super",
     "dwc3-exynos-usb",
     "google_tcpci_shim",
     "tcpci_max77759",
