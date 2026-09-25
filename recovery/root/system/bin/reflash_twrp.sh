@@ -62,6 +62,30 @@ DEV_B="/dev/block/by-name/vendor_boot_b"
 [ -b "$DEV_B" ] || _die "Block device not found: $DEV_B"
 _log "block devices OK"
 
+# --- idempotency: the reflash entry point can be dispatched twice for one
+# user gesture (double page-action fire), which used to flash both slots
+# twice back-to-back. If both slots still byte-match the images built by
+# the last successful run this boot, skip with success. /tmp is per-boot,
+# so a reboot — or any external rewrite (ROM zip, root patch) making the
+# slots differ — re-arms the full flow. A failed run stores nothing, so
+# retry always proceeds.
+LAST_A="/tmp/.reflash_twrp.last_a.img"
+LAST_B="/tmp/.reflash_twrp.last_b.img"
+if [ -f "$LAST_A" ] && [ -f "$LAST_B" ]; then
+    _la_sz="$(wc -c < "$LAST_A" 2>/dev/null | tr -d ' ')"
+    _lb_sz="$(wc -c < "$LAST_B" 2>/dev/null | tr -d ' ')"
+    if [ -n "$_la_sz" ] && [ "$_la_sz" -gt 0 ] 2>/dev/null \
+        && [ -n "$_lb_sz" ] && [ "$_lb_sz" -gt 0 ] 2>/dev/null \
+        && cmp -n "$_la_sz" "$LAST_A" "$DEV_A" >>"$LOGF" 2>&1 \
+        && cmp -n "$_lb_sz" "$LAST_B" "$DEV_B" >>"$LOGF" 2>&1; then
+        echo "- Recovery already matches last reflash this boot, skipping"
+        _log "idempotent skip: both slots match last built images"
+        echo "- Recovery reflashed to both slots successfully"
+        exit 0
+    fi
+    _log "slots differ from last reflash (or unreadable), proceeding"
+fi
+
 rm -rf "$FOLDER"
 mkdir -p "$FOLDER" || _die "Cannot create $FOLDER"
 
@@ -193,6 +217,13 @@ done
 
 echo "- Both slots verified OK (byte match)"
 echo "- Recovery reflashed to both slots successfully"
+# Stash the built images for the idempotency guard at the top: a repeated
+# run compares the slots against these and skips when nothing changed.
+# /tmp is per-boot tmpfs, so this never leaks across reboots.
+cp "$FOLDER/recovery_a.img" "$LAST_A" 2>>"$LOGF" \
+    || _log "WARNING: cannot stash last_a image (idempotency off)"
+cp "$FOLDER/recovery_b.img" "$LAST_B" 2>>"$LOGF" \
+    || _log "WARNING: cannot stash last_b image (idempotency off)"
 _log "========== reflash_twrp END OK =========="
 
 exit 0
