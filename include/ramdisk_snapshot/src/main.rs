@@ -4,8 +4,11 @@
 //! (`<type> <octal_perms> <uid> <gid> <path>`, symlinks as
 //! `l <perms> <uid> <gid> <path> -> <target>`) and copies every entry from
 //! the root filesystem to a snapshot directory (default
-//! `/dev/ramdisk_snapshot`). Preserves the exact ramdisk state (packed
+//! `/ramdisk_snapshot`). Preserves the exact ramdisk state (packed
 //! cluster included) so reflash_twrp.sh can rebuild the vendor_boot cpio.
+//! NOTE: rootfs, not /dev — first-stage init mounts a fresh tmpfs on /dev,
+//! hiding anything written there before second stage (that is why the old
+//! /dev/ramdisk_snapshot was never found on stub boots).
 //! Also snapshots the current vendor_boot block device.
 //!
 //! Exit code: 0 ok, 1 if any entry failed (init treats this as a warning).
@@ -20,9 +23,9 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_MANIFEST: &str = "/ramdisk_snapshot_manifest.txt";
-const DEFAULT_SNAP_DIR: &str = "/dev/ramdisk_snapshot";
-const VENDOR_BOOT_SNAP: &str = "/dev/vendor_boot_snapshot";
-const LOG_FILE: &str = "/dev/vendor_boot_snapshot/logs";
+const DEFAULT_SNAP_DIR: &str = "/ramdisk_snapshot";
+const VENDOR_BOOT_SNAP: &str = "/vendor_boot_snapshot";
+const LOG_FILE: &str = "/vendor_boot_snapshot/logs";
 
 // ---------------------------------------------------------------------------
 // logging (stdout/stderr + optional log file, like the C version)

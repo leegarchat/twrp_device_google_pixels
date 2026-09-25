@@ -22,7 +22,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define SNAP_VENDOR_BOOT "/dev/vendor_boot_snapshot"
+#define SNAP_VENDOR_BOOT "/vendor_boot_snapshot"
 
 /* Silent build: all diagnostic logging compiles out. Failures surface
  * as the snapshot_run return code only. */
@@ -320,7 +320,7 @@ static int snap_parse_uint(const char* s, unsigned base, unsigned* out) {
 }
 
 static unsigned g_ok = 0, g_fail = 0;
-static const char* g_snap_dir = "/dev/ramdisk_snapshot";
+static const char* g_snap_dir = "/ramdisk_snapshot";
 
 static void snap_process_entry(int is_link, int is_dir, unsigned mode, unsigned uid,
                                unsigned gid, const char* rel, const char* link_target) {

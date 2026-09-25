@@ -10,7 +10,7 @@
 #   1. snapshot vendor_boot_a/b blocks -> work dir
 #   2. backup snapshots -> /sdcard/backup_vendor_boot/ (best effort;
 #      install proceeds without backup when userdata is unwritable)
-#   3. build a recovery-ONLY cpio payload from /dev/ramdisk_snapshot
+#   3. build a recovery-ONLY cpio payload from /ramdisk_snapshot
 #      (no first_stage paths, no nboot, no first_stage lists) and rebuild
 #      each slot image with it via `bootsmasher-install install --file` —
 #      first_stage, header, cmdline and dtb come from each slot's own
@@ -19,7 +19,10 @@
 #
 # stdout is captured by twrpRepacker and displayed in the recovery UI.
 
-SNAP="/dev/ramdisk_snapshot"
+# Snapshot dir is on the initramfs root (NOT /dev: first-stage mounts a
+# fresh tmpfs on /dev, hiding stub-time writes — the old /dev path was
+# never visible here). Must match kSnapshotDir (stub.c) and init.cpp.
+SNAP="/ramdisk_snapshot"
 FOLDER="/tmp/reflash_recovery"
 LOGF="/tmp/reflash_twrp.log"
 INST_BIN="/system/bin/bootsmasher-install"

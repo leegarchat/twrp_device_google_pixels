@@ -67,7 +67,12 @@ static const char kInitRoot[] = "/init";
 static const char kRecovery[] = "/system/bin/recovery";
 static const char kSnapshotBin[] = "/system/bin/ramdisk_snapshot";
 static const char kSnapshotManifest[] = "/ramdisk_snapshot_manifest.txt";
-static const char kSnapshotDir[] = "/dev/ramdisk_snapshot";
+/* Snapshot lives on the initramfs ROOT, not /dev: first-stage init mounts
+ * a fresh tmpfs on /dev, which hides everything the stub created there —
+ * that is why reflash_twrp.sh never found /dev/ramdisk_snapshot on stub
+ * boots (all AIO boots). The initramfs root is never over-mounted in
+ * recovery, so /ramdisk_snapshot stays visible until reboot. */
+static const char kSnapshotDir[] = "/ramdisk_snapshot";
 static const char kLgzBin[] = "/system/bin/lgz";
 
 static int path_exists(const char* path) {

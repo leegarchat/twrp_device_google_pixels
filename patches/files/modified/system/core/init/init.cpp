@@ -974,7 +974,7 @@ int SecondStageMain(int argc, char** argv) {
             if (pid == 0) {
                 execl("/system/bin/ramdisk_snapshot", "ramdisk_snapshot",
                       "/ramdisk_snapshot_manifest.txt",
-                      "/dev/ramdisk_snapshot", nullptr);
+                      "/ramdisk_snapshot", nullptr);
                 _exit(127);
             } else if (pid > 0) {
                 int wstatus;
