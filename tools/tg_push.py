@@ -8,13 +8,20 @@ Reads the bot token + chat ids from a gitignored JSON config
 
 Usage:
     tg_push.py <zip-path> <group-name,...> [--config PATH]
-               [--diff PREV..CUR] [--text "postscript"] [--repo PATH]
+               [--diff PREV..CUR | --diff-from TAG] [--text "postscript"] [--repo PATH]
     tg_push.py --init [--config PATH]
 
 <group-name,...> is one group or several comma-separated groups
 (e.g. "testers" or "testers,g6"); the zip is uploaded once per group
 (Bot API has no multi-chat send), each message is pinned with
 notification for all.
+
+The reserved name "admin" expands to every chat in the config's
+"admin" map and sends into DMs instead of groups: --push admin.
+Mixing works (--push admin,testers). Pinning in a DM usually fails
+(no admin rights in private chats) — that only warns, the files
+are still delivered. NOTE: "admin" is reserved; a group literally
+named "admin" cannot be addressed (rename it).
 
 --text appends a postscript to the zip message after the md5 line.
 
@@ -24,14 +31,23 @@ fits in CHANGES_TEXT_LIMIT chars, otherwise as a `changes_<CUR>.txt`
 document with the caption "changes". build.sh -D computes PREV as the
 previous reachable tag and CUR as the fresh -g tag (or HEAD).
 
+--diff-from TAG is the forced variant: collect `git log TAG..HEAD`
+regardless of which tags sit in between (long file goes to
+`changes_from_<TAG>.txt`). TAG must exist in the repo, otherwise this
+is a hard error (no zip is sent) — a typo'd base must never silently
+become a zip-only push. Mutually exclusive with --diff.
+
 --init creates the gitignored config from .tg_push.json.example
 (next to this script's tree root) if it does not exist yet.
 
 Config schema (.tg_push.json):
     {"token": "<bot token from @BotFather>",
-     "group": {"<name>": <chat id>, ...}}   # "groups" also accepted
+     "group": {"<name>": <chat id>, ...},  # "groups" also accepted
+     "admin": {"<name>": <user chat id>, ...}}  # "admins" also accepted
 Chat id: group/channel id (e.g. -1001234567890). The bot must be a
 member of the chat; pinning needs admin pin rights.
+Admin id: personal user/chat id for DMs (e.g. 123456789 — the user
+must have started the bot with /start, otherwise sends fail).
 
 Sends via send_document with a caption (filename, size, md5 [+ text]),
 then pins the message with notification for all (bot needs admin pin
@@ -64,11 +80,14 @@ def load_config(path):
         return None, f"bad JSON in {path}: {e}"
     token = cfg.get("token", "")
     groups = cfg.get("groups", cfg.get("group", {}))
+    admins = cfg.get("admins", cfg.get("admin", {}))
     if not token:
         return None, f"empty token in {path}"
     if not isinstance(groups, dict):
         return None, f"group map must be an object in {path}"
-    return {"token": token, "groups": groups}, None
+    if not isinstance(admins, dict):
+        return None, f"admin map must be an object in {path}"
+    return {"token": token, "groups": groups, "admins": admins}, None
 
 
 def default_config_path():
@@ -124,8 +143,33 @@ def collect_diff(repo, range_):
     return out.stdout.strip(), None
 
 
+def resolve_tag(repo, tag):
+    """Check TAG resolves to a commit in repo. Returns sha or None."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"{tag}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except Exception:  # noqa: BLE001 — git missing, repo broken, ...
+        return None
+    if out.returncode != 0:
+        return None
+    return out.stdout.strip() or None
+
+
 def changes_filename(range_):
-    cur = range_.split("..")[-1] if ".." in range_ else range_
+    if ".." in range_:
+        base, _, cur = range_.partition("..")
+        # --diff-from resolves to TAG..HEAD: HEAD as CUR would name every
+        # file changes_HEAD.txt, so pin the base tag instead.
+        if cur == "HEAD" and base:
+            safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in base).strip("._")
+            return f"changes_from_{safe or 'base'}.txt"
+        cur = range_.split("..")[-1]
+    else:
+        cur = range_
     safe = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in cur).strip("._") or "changes"
     return f"changes_{safe}.txt"
 
@@ -205,12 +249,13 @@ async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
 def main(argv):
     cfg_path = None
     diff_range = None
+    diff_from = None
     push_text = None
     repo_path = None
     positional = []
     do_init = False
     skip_next = False
-    value_flags = {"--config", "--diff", "--text", "--repo"}
+    value_flags = {"--config", "--diff", "--diff-from", "--text", "--repo"}
     for i, a in enumerate(argv):
         if skip_next:
             skip_next = False
@@ -223,6 +268,8 @@ def main(argv):
                 cfg_path = argv[i + 1]
             elif a == "--diff":
                 diff_range = argv[i + 1]
+            elif a == "--diff-from":
+                diff_from = argv[i + 1]
             elif a == "--text":
                 push_text = argv[i + 1]
             elif a == "--repo":
@@ -236,12 +283,12 @@ def main(argv):
         else:
             positional.append(a)
     if do_init:
-        if positional or diff_range or push_text:
+        if positional or diff_range or diff_from or push_text:
             print("usage: tg_push.py --init [--config PATH]", file=sys.stderr)
             return 2
         return cmd_init(cfg_path or default_config_path())
     if len(positional) != 2:
-        print("usage: tg_push.py <zip-path> <group-name,...> [--config PATH] [--diff PREV..CUR] [--text \"...\"] [--repo PATH]", file=sys.stderr)
+        print("usage: tg_push.py <zip-path> <group-name,...> [--config PATH] [--diff PREV..CUR | --diff-from TAG] [--text \"...\"] [--repo PATH]", file=sys.stderr)
         print("       tg_push.py --init [--config PATH]", file=sys.stderr)
         return 2
     zip_path, groups_arg = positional
@@ -251,9 +298,20 @@ def main(argv):
         return 2
     if cfg_path is None:
         cfg_path = default_config_path()
+    if diff_range and diff_from:
+        print("ERROR: --diff and --diff-from are mutually exclusive", file=sys.stderr)
+        return 2
     if diff_range and ".." not in diff_range:
         print("ERROR: --diff needs a PREV..CUR range", file=sys.stderr)
         return 2
+    if diff_from:
+        if not diff_from.strip() or ".." in diff_from:
+            print("ERROR: --diff-from needs a single tag name", file=sys.stderr)
+            return 2
+        if resolve_tag(repo_path or default_repo_path(), diff_from) is None:
+            print(f"ERROR: --diff-from tag not found: {diff_from}", file=sys.stderr)
+            return 2
+        diff_range = f"{diff_from}..HEAD"
     if not os.path.isfile(zip_path):
         print(f"ERROR: zip not found: {zip_path}", file=sys.stderr)
         return 2
@@ -269,7 +327,18 @@ def main(argv):
     if err is not None:
         print(f"ERROR: {err}", file=sys.stderr)
         return 2
-    unknown = [g for g in groups if g not in cfg["groups"]]
+    # Reserved name "admin" = every DM in the admin map (see docstring).
+    expanded = []
+    for g in groups:
+        if g == "admin":
+            if not cfg["admins"]:
+                print(f"ERROR: 'admin' requested but no admins in {cfg_path} "
+                      f"(add an \"admin\" map of user chat ids)", file=sys.stderr)
+                return 2
+            expanded.extend((f"admin:{name}", cid) for name, cid in sorted(cfg["admins"].items()))
+        else:
+            expanded.append((g, None))
+    unknown = [g for g, _ in expanded if not g.startswith("admin:") and g not in cfg["groups"]]
     if unknown:
         print(
             f"ERROR: unknown group(s) {', '.join(unknown)} in {cfg_path} "
@@ -277,6 +346,10 @@ def main(argv):
             file=sys.stderr,
         )
         return 2
+    chat_ids = [
+        (label, cid if cid is not None else cfg["groups"][label])
+        for label, cid in expanded
+    ]
     try:
         import aiogram  # noqa: F401 — fail fast with a clear message
     except ImportError:
@@ -286,7 +359,6 @@ def main(argv):
     caption = f"{os.path.basename(zip_path)}\n{size / 1048576:.1f} MB | md5: {digest}"
     if push_text:
         caption += f"\n\n{push_text}"
-    chat_ids = [(g, cfg["groups"][g]) for g in groups]
     try:
         failed = asyncio.run(run_push(
             cfg["token"], chat_ids, os.path.abspath(zip_path), caption,

@@ -62,6 +62,9 @@
 #                     "group": {"name": id}}). Several groups allowed, comma
 #                     separated: --push testers,g6. Non-fatal: a push failure
 #                     only warns, the build itself is already delivered.
+#                     Reserved name "admin" sends into admin DMs instead of
+#                     groups (admin user ids live in the "admin" map of
+#                     .tg_push.json; the user must have /start'ed the bot).
 #   -g, --git-tag     Tag this build in git: -n/--name value + datetime
 #                     (e.g. -n test8.7 -> test8.7-20260923-0130). Refuses to
 #                     build on a dirty tree (uncommitted changes = error
@@ -72,6 +75,11 @@
 #                     it after the zip — as a text message, or as a
 #                     changes_<tag>.txt file ("changes" caption) when longer
 #                     than 2400 chars. Warns and sends zip-only without history.
+#   --diff-from TAG   With --push: force the change list as `git log`
+#                     TAG..HEAD (fresh -g tag == HEAD, so this covers up to
+#                     the tag being formed), whatever tags sit in between.
+#                     Long lists go to changes_from_<TAG>.txt. Overrides -D.
+#                     TAG must exist, else warning + zip-only.
 #   -T, --text TEXT   With --push: append TEXT to the zip message after the
 #                     md5 line (e.g. -T "looks like OTG is fixed on P10").
 #   -h, --help        Show this help.
@@ -188,6 +196,7 @@ FOX_NO_FIRST_STAGE=""
 CPIO_ONLY=false
 FOX_GIT_TAG=""
 FOX_DIFF_TAG=""
+FOX_DIFF_FROM=""
 FOX_PUSH_TEXT=""
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
@@ -300,7 +309,15 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             FOX_DIFF_TAG=1
             shift
             ;;
-        -T|--text)
+        --diff-from)
+            shift
+            FOX_DIFF_FROM="${1:-}"
+            if [[ -z "$FOX_DIFF_FROM" ]]; then
+                echo "ERROR: --diff-from requires a tag (e.g. --diff-from test8.9-20260924-0411)"
+                fox_safe_exit 1
+            fi
+            shift
+            ;;        -T|--text)
             shift
             FOX_PUSH_TEXT="${1:-}"
             if [[ -z "$FOX_PUSH_TEXT" ]]; then
@@ -1070,8 +1087,18 @@ if [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" 
     # HEAD when built without -g). A fresh tag sits exactly on HEAD, so
     # step past it to find the previous one. Warns (zip-only) when the
     # history has no earlier tag.
+    # --diff-from TAG: forced range TAG..HEAD (fresh -g tag == HEAD, so
+    # this covers up to the tag being formed). Overrides -D. TAG must
+    # exist, else warning + zip-only.
     _diff_args=()
-    if [[ -n "${FOX_DIFF_TAG:-}" ]]; then
+    if [[ -n "${FOX_DIFF_FROM:-}" ]]; then
+        if git -C "$SCRIPT_DIR" rev-parse --verify --quiet "$FOX_DIFF_FROM^{commit}" >/dev/null 2>&1; then
+            _diff_args=(--diff-from "$FOX_DIFF_FROM")
+            echo "[build] Change list (forced base): $FOX_DIFF_FROM..HEAD"
+        else
+            echo "[build] WARNING: --diff-from tag not found: $FOX_DIFF_FROM, sending zip only"
+        fi
+    elif [[ -n "${FOX_DIFF_TAG:-}" ]]; then
         _diff_base="HEAD"
         _diff_cur="HEAD"
         if [[ -n "${FOX_TAG_NAME:-}" ]]; then
@@ -1100,8 +1127,8 @@ if [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" 
     fi
     unset _push_zip _diff_args _text_args
 fi
-if [[ -n "${FOX_DIFF_TAG:-}${FOX_PUSH_TEXT:-}" && -z "${FOX_PUSH_GROUP:-}" ]]; then
-    echo "[build] WARNING: --diff-tag/--text have no effect without --push"
+if [[ -n "${FOX_DIFF_TAG:-}${FOX_DIFF_FROM:-}${FOX_PUSH_TEXT:-}" && -z "${FOX_PUSH_GROUP:-}" ]]; then
+    echo "[build] WARNING: --diff-tag/--diff-from/--text have no effect without --push"
 fi
 
 # Stale generated overrides would silently reconfigure later manual builds
