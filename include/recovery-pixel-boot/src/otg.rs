@@ -550,6 +550,75 @@ fn confirm_gs101_host() {
     info("gs101 host NOT confirmed (source_psy never online: no VBUS and/or no role switch)");
 }
 
+/// Stable OTG storage symlink for /usb_otg (points at /dev/block/otg-usb).
+/// Same idea as malibu's otg_yogi.sh: the removable USB disk's sd letter
+/// drifts across attach/detach, so flags use a fixed name and we keep the
+/// link on the current disk. Pure over inputs (testable): (disk, removable,
+/// device-link-target) triples; picks the first removable disk whose device
+/// path runs through USB (UFS internals are non-removable; a non-USB
+/// removable node is never the OTG stick).
+fn pick_otg_disk(disks: &[(String, String, String)]) -> Option<String> {
+    for (name, removable, devlink) in disks {
+        if removable.trim() != "1" {
+            continue;
+        }
+        if !devlink.contains("usb") {
+            continue;
+        }
+        return Some(name.clone());
+    }
+    None
+}
+
+const OTG_USB_LINK: &str = "/dev/block/otg-usb";
+
+/// Live scan + relink-only-on-change. Best-effort, never fails the caller:
+/// absence just means no OTG disk is attached right now. Prefers the first
+/// partition (sdX1) when the node exists, else the whole disk (superfloppy).
+fn ensure_otg_symlink() {
+    let sys_block = Path::new("/sys/block");
+    let mut names: Vec<String> = std::fs::read_dir(sys_block)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| {
+                    n.len() == 3
+                        && n.starts_with("sd")
+                        && n.bytes().nth(2).map(|c| c.is_ascii_lowercase()).unwrap_or(false)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    let mut disks: Vec<(String, String, String)> = Vec::with_capacity(names.len());
+    for n in &names {
+        let dir = sys_block.join(n);
+        let removable = read_trim(&dir.join("removable"));
+        let devlink = std::fs::read_link(dir.join("device"))
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        disks.push((n.clone(), removable, devlink));
+    }
+    let disk = match pick_otg_disk(&disks) {
+        Some(d) => d,
+        None => return,
+    };
+    let base = format!("/dev/block/{disk}");
+    let p1 = format!("{base}1");
+    let target = if Path::new(&p1).exists() { p1 } else { base };
+    let cur = std::fs::read_link(OTG_USB_LINK)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if cur == target {
+        return;
+    }
+    let _ = std::fs::remove_file(OTG_USB_LINK);
+    match std::os::unix::fs::symlink(&target, OTG_USB_LINK) {
+        Ok(()) => info(&format!("otg-usb -> {target}")),
+        Err(e) => info(&format!("otg-usb symlink FAILED: {e}")),
+    }
+}
+
 fn switch_to_device(current: &mut String) {
     if current.as_str() == "device" {
         return;
@@ -790,6 +859,12 @@ pub fn run_otg_auto() -> ! {
                 cooldown = uptime_secs() + SETTLE_SECS;
             }
         }
+        // Host mode owns the OTG disk: keep /dev/block/otg-usb (/usb_otg)
+        // on the current removable USB disk across replugs. Device mode
+        // skips it (no OTG disk can be attached while we are the gadget).
+        if current == "host" {
+            ensure_otg_symlink();
+        }
         // ffs.ready is polled for parity with shell dump_state logging.
         let _ = get_prop("sys.usb.ffs.ready");
         sleep(Duration::from_secs(1));
@@ -886,6 +961,23 @@ mod tests {
         // Non-port entries never match.
         let junk = vec!["power".to_string(), "portX".to_string()];
         assert_eq!(pick_typec_port(&junk), Some("portX".to_string()));
+    }
+
+    #[test]
+    fn otg_disk_picks_removable_usb() {
+        let d = |n: &str, r: &str, l: &str| (n.to_string(), r.to_string(), l.to_string());
+        // UFS internals skipped, first removable USB disk wins.
+        let disks = vec![
+            d("sda", "0", "../../devices/platform/14700000.ufs/host0/target0:0:0/0:0:0:0"),
+            d("sdd", "1", "../../devices/platform/11210000.usb/usb1/1-1/1-1:1.0/host4/target4:0:0/4:0:0:0"),
+        ];
+        assert_eq!(pick_otg_disk(&disks), Some("sdd".to_string()));
+        // Removable but not USB (e.g. virtual node) is not the OTG stick.
+        let non_usb = vec![d("sda", "0", "ufs"), d("sdb", "1", "virtual/block")];
+        assert_eq!(pick_otg_disk(&non_usb), None);
+        // Nothing attached: no pick, caller just skips the relink.
+        let empty: Vec<(String, String, String)> = Vec::new();
+        assert_eq!(pick_otg_disk(&empty), None);
     }
 
     #[test]

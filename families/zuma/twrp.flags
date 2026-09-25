@@ -83,7 +83,7 @@
 # ============================================================
 # 10. External Storage (USB OTG)
 # ============================================================
-/usb_otg             auto    /dev/block/sdd1                                                    flags=display="USB OTG (External Drive)";storage;wipeingui;removable;fsflags="utf8"
+/usb_otg             auto    /dev/block/otg-usb                                                    flags=display="USB OTG (External Drive)";storage;wipeingui;removable;fsflags="utf8"
 
 # ============================================================
 # 11. Bootloader non-A/B persistent partitions
