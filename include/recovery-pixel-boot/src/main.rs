@@ -16,11 +16,11 @@ mod config;
 mod i2c;
 mod init;
 mod ko_picker;
-mod otg;
 mod props;
 mod stage;
 mod temp;
 mod torch;
+mod usb;
 
 use std::process::ExitCode;
 
@@ -78,7 +78,7 @@ fn main() -> ExitCode {
     match args[1].as_str() {
         "init" => run_simple(init::run_init(), "init"),
         "boot" => run_simple(boot::run_boot(), "boot"),
-        "otg-patch" => run_simple(otg::run_otg_patch(), "otg-patch"),
+        "otg-patch" => run_simple(usb::run_otg_patch(), "otg-patch"),
         "setup-temp" => run_simple(temp::run_setup_temp(), "setup-temp"),
         "torch" => {
             if args.len() < 3 {
@@ -88,7 +88,7 @@ fn main() -> ExitCode {
         }
         "otg-auto" => {
             // Diverges under normal operation; the `!` coerces to ExitCode.
-            otg::run_otg_auto()
+            usb::run_otg_auto()
         }
         _ => usage(),
     }

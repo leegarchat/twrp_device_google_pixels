@@ -1,5 +1,7 @@
-//! otg — zuma TEST-branch OTG (R12_14.1_otg_test).
+//! usb::zuma — TEST-branch OTG implementation (R12_14.1_otg_test).
 //!
+//! Field-proven on shiba/EVOX (Wild 6.1.157): host role via shim +
+//! stock-module preload, VBUS daemon per the R11 algorithm.
 //! Built solely from the cp2a-stable / Wild firmware composition, not from
 //! assumptions:
 //! - tester kernel 6.1.157 (Wild/EVOX); stock Google 6.1.157-gbd23337.
