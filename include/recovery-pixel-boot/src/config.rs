@@ -37,8 +37,13 @@ pub struct DeviceConfig {    pub family: String,
     /// '|' separated devicetree path matches (default "flash|torch").
     pub torch_pinctrl_match: String,
     /// VBUS sysfs candidates for otg-auto (default: 3 known paths).
+    /// TEST-BRANCH (otg_test): unused — lean zuma logic hardcodes its own
+    /// paths; kept for JSON compat with other branches.
+    #[allow(dead_code)]
     pub vbus_paths: Vec<String>,
     /// TCPC driver dir name for otg-patch (default "max77759tcpc").
+    /// TEST-BRANCH (otg_test): unused — see above.
+    #[allow(dead_code)]
     pub tcpc_driver: String,
     /// Fold device flag (default false). When true, init detects the hinge
     /// state and applies front/inner display geometry.

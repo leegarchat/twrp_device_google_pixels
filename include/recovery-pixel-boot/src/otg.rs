@@ -145,6 +145,8 @@ fn load_shim() -> bool {
 /// otg_auto); 0 + Err otherwise.
 pub fn run_otg_patch() -> Result<(), String> {
     info("starting OTG patch routine (zuma test branch)");
+    // SAFETY: all three are valid NUL-terminated C strings ('static byte
+    // arrays); mount(2) with debugfs fstype, NULL data is the standard call.
     let rc = unsafe {
         libc::mount(
             b"debugfs\0".as_ptr() as *const libc::c_char,
@@ -246,7 +248,7 @@ fn pick_otg_disk() -> Option<String> {
                 .filter(|n| {
                     n.len() == 3
                         && n.starts_with("sd")
-                        && n.bytes().nth(2).map(|c| c.is_ascii_lowercase()).unwrap_or(false)
+                        && n.as_bytes().get(2).copied().map(|c| c.is_ascii_lowercase()).unwrap_or(false)
                 })
                 .collect()
         })
