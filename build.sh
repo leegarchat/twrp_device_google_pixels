@@ -5,7 +5,7 @@
 # Usage:
 #   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
 #              [-k|--kernel VER] [--force] [--list] [--build-type TYPE]
-#              [-N|--no-first-stage] [-c|--cpio-only]
+#              [-N|--no-first-stage] [-c|--cpio-only] [--platform-recovery] [--new-theme]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
@@ -39,6 +39,8 @@
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
+#   -j N              Parallel build jobs (also as -jN). Default: nproc.
+#                     Exported as JOBS for the Soong/make invocation.
 #   --platform-recovery
 #                     Recovery-in-platform test layout (var2-AIO): merge
 #                     first-stage + recovery into one ramdisk
@@ -56,6 +58,11 @@
 #                     other families → recovery fragment
 #                     (`fastboot flash vendor_boot:recovery`). The .img/.zip
 #                     are NOT copied to builds/ in this mode.
+#   --new-theme       Build the reworked wide-variant theme (twres_1280/
+#                     1344/1440/1600/1840/2076 XML overlays via
+#                     tools/theme_wide.py). Test-gated: default builds ship
+#                     the stock base theme only. Exported as
+#                     FOX_REWORK_THEME=1 (Soong Getenv + vendorsetup.sh).
 #   --push GROUP      Push the finished AIO installer zip to Telegram chat(s)
 #                     via tools/tg_push.py (bot token + chat ids live in the
 #                     gitignored .tg_push.json: {"token": "...",
