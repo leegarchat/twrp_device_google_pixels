@@ -8,10 +8,11 @@
  #include <private/android_filesystem_config.h>
  #include "variables.h"
  #include "data.hpp"
-@@ -323,6 +324,20 @@
+@@ -322,6 +323,20 @@
+ #endif
    static bool loaded = false;
    string dev_id;
- 
++
 +  // Fox (malibu): /persist is not mounted this early, so Path_Exists
 +  // below always misses and settings silently reset every boot (save
 +  // mounts it, load never did). Mount first; no-op when absent.
@@ -25,10 +26,9 @@
 +    mount("/dev/block/by-name/persist", "/persist", "ext4",
 +          MS_NOATIME | MS_NOSUID | MS_NODEV, NULL);
 +  }
-+
+ 
    // Only run this function once, and make sure normal settings file has not yet been read
    if (loaded || !mBackingFile.empty()
-       || !TWFunc::Path_Exists(PERSIST_SETTINGS_FILE))
 @@ -802,16 +817,52 @@
      	mConst.SetValue("fox_use_nano_editor", "0");
    #endif
@@ -61,7 +61,8 @@
 -  mData.SetValue(OF_SCREEN_NAV_H_S, OF_SCREEN_H); // mData for nide navbar function
 +  mConst.SetValue(OF_SCREEN_H_S, effective_screen_h);
 +  mData.SetValue(OF_SCREEN_NAV_H_S, effective_screen_h); // mData for nide navbar function
-+  
+   
+-  mConst.SetValue(OF_STATUS_H_S, OF_STATUS_H);
 +  // Dynamic screen width override: if DOF_SCREEN_W is set (fold/tablet
 +  // virtual canvas from pixel.json geometry, stamped by recovery-pixel-boot
 +  // init before recovery starts), store it for pages.cpp letterboxing.
@@ -81,9 +82,87 @@
 +  if (dof_progressive_scale[0] != '\0') {
 +      mConst.SetValue("dof_progressive_scale", dof_progressive_scale);
 +  }
-   
--  mConst.SetValue(OF_STATUS_H_S, OF_STATUS_H);
++  
 +  mConst.SetValue(OF_STATUS_H_S, effective_status_h);
    mConst.SetValue(OF_HIDE_NOTCH_S, OF_HIDE_NOTCH);
    mConst.SetValue(OF_STATUS_INDENT_LEFT_S, OF_STATUS_INDENT_LEFT);
    mConst.SetValue(OF_STATUS_INDENT_RIGHT_S, OF_STATUS_INDENT_RIGHT);
+@@ -948,9 +999,9 @@
+   //[f/d]
+  
+ #ifndef TW_NO_HAPTICS
+-	mPersist.SetValue("tw_button_vibrate", "40");
+-	mPersist.SetValue("tw_keyboard_vibrate", "40");
+-	mPersist.SetValue("tw_action_vibrate", "160");
++	mPersist.SetValue("tw_button_vibrate", "3");
++	mPersist.SetValue("tw_keyboard_vibrate", "9");
++	mPersist.SetValue("tw_action_vibrate", "20");
+ 	mConst.SetValue("tw_disable_haptics", "0");
+ #else
+ 	LOGINFO("TW_NO_HAPTICS := true\n");
+@@ -1227,6 +1278,38 @@
+   mPersist.SetValue("lock_btn", "0");
+ #endif
+ 
++  // Fox (pixels): live-unit UI defaults, baked from the maintainer's shiba
++  // .foxs (2026-09-25). These keys have no code default and read as empty/0
++  // on fresh installs; the lines below make first boot look like the
++  // maintainer's setup. A saved .foxs still wins — this only changes
++  // first-boot defaults. Deliberately NOT baked: timezone (personal),
++  // tw_brightness raw (stale/clamped), password hashes, backup/zip paths.
++  mPersist.SetValue("lock_btn", "1");
++  mPersist.SetValue("lock_action", "1");
++  mPersist.SetValue("lock_info", "1");
++  mPersist.SetValue("darker_ui", "1");
++  mPersist.SetValue("navbar_accent", "1");
++  mPersist.SetValue("navbar_bkg", "1");
++  mPersist.SetValue("navbar_style", "1");
++  mPersist.SetValue("new_nav_panel_des", "1");
++  mPersist.SetValue("clock_style", "1");
++  mPersist.SetValue("separate_status", "1");
++  mPersist.SetValue("fox_statusbar_on_lockpass", "1");
++  mPersist.SetValue("enable_battery", "1");
++  mPersist.SetValue("style_battery", "2");
++  mPersist.SetValue("show_cpu_temp", "1");
++  mPersist.SetValue("show_shadow", "1");
++  mPersist.SetValue("show_slideout", "1");
++  mPersist.SetValue("key_buttons", "1");
++  mPersist.SetValue("key_numbar", "1");
++  mPersist.SetValue("key_allow_swipe", "1");
++  mPersist.SetValue("tw_enable_keys", "1");
++  mPersist.SetValue("use_fixed_font", "1");
++  mPersist.SetValue("gst_console", "1");
++  mPersist.SetValue("instant_apply", "1");
++  mPersist.SetValue("ota_new_screen", "1");
++  mPersist.SetValue("of_hide_app_hint", "1");
++
+   mConst.SetValue(FOX_SURVIVAL_FOLDER_VAR, FOX_SURVIVAL_FOLDER);
+   mConst.SetValue(FOX_SURVIVAL_BACKUP_NAME, FOX_SURVIVAL_BACKUP);
+   mConst.SetValue(FOX_ACTUAL_BUILD_VAR, FOX_BUILD);
+@@ -1250,7 +1333,7 @@
+   mPersist.SetValue(TW_DISABLE_FREE_SPACE_VAR, "0");
+   mPersist.SetValue(TW_FORCE_DIGEST_CHECK_VAR, "0");
+   mPersist.SetValue(TW_USE_COMPRESSION_VAR, "0");
+-  mPersist.SetValue(TW_GUI_SORT_ORDER, "1");
++  mPersist.SetValue(TW_GUI_SORT_ORDER, "-2");
+   mPersist.SetValue(TW_RM_RF_VAR, "0");
+   mPersist.SetValue(TW_SKIP_DIGEST_CHECK_VAR, "0");
+   mPersist.SetValue(TW_SKIP_DIGEST_GENERATE_VAR, "0");
+@@ -1319,7 +1402,7 @@
+   mConst.SetValue("tw_screen_timeout_secs", "0");
+   mConst.SetValue("tw_no_screen_timeout", "1");
+ #else
+-  mPersist.SetValue("tw_screen_timeout_secs", "60");
++  mPersist.SetValue("tw_screen_timeout_secs", "300");
+   mPersist.SetValue("tw_no_screen_timeout", "0");
+ #endif
+ 
+@@ -1461,6 +1544,8 @@
+   mPersist.SetValue("tw_never_show_system_ro_page", "0");
+   mPersist.SetValue("tw_language", EXPAND(TW_DEFAULT_LANGUAGE));
+   LOGINFO("LANG: %s\n", EXPAND(TW_DEFAULT_LANGUAGE));
++  // Fox (pixels): maintainer default is Russian (BoardConfig ships en).
++  mPersist.SetValue("tw_language", "ru");
+ 
+   mData.SetValue("tw_has_adopted_storage", "0");
+ 
