@@ -8,3 +8,26 @@
  SOONG_CONFIG_NAMESPACES += twrpVarsPlugin
  
  SOONG_CONFIG_twrpVarsPlugin :=
+@@ -92,8 +93,12 @@
+     tw_support_input_aidl_haptics_fqname \
+     tw_support_input_aidl_haptics_fix_off \
+     tw_use_samsung_haptics \
+-    tw_brightness_path \
+-    tw_max_brightness
++    tw_brightness_path
++
++ifneq ($(strip $(TW_MAX_BRIGHTNESS)),)
++SOONG_CONFIG_twrpGlobalVars += tw_max_brightness
++SOONG_CONFIG_twrpGlobalVars_tw_max_brightness := $(TW_MAX_BRIGHTNESS)
++endif
+ 
+ ifeq ($(TARGET_HW_DISK_ENCRYPTION),true)
+ SOONG_CONFIG_twrpGlobalVars += \
+@@ -155,7 +160,6 @@
+ SOONG_CONFIG_twrpGlobalVars_tw_support_input_aidl_haptics_fix_off := $(TW_SUPPORT_INPUT_AIDL_HAPTICS_FIX_OFF)
+ SOONG_CONFIG_twrpGlobalVars_tw_use_samsung_haptics := $(TW_USE_SAMSUNG_HAPTICS)
+ SOONG_CONFIG_twrpGlobalVars_tw_brightness_path := $(subst ",, $(TW_BRIGHTNESS_PATH))
+-SOONG_CONFIG_twrpGlobalVars_tw_max_brightness := $(TW_MAX_BRIGHTNESS)
+ 
+ ifneq ($(TARGET_CRYPTFS_HW_PATH),)
+   SOONG_CONFIG_twrpGlobalVars_hw_fde_cryptfs_hw_header_lib_name := //$(TARGET_CRYPTFS_HW_PATH):libcryptfs_hw_headers

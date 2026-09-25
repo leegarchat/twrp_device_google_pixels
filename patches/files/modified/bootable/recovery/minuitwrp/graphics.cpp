@@ -326,8 +326,8 @@ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
     }
     const int requested_w = w;
     const int requested_h = h;
-    w = std::min(w, surface->width - sx);
-    h = std::min(h, surface->height - sy);
+    w = std::min(w, static_cast<int>(surface->width) - sx);
+    h = std::min(h, static_cast<int>(surface->height) - sy);
     dx += (requested_w - w) / 2;
     dy += (requested_h - h) / 2;
 
