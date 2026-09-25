@@ -32,6 +32,14 @@ If you are an AI model working with this tree, follow these rules:
 | `--build-type TYPE` | Build type, default `Stable` (details below) |
 | `-N, --no-first-stage` | Skip first-stage (vendor_ramdisk) components: no `fstab.*`, no linker/e2fs tools. The recovery ramdisk is unaffected. Reaches `device.mk` as `FOX_NO_FIRST_STAGE=1` |
 | `-c, --cpio-only` | Deliver only the ramdisk `cpio.lz4` (`lz4_legacy`), no `.img/.zip`: gs101 → platform fragment (flash with `fastboot flash vendor_boot:`), other families → recovery fragment (`fastboot flash vendor_boot:recovery`) |
+| `-j N` | Parallel build jobs (also `-jN`), default nproc |
+| `--platform-recovery` | Recovery-in-platform layout (var2-AIO): first-stage + recovery in one ramdisk |
+| `--new-theme` | Build the reworked wide-variant theme (`FOX_REWORK_THEME=1`); default is the stock base theme |
+| `--push GROUP` | Push the finished AIO zip to Telegram chat(s) (`admin` = admin DMs); non-fatal, failure only warns |
+| `-g, --git-tag` | Tag the build in git (`-n` value + datetime); refuses a dirty tree |
+| `-D, --diff-tag` | With `--push`: changelog between the previous tag and the fresh tag (text or `changes_<tag>.txt`) |
+| `--diff-from TAG` | With `--push`: forced changelog as `TAG..HEAD` (overrides `-D`) |
+| `-T, --text TEXT` | With `--push`: postscript appended to the zip message |
 
 Do not use obsolete `-l` (LGZ level) mentions from the script header —
 this is the current flag set.
@@ -73,6 +81,25 @@ its own (`zuma_husky.img`, subgroup — `zuma_husky-akita.img`).
 Per-device overrides are currently disabled (`_kernels_disabled` in
 `pixel.json`) — each family builds into a single shared image; to restore —
 rename the key back to `kernels`.
+
+## AIO builds (the default route)
+
+`-f aio` builds **one installer for every supported device** instead of
+per-family images:
+
+```bash
+./build.sh -f aio --platform-recovery -n test8 -c --build-type Beta
+```
+
+What changes in AIO mode: the stock kernel is kept (no kernel image is
+built, `-k/--kernel` is meaningless and rejected), the exact device is
+detected at runtime and family files (`recovery.fstab`, `twrp.flags`,
+USB controller, keymint) are swapped in by the init stub + boot engine.
+Output is `builds/OrangeFox-R12.0-test8-aio.zip` — a self-contained
+installer (both slots, userdata backup) plus the `*.ramdisk.lz4` payload.
+Testers only ever see AIO builds; `-f <family> -k <ver>` remains as a
+developer fallback. Push/test flags (`--push`, `-g`, `-D`, `-T`) work the
+same on both routes.
 
 ## Build types: Stable vs Beta
 

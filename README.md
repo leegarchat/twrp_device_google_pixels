@@ -2,14 +2,21 @@
 
 # OrangeFox for Tensor Pixel — `device/google/pixels`
 
-Multi-device recovery tree for all Tensor Pixels — from Pixel 6 to
-Pixel 11, including folds and the tablet. One codebase, one image per
-family: the exact device is detected at runtime, vendor specifics come
-from JSON, HALs are built from source — no vendor prebuilts.
+Universal **AIO** recovery for all Tensor Pixels — from Pixel 6 to
+Pixel 11, including folds and the tablet. **One installer zip for every
+device**: the exact model is detected at runtime, vendor specifics come
+from JSON, HALs are built from source — no vendor prebuilts, stock
+kernel is kept.
 
 ```bash
-./build.sh -f shiba -k 6.12 -n test_3 --build-type Beta
+./build.sh -f aio --platform-recovery -n test8 -c --build-type Beta
 ```
+
+This produces `builds/OrangeFox-R12.0-test8-aio.zip` — a single package
+that installs working recovery on any supported Pixel (both slots, with
+a userdata backup). Per-family images (`-f <family> -k <ver>`) still
+exist, but they are a development fallback now: testers only ever see
+AIO builds.
 
 | Family | SoC | Devices |
 |---|---|---|
@@ -32,7 +39,7 @@ Root is for quick start. Depth lives in `docs/` — each file answers one
 | Document | Question |
 |---|---|
 | [`docs/tree-guide.en.md`](docs/tree-guide.en.md) | Which file is for what, who reads it |
-| [`docs/build-system.en.md`](docs/build-system.en.md) | How the image builds: `build.sh`, groups, build types |
+| [`docs/build-system.en.md`](docs/build-system.en.md) | How the image builds: `build.sh`, AIO vs family images, flags |
 | [`docs/kernel-profiles.en.md`](docs/kernel-profiles.en.md) | Where the kernel cmdline comes from: `family.json` → `.gen_kernel.mk` |
 | [`docs/device-config.en.md`](docs/device-config.en.md) | `pixel.json`: touch, paths, props, folds and letterbox |
 | [`docs/recovery-engine.en.md`](docs/recovery-engine.en.md) | Rust engine `recovery-pixel-boot`: init, modules, OTG, torch |
@@ -62,7 +69,8 @@ Root is for quick start. Depth lives in `docs/` — each file answers one
 
 ```bash
 ./build.sh --list                  # family/device/kernel tree
-./build.sh -f zuma -k 6.12         # build
+./build.sh -f aio --platform-recovery -n test8 -c --build-type Beta   # AIO (default route)
+./build.sh -f zuma -k 6.12         # per-family fallback (developers only)
 ./gen_kernel_mk.py --fingerprint zuma 6.12   # who shares an image
 ```
 
