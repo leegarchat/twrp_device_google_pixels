@@ -33,18 +33,18 @@ ALLOW_MISSING_DEPENDENCIES := true
 
 # A/B
 AB_OTA_UPDATER := true
+# NOTE: init_boot / vendor_kernel_boot / system_dlkm do NOT exist on gs101
+# (Tensor G1: LOS payload, care_map and fstab all agree) — and AIO images
+# boot on gs101 too, so both gs101 and aio builds use the reduced list.
 AB_OTA_PARTITIONS += \
     boot \
-    init_boot \
     vendor_boot \
-    vendor_kernel_boot \
     dtbo \
     vbmeta \
     vbmeta_system \
     vbmeta_vendor \
     system \
     system_ext \
-    system_dlkm \
     product \
     vendor \
     vendor_dlkm \
@@ -60,6 +60,12 @@ AB_OTA_PARTITIONS += \
     pvmfw \
     tzsw \
     ldfw
+ifeq ($(filter gs101 aio,$(DEVICE_BUILD_FLAG)),)
+AB_OTA_PARTITIONS += \
+    init_boot \
+    vendor_kernel_boot \
+    system_dlkm
+endif
 
 # Architecture
 TARGET_ARCH := arm64
