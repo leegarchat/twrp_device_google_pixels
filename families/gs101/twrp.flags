@@ -8,7 +8,9 @@
 # ============================================================
 /system              ext4    /dev/block/mapper/system                                           flags=display="System";logical;backup=1;slotselect
 /system_ext          ext4    /dev/block/mapper/system_ext                                       flags=display="System Ext";logical;backup=1;slotselect
-/system_dlkm         ext4    /dev/block/mapper/system_dlkm                                      flags=display="System DLKM (GKI kernel modules)";logical;backup=1;slotselect
+# NOTE: gs101 has NO system_dlkm partition — proven by the LOS raven OTA
+# payload (no system_dlkm entry) and fstab.gs101 ("partition does not exist
+# on gs101"). Newer families do have it.
 /product             ext4    /dev/block/mapper/product                                          flags=display="Product";logical;backup=1;slotselect
 /vendor              ext4    /dev/block/mapper/vendor                                           flags=display="Vendor";logical;backup=1;slotselect
 /vendor_dlkm         ext4    /dev/block/mapper/vendor_dlkm                                      flags=display="Vendor DLKM (device kernel modules)";logical;backup=1;slotselect
@@ -27,7 +29,8 @@
 # 3. Boot images (A/B slotted, raw images)
 # ============================================================
 /boot                emmc    /dev/block/platform/14700000.ufs/by-name/boot                      flags=slotselect;display="Boot Image";backup=1;flashimg=1
-/init_boot           emmc    /dev/block/platform/14700000.ufs/by-name/init_boot                 flags=slotselect;display="Init Boot (Generic Ramdisk)";backup=1;flashimg=1
+# NOTE: gs101 has NO init_boot partition (GKI 1.0 era, ramdisk lives in boot) —
+# proven by the LOS raven OTA payload. Newer families do have it.
 /vendor_boot         emmc    /dev/block/platform/14700000.ufs/by-name/vendor_boot                flags=slotselect;display="Vendor Boot (OrangeFox Recovery)";backup=1;flashimg=1
 # NOTE: gs101 has NO vendor_kernel_boot partition (Tensor G1 keeps DLKM+DTB
 # inside vendor_boot) — no entry here by design.
@@ -115,13 +118,7 @@
 /ufs_internal        emmc    /dev/block/platform/14700000.ufs/by-name/ufs_internal              flags=display="UFS Internal (device config)";backup=1;flashimg=1
 
 # ============================================================
-# 12. A/B slotted firmware — DPM
-# ============================================================
-# DPM (Device Power Management firmware, Tensor-specific). A/B slotted.
-/dpm                 emmc    /dev/block/platform/14700000.ufs/by-name/dpm                       flags=slotselect;display="DPM (power management fw)";backup=1;flashimg=1
-
-# ============================================================
-# 13. Super partition (raw physical container for logical partitions)
+# 12. Super partition (raw physical container for logical partitions)
 # WARNING: backing up super produces a ~10 GB raw image that contains ALL
 # logical partitions combined. Prefer backing up individual logical partitions
 # (System, Vendor, etc.) above unless you specifically need a monolithic image.

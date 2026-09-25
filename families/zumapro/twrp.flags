@@ -31,6 +31,9 @@
 /vendor_boot         emmc    /dev/block/platform/13200000.ufs/by-name/vendor_boot                flags=slotselect;display="Vendor Boot (OrangeFox Recovery)";backup=1;flashimg=1
 /vendor_kernel_boot  emmc    /dev/block/platform/13200000.ufs/by-name/vendor_kernel_boot         flags=slotselect;display="Vendor Kernel Boot (GKI modules)";backup=1;flashimg=1
 /dtbo                emmc    /dev/block/platform/13200000.ufs/by-name/dtbo                      flags=slotselect;display="DTBO (Device Tree Overlay)";backup=1;flashimg=1
+# system_other: inactive-slot system image (fastboot --slot-other). Single partition.
+# Proven by system_other.img in image-caiman-*.zip.
+/system_other        emmc    /dev/block/platform/13200000.ufs/by-name/system_other              flags=display="System Other (inactive-slot system)";backup=1;flashimg=1
 
 # ============================================================
 # 4. Verified Boot metadata (A/B slotted)
@@ -114,13 +117,7 @@
 /ufs_internal        emmc    /dev/block/platform/13200000.ufs/by-name/ufs_internal              flags=display="UFS Internal (device config)";backup=1;flashimg=1
 
 # ============================================================
-# 12. A/B slotted firmware — DPM
-# ============================================================
-# DPM (Device Power Management firmware, Tensor-specific). A/B slotted.
-/dpm                 emmc    /dev/block/platform/13200000.ufs/by-name/dpm                       flags=slotselect;display="DPM (power management fw)";backup=1;flashimg=1
-
-# ============================================================
-# 13. Super partition (raw physical container for logical partitions)
+# 12. Super partition (raw physical container for logical partitions)
 # WARNING: backing up super produces a ~10 GB raw image that contains ALL
 # logical partitions combined. Prefer backing up individual logical partitions
 # (System, Vendor, etc.) above unless you specifically need a monolithic image.
