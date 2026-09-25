@@ -3106,6 +3106,15 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 	{
 	  if ((*iter)->Can_Be_Mounted)
 	    {
+	      // Fox: hide the voldmanaged USB placeholder (/auto0, Display
+	      // "Storage") while no media is present — otherwise the mount
+	      // menu shows a dead "Storage" entry that can only fail.
+	      // Hotplug updates Is_Present via uevent, so a real stick
+	      // reappears here by itself; the flags-based /usb_otg entry
+	      // is untouched.
+	      if (!(*iter)->Is_Present &&
+	          (*iter)->Mount_Point.compare(0, 5, "/auto") == 0)
+	        continue;
 	      struct PartitionList part;
 	      part.Display_Name = (*iter)->Display_Name;
 	      part.Mount_Point = (*iter)->Mount_Point;
@@ -3226,6 +3235,13 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 		Partition_List->push_back(dalvik);
 		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
 			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
+				// Fox: same /auto0 rule as the mount list above — wiping
+				// absent USB media is meaningless (guaranteed error), so
+				// the phantom "Storage" stays out of the wipe menu too.
+				// DALVIK / INTERNAL / flags-driven entries unaffected.
+				if (!(*iter)->Is_Present &&
+				    (*iter)->Mount_Point.compare(0, 5, "/auto") == 0)
+					continue;
 				struct PartitionList part;
 				part.Display_Name = (*iter)->Display_Name;
 				part.Mount_Point = (*iter)->Mount_Point;

@@ -325,7 +325,37 @@
  
  			return 0;
  		} else {
-@@ -4840,6 +5076,75 @@
+@@ -2870,6 +3106,15 @@
+ 	{
+ 	  if ((*iter)->Can_Be_Mounted)
+ 	    {
++	      // Fox: hide the voldmanaged USB placeholder (/auto0, Display
++	      // "Storage") while no media is present — otherwise the mount
++	      // menu shows a dead "Storage" entry that can only fail.
++	      // Hotplug updates Is_Present via uevent, so a real stick
++	      // reappears here by itself; the flags-based /usb_otg entry
++	      // is untouched.
++	      if (!(*iter)->Is_Present &&
++	          (*iter)->Mount_Point.compare(0, 5, "/auto") == 0)
++	        continue;
+ 	      struct PartitionList part;
+ 	      part.Display_Name = (*iter)->Display_Name;
+ 	      part.Mount_Point = (*iter)->Mount_Point;
+@@ -2990,6 +3235,13 @@
+ 		Partition_List->push_back(dalvik);
+ 		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
+ 			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
++				// Fox: same /auto0 rule as the mount list above — wiping
++				// absent USB media is meaningless (guaranteed error), so
++				// the phantom "Storage" stays out of the wipe menu too.
++				// DALVIK / INTERNAL / flags-driven entries unaffected.
++				if (!(*iter)->Is_Present &&
++				    (*iter)->Mount_Point.compare(0, 5, "/auto") == 0)
++					continue;
+ 				struct PartitionList part;
+ 				part.Display_Name = (*iter)->Display_Name;
+ 				part.Mount_Point = (*iter)->Mount_Point;
+@@ -4840,6 +5092,75 @@
  	}
  }
  
@@ -401,7 +431,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5162,13 @@
+@@ -4857,13 +5178,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -417,7 +447,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4884,7 +5189,7 @@
+@@ -4884,7 +5205,7 @@
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){
  					LOGINFO("removing dynamic partition: %s\n", partition.c_str());
