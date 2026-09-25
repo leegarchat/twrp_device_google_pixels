@@ -67,7 +67,12 @@ const STOCK_USB_CHAIN: &[&str] = &[
     "google-charger",
     "max77759-charger",
 ];
+/// First-stage ramdisk first: on real firmware trees the whole Samsung USB
+/// stack auto-loads from the vendor_kernel_boot ramdisk before we run
+/// (dmesg: `init: Loading module /lib/modules/aoc_usb_driver.ko`), so the
+/// chain below is normally a silent no-op safety net, not the prime mover.
 const STOCK_ROOTS: &[&str] = &[
+    "/lib/modules",
     "/vendor_dlkm/lib/modules",
     "/vendor/lib/modules",
     "/system/lib64/modules",

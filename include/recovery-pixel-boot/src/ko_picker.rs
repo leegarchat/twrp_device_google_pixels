@@ -308,13 +308,26 @@ pub fn load_kernel_module_force(path: &Path) -> Result<(), Error> {
 }
 
 /// Already loaded? (mirrors `grep -q "^<mod> " /proc/modules`).
+///
+/// The kernel reports module names with underscores (`dwc3_exynos_usb`)
+/// while callers use the file spelling with dashes (`dwc3-exynos-usb`),
+/// so both variants are matched (field-proven on zuma: the whole Samsung
+/// USB stack pre-loads from the vendor_kernel_boot ramdisk and was
+/// misreported as missing).
+/// Pure core of [`is_module_loaded`] over a /proc/modules dump (testable).
+fn module_present(content: &str, module_name: &str) -> bool {
+    let dashed = format!("{module_name} ");
+    let underscored = format!("{} ", module_name.replace('-', "_"));
+    content
+        .lines()
+        .any(|l| l.starts_with(&dashed) || l.starts_with(&underscored))
+}
+
 pub fn is_module_loaded(module_name: &str) -> bool {
-    let content = match std::fs::read_to_string("/proc/modules") {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    let prefix = format!("{module_name} ");
-    content.lines().any(|l| l.starts_with(&prefix))
+    match std::fs::read_to_string("/proc/modules") {
+        Ok(c) => module_present(&c, module_name),
+        Err(_) => false,
+    }
 }
 
 /// Pick the best .ko for this kernel and load it.
@@ -387,6 +400,24 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn module_present_tolerates_dash_underscore() {
+        // Real zuma /proc/modules fragment: kernel spells underscores.
+        let dump = "dwc3_exynos_usb 49152 4 aoc_usb_driver,exynos_drm,xhci_exynos,exynos_pd, Live 0x0000000000000000 (O)\n\
+                    tcpci_max77759 73728 11 google_cpm,google_charger,pca9468,ln8411, Live 0x0000000000000000 (O)\n\
+                    gvotable 49152 13 google_bcl, Live 0x0000000000000000 (O)\n";
+        // Dashed file spelling matches the underscored live entry.
+        assert!(module_present(dump, "dwc3-exynos-usb"));
+        assert!(module_present(dump, "dwc3_exynos_usb"));
+        assert!(module_present(dump, "tcpci_max77759"));
+        assert!(module_present(dump, "gvotable"));
+        // Prefix-only hits must not match (google_charger is a *dependency*,
+        // not a loaded module line here).
+        assert!(!module_present(dump, "google-charger"));
+        assert!(!module_present(dump, "dwc3"));
+        assert!(!module_present("", "gvotable"));
     }
 
     #[test]
