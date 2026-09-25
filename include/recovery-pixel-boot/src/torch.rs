@@ -115,8 +115,14 @@ fn visit_pins(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn discover_gpio(alternatives: &[String]) -> Result<(PathBuf, u32), String> {
+    discover_gpio_under(Path::new("/sys/firmware/devicetree/base"), alternatives)
+}
+
+/// Testable core of discover_gpio: walk `dt_base` for `samsung,pins` files
+/// under a flash|torch path. GPIO-chip lookup still hits real /dev nodes.
+fn discover_gpio_under(dt_base: &Path, alternatives: &[String]) -> Result<(PathBuf, u32), String> {
     let mut pins = Vec::new();
-    visit_pins(Path::new("/sys/firmware/devicetree/base"), &mut pins);
+    visit_pins(dt_base, &mut pins);
     for pins_file in &pins {
         let ps = pins_file.to_string_lossy();
         if !alternatives.iter().any(|a| ps.contains(a)) {
@@ -426,19 +432,49 @@ fn discover(i2c_match: &str, pinctrl_alts: &[String]) -> Result<TorchHw, String>
     }
     match discover_i2c(i2c_match) {
         Ok((bus, addr)) => {
-            let (chip, gpio_off) = discover_gpio(pinctrl_alts)?;
-            info(&format!(
-                "HW found: I2C bus {bus} addr 0x{addr:02x}, GPIO {} offset {gpio_off}",
-                chip.display()
-            ));
-            let hw = TorchHw {
-                bus,
-                addr,
-                chip,
-                gpio_off,
-            };
-            store_cache(&hw);
-            Ok(hw)
+            match discover_gpio(pinctrl_alts) {
+                Ok((chip, gpio_off)) => {
+                    info(&format!(
+                        "HW found: I2C bus {bus} addr 0x{addr:02x}, GPIO {} offset {gpio_off}",
+                        chip.display()
+                    ));
+                    let hw = TorchHw {
+                        bus,
+                        addr,
+                        chip,
+                        gpio_off,
+                    };
+                    store_cache(&hw);
+                    Ok(hw)
+                }
+                Err(gpio_err) => {
+                    // gs101 (raven): the LM3644 client IS registered
+                    // (lwis probed 7-0063) but Exynos DT has no
+                    // samsung,pins, so the GPIO step fails. The LWIS
+                    // flash@ node carries bus/addr/enable-GPIO — use it
+                    // instead of dying here.
+                    info(&format!("{gpio_err}, trying LWIS device-tree fallback"));
+                    let hw = discover_lwis_flash()
+                        .map_err(|e| format!("{gpio_err}; {e}"))?;
+                    info(&format!(
+                        "HW found (LWIS after GPIO miss): I2C bus {} addr 0x{:02x}, GPIO {}{}",
+                        hw.bus,
+                        hw.addr,
+                        if hw.chip.as_os_str().is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            hw.chip.display().to_string()
+                        },
+                        if hw.chip.as_os_str().is_empty() {
+                            String::new()
+                        } else {
+                            format!(" offset {}", hw.gpio_off)
+                        },
+                    ));
+                    store_cache(&hw);
+                    Ok(hw)
+                }
+            }
         }
         Err(client_err) => {
             // No registered LM3644 client (LWIS camera stack never probes
@@ -608,6 +644,22 @@ mod tests {
         .unwrap();
         assert_eq!((hw.bus, hw.addr), (5, 0x63));
         assert!(hw.chip.as_os_str().is_empty());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn gpio_scan_misses_without_samsung_pins() {
+        use std::fs;
+        // raven case: flash@0 exists (lwis) but no samsung,pins anywhere
+        // (Exynos pinctrl uses different property names) -> Err, and the
+        // caller (discover) must then try the LWIS fallback, not abort.
+        let d = std::env::temp_dir().join(format!("fox_test_gpiomiss_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let flash = d.join("soc/flash@0");
+        fs::create_dir_all(&flash).unwrap();
+        fs::write(flash.join("compatible"), b"google,lwis-i2c-device\0").unwrap();
+        let e = discover_gpio_under(&d, &["flash".to_string(), "torch".to_string()]).unwrap_err();
+        assert_eq!(e, "flash pinctrl not found in device tree");
         let _ = fs::remove_dir_all(&d);
     }
 
