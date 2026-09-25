@@ -2176,11 +2176,28 @@ int TWFunc::Set_Brightness(std::string brightness_value)
 
   if (DataManager::GetIntValue("tw_has_brightnesss_file"))
     {
+      // A value persisted by an older build can exceed this panel's actual
+      // max_brightness (for example, 3827 on Raven where sysfs reports 3152).
+      // Clamp after discovery: backlight drivers may reject out-of-range
+      // values, leaving the display dark after blanktimer restores brightness.
+      const int max_brightness = DataManager::GetIntValue("tw_brightness_max");
+      if (max_brightness > 0) {
+        char* end = nullptr;
+        const long requested = strtol(brightness_value.c_str(), &end, 10);
+        if (end != brightness_value.c_str() && *end == '\0' && requested > max_brightness) {
+          LOGINFO("TWFunc::Set_Brightness: clamping stale value %ld to panel max %d\n",
+                  requested, max_brightness);
+          brightness_value = std::to_string(max_brightness);
+        }
+      }
       LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n",
 	      brightness_value.c_str());
       result =
 	TWFunc::write_to_file(DataManager::GetStrValue("tw_brightness_file"),
 			      brightness_value);
+      if (!result)
+        LOGERR("TWFunc::Set_Brightness: failed to write '%s' to '%s'\n",
+               brightness_value.c_str(), DataManager::GetStrValue("tw_brightness_file").c_str());
       DataManager::GetValue("tw_secondary_brightness_file",
 			    secondary_brightness_file);
       if (!secondary_brightness_file.empty())
@@ -2188,7 +2205,9 @@ int TWFunc::Set_Brightness(std::string brightness_value)
 	  LOGINFO
 	    ("TWFunc::Set_Brightness: Setting secondary brightness control to %s\n",
 	     brightness_value.c_str());
-	  TWFunc::write_to_file(secondary_brightness_file, brightness_value);
+	  if (!TWFunc::write_to_file(secondary_brightness_file, brightness_value))
+	    LOGERR("TWFunc::Set_Brightness: failed to write secondary brightness '%s'\n",
+		   secondary_brightness_file.c_str());
 	}
     }
   return result;
