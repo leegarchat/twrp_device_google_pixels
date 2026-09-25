@@ -83,6 +83,7 @@
 #   -T, --text TEXT   With --push: append TEXT to the zip message after the
 #                     md5 line (e.g. -T "looks like OTG is fixed on P10").
 #   -h, --help        Show this help.
+# END HELP
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
 # sourced, shell options of the caller are left alone (see fox_sourced
@@ -349,7 +350,7 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             ;;
         -h|--help)
-            sed -n '2,77p' "${BASH_SOURCE[0]}"
+            sed -n '1,/^# END HELP$/p' "${BASH_SOURCE[0]}"
             fox_safe_exit 0
             ;;
         *)
