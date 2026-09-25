@@ -19,7 +19,7 @@ notification for all.
 --text appends a postscript to the zip message after the md5 line.
 
 --diff collects `git log PREV..CUR` (commit subjects + bodies) from the
-repo and sends it after the zip, per group: as a text message when it
+repo and sends it before the zip, per group: as a text message when it
 fits in CHANGES_TEXT_LIMIT chars, otherwise as a `changes_<CUR>.txt`
 document with the caption "changes". build.sh -D computes PREV as the
 previous reachable tag and CUR as the fresh -g tag (or HEAD).
@@ -131,7 +131,7 @@ def changes_filename(range_):
 
 
 async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
-    """Send zip (+pin) per chat, then the --diff change list. Returns failures."""
+    """Send the --diff change list, then zip (+pin) per chat. Returns failures."""
     from aiogram import Bot
     from aiogram.types import FSInputFile
 
@@ -158,21 +158,6 @@ async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
     failed = 0
     try:
         for group, chat_id in chat_ids:
-            print(f"[tg-push] sending {os.path.basename(zip_path)} to '{group}' ...")
-            try:
-                msg = await bot.send_document(chat_id, FSInputFile(zip_path), caption=caption)
-                try:
-                    # disable_notification=False (default) = everyone gets notified.
-                    await bot.pin_chat_message(chat_id, msg.message_id)
-                    pinned = True
-                except Exception as e:  # noqa: BLE001 — pin needs admin rights
-                    print(f"[tg-push] WARNING: message sent but pin failed: {e} (bot needs admin pin rights)")
-                    pinned = False
-                print(f"[tg-push] OK '{group}': message_id={msg.message_id}" + (", pinned with notification for all" if pinned else ""))
-            except Exception as e:  # noqa: BLE001 — report any transport/API error
-                print(f"ERROR: telegram refused zip for '{group}': {e}", file=sys.stderr)
-                failed += 1
-                continue
             if changes_file:
                 try:
                     doc = await bot.send_document(
@@ -191,6 +176,22 @@ async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
                 except Exception as e:  # noqa: BLE001
                     print(f"ERROR: telegram refused changes text for '{group}': {e}", file=sys.stderr)
                     failed += 1
+
+            print(f"[tg-push] sending {os.path.basename(zip_path)} to '{group}' ...")
+            try:
+                msg = await bot.send_document(chat_id, FSInputFile(zip_path), caption=caption)
+                try:
+                    # disable_notification=False (default) = everyone gets notified.
+                    await bot.pin_chat_message(chat_id, msg.message_id)
+                    pinned = True
+                except Exception as e:  # noqa: BLE001 — pin needs admin rights
+                    print(f"[tg-push] WARNING: message sent but pin failed: {e} (bot needs admin pin rights)")
+                    pinned = False
+                print(f"[tg-push] OK '{group}': message_id={msg.message_id}" + (", pinned with notification for all" if pinned else ""))
+            except Exception as e:  # noqa: BLE001 — report any transport/API error
+                print(f"ERROR: telegram refused zip for '{group}': {e}", file=sys.stderr)
+                failed += 1
+                continue
     finally:
         await bot.session.close()
         if changes_file:
