@@ -272,6 +272,41 @@ pub fn load_kernel_module(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Force-load a .ko, ignoring vermagic/modversion mismatches.
+///
+/// finit_module(2) flags: MODULE_INIT_IGNORE_MODVERSIONS (0x1) +
+/// MODULE_INIT_IGNORE_VERMAGIC (0x2). Recovery-only escape hatch for OUR
+/// OWN shim (kprobe + procfs: ABI-stable across 6.1.x) when the prebuilt
+/// was stamped against a different 6.1.x snapshot than the running stock
+/// kernel (e.g. 6.1.176 prebuilt on a 6.1.157 device kernel). NEVER use
+/// for stock vendor modules (those always match by construction).
+/// EEXIST (already loaded) still counts as success.
+pub fn load_kernel_module_force(path: &Path) -> Result<(), Error> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC)
+        .open(path)?;
+    let empty_params = CString::new("").unwrap();
+    // SAFETY: same contract as load_kernel_module; flags 0x3 is the
+    // documented finit_module ignore mask (uapi linux/module.h).
+    let ret = unsafe {
+        libc::syscall(
+            libc::SYS_finit_module,
+            file.as_raw_fd(),
+            empty_params.as_ptr(),
+            0x1 | 0x2,
+        )
+    };
+    if ret != 0 {
+        let err = Error::last_os_error();
+        if err.raw_os_error() == Some(libc::EEXIST) {
+            return Ok(());
+        }
+        return Err(err);
+    }
+    Ok(())
+}
+
 /// Already loaded? (mirrors `grep -q "^<mod> " /proc/modules`).
 pub fn is_module_loaded(module_name: &str) -> bool {
     let content = match std::fs::read_to_string("/proc/modules") {
