@@ -2,6 +2,18 @@
 //!
 //! Field-proven on shiba/EVOX (Wild 6.1.157): host role via shim +
 //! stock-module preload, VBUS daemon per the R11 algorithm.
+//!
+//! Two kernel generations, one daemon:
+//! - 6.1: Samsung glue carries the AOC gate (`dwc3_otg_host_ready` +
+//!   `dwc3_exynos_otg_id`, both absent in recovery) → our kprobe shim
+//!   replaces the AOC probe; force-load covers vermagic drift.
+//! - 6.12 (e.g. beta .003 6.12.81): the 6.12 glue has NO host_ready/host_on
+//!   logic at all (`dwc3_otg_host_ready`×0 in the .ko — the AOC check the
+//!   shim used to patch is simply gone) and drives host through the
+//!   standard `usb_role_switch` framework (×12 refs) instead → native
+//!   role-switch path, NO shim by design. The `dwc3_exynos_otg_id` node
+//!   still exists but its store semantics are unverified on 6.12, so the
+//!   native path never touches it.
 //! Built solely from the cp2a-stable / Wild firmware composition, not from
 //! assumptions:
 //! - tester kernel 6.1.157 (Wild/EVOX); stock Google 6.1.157-gbd23337.
@@ -34,11 +46,12 @@ use crate::ko_picker::{
     load_kernel_module, load_kernel_module_force, log_msg,
 };
 use crate::props::{get_prop, set_prop};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
 
 const TAG: &str = "otg";
+const USB_ROLE_CLASS: &str = "/sys/class/usb_role";
 const PROC_SHIM: &str = "/proc/otg_host_shim";
 const PROC_READY: &str = "/proc/otg_host_ready";
 /// Created at runtime by dwc3-exynos-usb.ko (absent = glue not loaded).
@@ -149,6 +162,59 @@ fn load_shim() -> bool {
     false
 }
 
+/// True on kernels where the shim is dead by design: the 6.12 glue has no
+/// `dwc3_otg_host_ready` target (verified 0 refs in the 6.12.81 .ko), so
+/// host goes through the native role-switch instead. Unknown version reads
+/// as legacy (shim path) to preserve 6.1 behavior.
+fn use_native_otg() -> bool {
+    match detect_kernel_env() {
+        Ok(e) => (e.major, e.minor) >= (6, 12),
+        Err(_) => false,
+    }
+}
+
+/// First `role` file under the role-switch class (created dynamically by
+/// the glue driver — no DT node exists, so this is runtime-discovered).
+/// Pure over entry names (testable); the live readdir is [`find_usb_role`].
+fn pick_role_entry(entries: &[String]) -> Option<String> {
+    entries.first().cloned()
+}
+
+/// Live role-switch control file, if the kernel registered one.
+fn find_usb_role() -> Option<PathBuf> {
+    let names: Vec<String> = std::fs::read_dir(USB_ROLE_CLASS)
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    pick_role_entry(&names).map(|n| Path::new(USB_ROLE_CLASS).join(n).join("role"))
+}
+
+/// Native 6.12 host path: role-switch to host + gvotable VBUS force.
+/// No shim, no OTG_ID (unverified store semantics on 6.12). Fails closed
+/// with a loud reason when the role switch is absent.
+fn native_activate() -> Result<(), String> {
+    let role = find_usb_role().ok_or_else(|| "no usb_role switch found".to_string())?;
+    info("switching controller role to host (native 6.12 path)");
+    let _ = std::fs::write(&role, b"host\n");
+    sleep(Duration::from_secs(2));
+    if Path::new(CHARGER_VALUE).exists() {
+        info("forcing VBUS via gvotable CHARGER_MODE");
+        let _ = std::fs::write(CHARGER_VALUE, b"49\n");
+        let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    } else {
+        info("native: no CHARGER_MODE voter (no VBUS force?)");
+    }
+    sleep(Duration::from_secs(2));
+    let back = read_trim(&role.to_string_lossy());
+    if back == "host" {
+        info("native host path ACTIVE (role=host)");
+        Ok(())
+    } else {
+        Err(format!("role switch did not stick: {back:?}"))
+    }
+}
+
 /// otg-patch (oneshot, service otg_enable): stock chain -> shim ->
 /// host_ready -> TCPC switch. Sets sys.usb.patch_dwc3=1 on success (gates
 /// otg_auto); 0 + Err otherwise.
@@ -187,21 +253,32 @@ pub fn run_otg_patch() -> Result<(), String> {
         }
     ));
 
-    // 2. Shim + host_ready (replaces the AOC probe, absent in recovery).
-    if !load_shim() {
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        return Err("shim unavailable".into());
-    }
-    if read_trim(PROC_READY) != "1" {
-        info("activating host_ready via /proc/otg_host_shim");
-        let _ = std::fs::write(PROC_SHIM, b"1\n");
-    }
-    if read_trim(PROC_READY) == "1" {
+    // 2. Host enable: native role-switch on 6.12 (no shim by design),
+    // shim + host_ready on 6.1 (replaces the AOC probe, absent in recovery).
+    if use_native_otg() {
+        info("kernel 6.12+: native path (shim excluded by design)");
+        if let Err(e) = native_activate() {
+            let _ = set_prop("sys.usb.patch_dwc3", "0");
+            return Err(e);
+        }
         set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
-        info("host_ready ACTIVE, sys.usb.patch_dwc3=1");
+        info("host path ACTIVE via native role-switch, sys.usb.patch_dwc3=1");
     } else {
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        return Err("host_ready NOT active after activation attempt".into());
+        if !load_shim() {
+            let _ = set_prop("sys.usb.patch_dwc3", "0");
+            return Err("shim unavailable".into());
+        }
+        if read_trim(PROC_READY) != "1" {
+            info("activating host_ready via /proc/otg_host_shim");
+            let _ = std::fs::write(PROC_SHIM, b"1\n");
+        }
+        if read_trim(PROC_READY) == "1" {
+            set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
+            info("host_ready ACTIVE, sys.usb.patch_dwc3=1");
+        } else {
+            let _ = set_prop("sys.usb.patch_dwc3", "0");
+            return Err("host_ready NOT active after activation attempt".into());
+        }
     }
 
     // 3. TCPC data-path switch (USBSW 0x93 <- 0x09). Warning only.
@@ -316,7 +393,17 @@ fn switch_to_host(current: &mut String) {
     } else {
         info("host: no CHARGER_MODE voter (no VBUS force?)");
     }
-    if Path::new(OTG_ID).exists() {
+    if use_native_otg() {
+        // 6.12: the role switch owns host mode (re-assert: TCPC
+        // renegotiation can park it back). OTG_ID is deliberately
+        // untouched — unverified store semantics on 6.12.
+        match find_usb_role() {
+            Some(role) => {
+                let _ = std::fs::write(&role, b"host\n");
+            }
+            None => info("host: no usb_role switch for native re-assert"),
+        }
+    } else if Path::new(OTG_ID).exists() {
         let _ = std::fs::write(OTG_ID, b"0\n");
     } else {
         info("host: no OTG_ID node (glue missing?)");
@@ -332,7 +419,9 @@ fn switch_to_device(current: &mut String) {
     if Path::new(CHARGER_ACTIVE).exists() {
         let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
     }
-    if Path::new(OTG_ID).exists() {
+    // OTG_ID restore is a 6.1-only step (we asserted it there); on native
+    // 6.12 the role switch owns the mode and OTG_ID stays untouched.
+    if !use_native_otg() && Path::new(OTG_ID).exists() {
         let _ = std::fs::write(OTG_ID, b"1\n");
     }
     let _ = set_prop("sys.usb.ffs.ready", "1");
@@ -385,5 +474,21 @@ pub fn run_otg_auto() -> ! {
             ensure_otg_symlink();
         }
         sleep(Duration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn role_entry_picks_first() {
+        let two = vec!["11210000.usb-role-switch".to_string(), "other".to_string()];
+        assert_eq!(
+            pick_role_entry(&two),
+            Some("11210000.usb-role-switch".to_string())
+        );
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(pick_role_entry(&empty), None);
     }
 }
