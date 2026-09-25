@@ -58,7 +58,6 @@ fn usage() -> ! {
          \x20 recovery-pixel-boot boot\n\
          \x20 recovery-pixel-boot otg-patch\n\
          \x20 recovery-pixel-boot otg-auto\n\
-         \x20 recovery-pixel-boot usb-rebind\n\
          \x20 recovery-pixel-boot setup-temp\n\
          \x20 recovery-pixel-boot torch on|off\n"
     );
@@ -91,7 +90,6 @@ fn main() -> ExitCode {
             // Diverges under normal operation; the `!` coerces to ExitCode.
             otg::run_otg_auto()
         }
-        "usb-rebind" => run_simple(otg::run_usb_rebind(), "usb-rebind"),
         _ => usage(),
     }
 }

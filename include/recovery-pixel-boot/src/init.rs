@@ -34,45 +34,6 @@ fn dlog(log: &mut Option<std::fs::File>, msg: &str) {
     }
 }
 
-/// Next sd letter after `last` (a->b ... y->z). None when not incrementable.
-pub fn next_otg_letter(last: char) -> Option<char> {
-    // Shell: tr 'a..y' 'b..z' (z maps to itself -> treated as failure).
-    if ('a'..='y').contains(&last) {
-        Some((last as u8 + 1) as char)
-    } else {
-        None
-    }
-}
-
-/// Rewrite the usb_otg line to the next sd device. Returns patched line.
-pub fn patch_otg_line(line: &str, next: char) -> String {
-    // Mirror of: sed "/usb_otg/s|/dev/block/sd[a-z][0-9]*|/dev/block/sd${next}1|"
-    if !line.contains("usb_otg") {
-        return line.to_string();
-    }
-    let mut out = String::with_capacity(line.len() + 4);
-    let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if line[i..].starts_with("/dev/block/sd")
-            && i + 13 < bytes.len()
-            && (bytes[i + 13] as char).is_ascii_lowercase()
-        {
-            // consume sd[a-z][0-9]*
-            let mut j = i + 14;
-            while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
-                j += 1;
-            }
-            out.push_str(&format!("/dev/block/sd{next}1"));
-            i = j;
-        } else {
-            out.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-    out
-}
-
 /// True when a live AIO file is still the unswapped placeholder.
 fn needs_swap(content: &str) -> bool {
     content.contains(PLACEHOLDER_MARK)
@@ -368,66 +329,19 @@ fn by_name_exists(part: &str) -> bool {
     false
 }
 
-/// fix_twrp_flags: OTG sd-letter bump + by-name prune. Mirrors the shell logic.
+/// fix_twrp_flags: by-name prune (+ UFS platform fallback repoint).
+/// /usb_otg points at the stable /dev/block/otg-usb symlink (kept by the
+/// OTG daemon), so no sd-letter patching happens here anymore.
 fn fix_twrp_flags(log: &mut Option<std::fs::File>) {
     if !Path::new(FLAGS_FILE).exists() {
         dlog(log, "fix_twrp_flags: NOT FOUND, skip");
         return;
     }
-    // Wait up to 3s for ueventd coldboot sd? nodes.
-    for i in 0..3 {
-        let hit = std::fs::read_dir("/dev/block")
-            .map(|rd| {
-                rd.flatten().any(|e| {
-                    let n = e.file_name().to_string_lossy().into_owned();
-                    n.len() == 3 && n.starts_with("sd")
-                })
-            })
-            .unwrap_or(false);
-        if hit {
-            break;
-        }
-        dlog(log, &format!("waiting for /dev/block/sd? ... attempt {i}"));
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
 
     let content = std::fs::read_to_string(FLAGS_FILE).unwrap_or_default();
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
-    // 1. USB OTG device: next letter after last internal UFS disk.
-    let mut last: Option<char> = None;
-    if let Ok(rd) = std::fs::read_dir("/dev/block") {
-        let mut disks: Vec<String> = rd
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.len() == 3 && n.starts_with("sd"))
-            .collect();
-        disks.sort();
-        if let Some(l) = disks.last() {
-            last = l.chars().nth(2);
-        }
-    }
-    if let Some(l) = last {
-        if let Some(next) = next_otg_letter(l) {
-            for line in lines.iter_mut() {
-                if line.contains("usb_otg") {
-                    *line = patch_otg_line(line, next);
-                }
-            }
-            crate::ko_picker::log_msg(
-                "boot",
-                "INFO",
-                &format!("twrp.flags: USB OTG -> /dev/block/sd{next}1"),
-            );
-            dlog(log, &format!("OTG patched -> sd{next}1"));
-        } else {
-            dlog(log, &format!("WARNING: cannot increment '{l}'"));
-        }
-    } else {
-        crate::ko_picker::log_msg("boot", "WARN", "twrp.flags: no sd? found, OTG unchanged");
-    }
-
-    // 1b. UFS platform fallback: repoint baked family paths that are absent
+    // 1. UFS platform fallback: repoint baked family paths that are absent
     // on this device to the live *ufs* dir (new SoC / stale family file).
     // Static-first: existing dirs are never rewritten. Runs before the
     // prune so repointed lines resolve instead of being dropped.
@@ -639,30 +553,6 @@ mod tests {
         std::fs::write(d.join("twrp.flags"), b"# AIO LIVE placeholder\n").unwrap();
         assert_eq!(swap_one_file(&d, "twrp.flags", "zuma"), "no-kit");
         let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn otg_letter_steps() {
-        assert_eq!(next_otg_letter('a'), Some('b'));
-        assert_eq!(next_otg_letter('y'), Some('z'));
-        assert_eq!(next_otg_letter('z'), None);
-    }
-
-    #[test]
-    fn otg_line_rewrite() {
-        let line = "/usb_otg   vfat   /dev/block/sdc1   flags";
-        assert_eq!(
-            patch_otg_line(line, 'd'),
-            "/usb_otg   vfat   /dev/block/sdd1   flags"
-        );
-        let plain = "# comment";
-        assert_eq!(patch_otg_line(plain, 'd'), plain);
-        // Trailing "/dev/block/sd" with no letter: must not panic, left as-is.
-        let edge = "/usb_otg vfat /dev/block/sd";
-        assert_eq!(patch_otg_line(edge, 'd'), edge);
-        // Letter with no partition number still rewrites.
-        let no_num = "/usb_otg vfat /dev/block/sdc flags";
-        assert_eq!(patch_otg_line(no_num, 'd'), "/usb_otg vfat /dev/block/sdd1 flags");
     }
 
     #[test]
