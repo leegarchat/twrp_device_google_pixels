@@ -80,14 +80,10 @@ void blanktimer::checkForTimeout() {
 	if (sleepTimer > 2 && diff.tv_sec > (sleepTimer - 2) && state == kOn) {
 		orig_brightness = getBrightness();
 		state = kDim;
-		LOGINFO("blanktimer: TIMEOUT dim after %ld idle secs (timeout %d), captured brightness %s, writing 5\n",
-			(long)diff.tv_sec, sleepTimer, orig_brightness.c_str());
 		TWFunc::Set_Brightness("5");
 	}
 	if (sleepTimer && diff.tv_sec > sleepTimer && state < kOff) {
 		state = kOff;
-		LOGINFO("blanktimer: TIMEOUT off after %ld idle secs (timeout %d), writing 0\n",
-			(long)diff.tv_sec, sleepTimer);
 		TWFunc::Set_Brightness("0");
 		TWFunc::check_and_run_script("/system/bin/postscreenblank.sh", "blank");
 		PageManager::ChangeOverlay("lock");
@@ -130,7 +126,7 @@ void blanktimer::resetTimerAndUnblank(void) {
 			// No break here, we want to keep going
 		case kDim:
 			orig_brightness = usable_restore_brightness(orig_brightness);
-			LOGINFO("blanktimer: unblank from dim/off, restoring brightness %s\n", orig_brightness.c_str());
+			LOGINFO("blanktimer: unblank, restoring brightness %s\n", orig_brightness.c_str());
 			if (!orig_brightness.empty())
 				TWFunc::Set_Brightness(orig_brightness);
 			state = kOn;
@@ -152,8 +148,6 @@ void blanktimer::blank(void) {
 	if (state == kOn) {
 		orig_brightness = getBrightness();
 		state = kOff;
-		LOGINFO("blanktimer: BUTTON blank (power key), captured brightness %s, writing 0\n",
-			orig_brightness.c_str());
 		TWFunc::Set_Brightness("0");
 		TWFunc::check_and_run_script("/system/bin/postscreenblank.sh", "blank");
 	}
