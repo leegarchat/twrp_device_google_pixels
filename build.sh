@@ -113,6 +113,11 @@ SAFE_EXIT_CODE=0
 fox_safe_exit() {
     SAFE_EXIT_CODE="${1:-1}"
     SAFE_EXIT_REQUESTED=true
+    # A failure anywhere clears the success flag (multi-family loop: an
+    # earlier iteration's OK must not leak past a later failure).
+    if [[ "$SAFE_EXIT_CODE" != 0 ]]; then
+        FOX_BUILD_OK=0
+    fi
     # Failed runs must not leave a version tag behind (sourced mode never
     # reaches the EXIT trap below, so clean up here too; idempotent).
     if [[ "$SAFE_EXIT_CODE" != 0 && "${FOX_TAG_CREATED:-}" == 1 && -n "${FOX_TAG_NAME:-}" && -n "${SCRIPT_DIR:-}" ]]; then
