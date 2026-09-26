@@ -93,7 +93,9 @@ pub fn current_family() -> Family {
 /// Family-dispatched `otg-patch`. Only implemented families set
 /// `sys.usb.patch_dwc3=1`; stubs fail closed (device mode survives).
 pub fn run_otg_patch() -> Result<(), String> {
-    match current_family() {
+    let fam = current_family();
+    log_msg(TAG, "INFO", &format!("otg-patch for family {}", fam.name()));
+    match fam {
         Family::Zuma => zuma::run_otg_patch(),
         Family::Gs101 => gs101::run_otg_patch(),
         Family::Gs201 => gs201::run_otg_patch(),
@@ -110,7 +112,9 @@ pub fn run_otg_patch() -> Result<(), String> {
 
 /// Family-dispatched `otg-auto`. Never returns (stubs park).
 pub fn run_otg_auto() -> ! {
-    match current_family() {
+    let fam = current_family();
+    log_msg(TAG, "INFO", &format!("otg-auto for family {}", fam.name()));
+    match fam {
         Family::Zuma => zuma::run_otg_auto(),
         Family::Gs101 => gs101::run_otg_auto(),
         Family::Gs201 => gs201::run_otg_auto(),

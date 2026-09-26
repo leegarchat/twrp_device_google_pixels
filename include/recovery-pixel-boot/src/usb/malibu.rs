@@ -278,7 +278,7 @@ fn stage_aoc(slot: &str) -> bool {
         && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
     {
         let src = Path::new(MNT_VENDOR).join(VENDOR_AOCD);
-        if std::fs::copy(&src, RAM_AOCD).is_ok() {
+        if std::fs::copy(src, RAM_AOCD).is_ok() {
             for lib in AOC_LIBS {
                 let from = Path::new(MNT_VENDOR).join(format!("lib64/{lib}.so"));
                 let to = Path::new(RAM_LIB).join(format!("{lib}.so"));

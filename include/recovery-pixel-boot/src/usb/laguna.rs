@@ -404,6 +404,8 @@ fn mount_ro(source: &str, target: &str) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
+    // SAFETY: src/tgt are live NUL-terminated CStrings; mount(2) with NULL
+    // fstype/data is the standard read-only probe call.
     let rc = unsafe {
         libc::mount(
             src.as_ptr(),
@@ -417,9 +419,9 @@ fn mount_ro(source: &str, target: &str) -> bool {
 }
 
 fn umount(target: &str) {
-    // SAFETY: target is a valid NUL-terminated C string; umount(2) has no
-    // thread-safety concerns and failure is intentionally ignored.
     if let Ok(tgt) = std::ffi::CString::new(target) {
+        // SAFETY: tgt is a live NUL-terminated CString; umount(2) has no
+        // thread-safety concerns and failure is intentionally ignored.
         unsafe {
             libc::umount(tgt.as_ptr());
         }

@@ -229,7 +229,7 @@ fn find_usb_role() -> Option<PathBuf> {
 fn native_activate() -> Result<(), String> {
     let role = find_usb_role().ok_or_else(|| "no usb_role switch found".to_string())?;
     info("switching controller role to host (native 6.12 path)");
-    let _ = std::fs::write(&role, b"host\n");
+    let _ = std::fs::write(role.as_path(), b"host\n");
     sleep(Duration::from_secs(2));
     if Path::new(CHARGER_VALUE).exists() {
         info("forcing VBUS via gvotable CHARGER_MODE");
@@ -432,7 +432,7 @@ fn switch_to_host(current: &mut String) {
         // untouched — unverified store semantics on 6.12.
         match find_usb_role() {
             Some(role) => {
-                let _ = std::fs::write(&role, b"host\n");
+                let _ = std::fs::write(role.as_path(), b"host\n");
             }
             None => info("host: no usb_role switch for native re-assert"),
         }
