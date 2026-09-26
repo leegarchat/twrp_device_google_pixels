@@ -9,6 +9,7 @@ Reads the bot token + chat ids from a gitignored JSON config
 Usage:
     tg_push.py <zip-path> <group-name,...> [--config PATH]
                [--diff PREV..CUR | --diff-from TAG] [--text "postscript"] [--repo PATH]
+    tg_push.py --notify "message" <group-name,...> [--config PATH]
     tg_push.py --init [--config PATH]
 
 <group-name,...> is one group or several comma-separated groups
@@ -39,6 +40,11 @@ become a zip-only push. Mutually exclusive with --diff.
 
 --init creates the gitignored config from .tg_push.json.example
 (next to this script's tree root) if it does not exist yet.
+
+--notify sends a plain text message (no zip, no pin, no diff) — build
+status pings to admin DMs (build.sh notifies admin on success and on
+failure). Mutually exclusive with the zip positional and with
+--diff/--diff-from/--text.
 
 Config schema (.tg_push.json):
     {"token": "<bot token from @BotFather>",
@@ -174,6 +180,25 @@ def changes_filename(range_):
     return f"changes_{safe}.txt"
 
 
+async def run_notify(token, chat_ids, text):
+    """Send a plain text status message per chat (no pin). Returns failures."""
+    from aiogram import Bot
+
+    bot = Bot(token=token)
+    failed = 0
+    try:
+        for group, chat_id in chat_ids:
+            try:
+                msg = await bot.send_message(chat_id, text)
+                print(f"[tg-push] OK '{group}': notify message_id={msg.message_id}")
+            except Exception as e:  # noqa: BLE001 — report any transport/API error
+                print(f"ERROR: telegram refused notify for '{group}': {e}", file=sys.stderr)
+                failed += 1
+    finally:
+        await bot.session.close()
+    return failed
+
+
 async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
     """Send the --diff change list, then zip (+pin) per chat. Returns failures."""
     from aiogram import Bot
@@ -251,11 +276,12 @@ def main(argv):
     diff_range = None
     diff_from = None
     push_text = None
+    notify_text = None
     repo_path = None
     positional = []
     do_init = False
     skip_next = False
-    value_flags = {"--config", "--diff", "--diff-from", "--text", "--repo"}
+    value_flags = {"--config", "--diff", "--diff-from", "--text", "--repo", "--notify"}
     for i, a in enumerate(argv):
         if skip_next:
             skip_next = False
@@ -274,6 +300,8 @@ def main(argv):
                 push_text = argv[i + 1]
             elif a == "--repo":
                 repo_path = argv[i + 1]
+            elif a == "--notify":
+                notify_text = argv[i + 1]
             skip_next = True
         elif a == "--init":
             do_init = True
@@ -283,12 +311,67 @@ def main(argv):
         else:
             positional.append(a)
     if do_init:
-        if positional or diff_range or diff_from or push_text:
+        if positional or diff_range or diff_from or push_text or notify_text:
             print("usage: tg_push.py --init [--config PATH]", file=sys.stderr)
             return 2
         return cmd_init(cfg_path or default_config_path())
+    if notify_text is not None:
+        if diff_range or diff_from or push_text:
+            print("ERROR: --notify is mutually exclusive with --diff/--diff-from/--text", file=sys.stderr)
+            return 2
+        if len(positional) != 1:
+            print("usage: tg_push.py --notify \"message\" <group-name,...> [--config PATH]", file=sys.stderr)
+            return 2
+        groups_arg = positional[0]
+        notify_groups = [g.strip() for g in groups_arg.split(",") if g.strip()]
+        if not notify_groups:
+            print("ERROR: no group names given", file=sys.stderr)
+            return 2
+        if cfg_path is None:
+            cfg_path = default_config_path()
+        cfg, err = load_config(cfg_path)
+        if err is not None:
+            print(f"ERROR: {err}", file=sys.stderr)
+            return 2
+        expanded = []
+        for g in notify_groups:
+            if g == "admin":
+                if not cfg["admins"]:
+                    print(f"ERROR: 'admin' requested but no admins in {cfg_path} "
+                          f"(add an \"admin\" map of user chat ids)", file=sys.stderr)
+                    return 2
+                expanded.extend((f"admin:{name}", cid) for name, cid in sorted(cfg["admins"].items()))
+            else:
+                expanded.append((g, None))
+        unknown = [g for g, _ in expanded if not g.startswith("admin:") and g not in cfg["groups"]]
+        if unknown:
+            print(
+                f"ERROR: unknown group(s) {', '.join(unknown)} in {cfg_path} "
+                f"(have: {', '.join(sorted(cfg['groups'])) or '<none>'})",
+                file=sys.stderr,
+            )
+            return 2
+        chat_ids = [
+            (label, cid if cid is not None else cfg["groups"][label])
+            for label, cid in expanded
+        ]
+        try:
+            import aiogram  # noqa: F401 — fail fast with a clear message
+        except ImportError:
+            print("ERROR: aiogram v3 is required (pip install aiogram)", file=sys.stderr)
+            return 2
+        try:
+            failed = asyncio.run(run_notify(cfg["token"], chat_ids, notify_text))
+        except Exception as e:  # noqa: BLE001 — aiogram init / event loop failure
+            print(f"ERROR: telegram client failed: {e}", file=sys.stderr)
+            return 1
+        if failed:
+            print(f"[tg-push] failures: {failed}", file=sys.stderr)
+            return 1
+        return 0
     if len(positional) != 2:
         print("usage: tg_push.py <zip-path> <group-name,...> [--config PATH] [--diff PREV..CUR | --diff-from TAG] [--text \"...\"] [--repo PATH]", file=sys.stderr)
+        print("       tg_push.py --notify \"message\" <group-name,...> [--config PATH]", file=sys.stderr)
         print("       tg_push.py --init [--config PATH]", file=sys.stderr)
         return 2
     zip_path, groups_arg = positional

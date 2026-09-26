@@ -120,6 +120,25 @@ fox_safe_exit() {
             && echo "[build] Removed git tag $FOX_TAG_NAME (failed build)" || true
         FOX_TAG_CREATED=0
     fi
+    # Ping admin on failure (text-only, never fatal: bot/network/config
+    # issues only warn). Sent once: SAFE_EXIT_CODE sticks, repeat calls
+    # with the same code are no-ops via the guard below.
+    if [[ "$SAFE_EXIT_CODE" != 0 && "${FOX_ADMIN_NOTIFIED:-}" != 1 && -n "${SCRIPT_DIR:-}" ]]; then
+        FOX_ADMIN_NOTIFIED=1
+        _admin_notify "OrangeFox build FAILED: ${BUILD_NAME:-?} (exit $SAFE_EXIT_CODE, tag ${FOX_TAG_NAME:-none})" || true
+    fi
+}
+
+# Best-effort admin DM ping via tg_push.py --notify (text-only, no zip).
+# Never fatal: any failure only warns, the build result is unaffected.
+# No-op when tg_push.py is missing (e.g. partial tree).
+_admin_notify() {
+    if [[ -z "${SCRIPT_DIR:-}" || ! -f "$SCRIPT_DIR/tools/tg_push.py" ]]; then
+        echo "[build] WARNING: admin notify skipped (tg_push.py missing)"
+        return 0
+    fi
+    python3 "$SCRIPT_DIR/tools/tg_push.py" --notify "$1" admin \
+        || echo "[build] WARNING: admin notify failed (build result unaffected)"
 }
 
 # Stop the flow NOW: inline return/exit (see note above).
@@ -1142,6 +1161,16 @@ elif [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}
         echo "[build] WARNING: --push requested but no AIO zip at $_push_zip (aio pack skipped?)"
     fi
     unset _push_zip _diff_args _text_args
+fi
+# Build-OK admin ping (text-only, never fatal): one line per finished
+# build so completions and failures are equally visible in DMs.
+if [[ "${FOX_BUILD_OK:-}" == 1 && "${FOX_ADMIN_NOTIFIED:-}" != 1 ]]; then
+    FOX_ADMIN_NOTIFIED=1
+    if [[ -n "${FOX_PUSH_GROUP:-}" ]]; then
+        _admin_notify "OrangeFox build OK: ${BUILD_NAME:-?} pushed to ${FOX_PUSH_GROUP}" || true
+    else
+        _admin_notify "OrangeFox build OK: ${BUILD_NAME:-?} (no --push, artifacts in builds/)" || true
+    fi
 fi
 if [[ -n "${FOX_DIFF_TAG:-}${FOX_DIFF_FROM:-}${FOX_PUSH_TEXT:-}" && -z "${FOX_PUSH_GROUP:-}" ]]; then
     echo "[build] WARNING: --diff-tag/--diff-from/--text have no effect without --push"
