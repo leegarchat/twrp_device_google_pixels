@@ -1,0 +1,66 @@
+--- a/bootable/recovery/gui/battery.cpp
++++ b/bootable/recovery/gui/battery.cpp
+@@ -145,8 +145,6 @@
+ 	int textW = twrpTruetype::gr_ttf_measureEx(mBatteryPercentStr.c_str(), fontResource);
+ 	
+ 	if (mBatteryIcon == 1) {
+-		int iconRealX = textW + mPadding + mRenderW;
+-
+ 		if (mStateMode) {
+ 				if (mBatteryPercent > 75) finalImage = mImg100;
+ 			else if (mBatteryPercent > 50) finalImage = mImg75 ;
+@@ -157,19 +155,49 @@
+ 			else 				           finalImage = mImg5  ;
+ 		} else {
+ 			finalImage = (mBatteryPercent > 15 || mBatteryCharge == 1) ? mImg : mLowImg;
+-			int height = mDH * mBatteryPercent / 100;
+-			gr_fill(mDX - iconRealX, mDY+mDH-height, mDW + 1, height + 1);
+ 		}
+ 
+ 		if (!finalImage || !finalImage->GetResource())
+ 			return -1;
+-		gr_blit(finalImage->GetResource(), 0, 0, mRenderW, mRenderH, mRenderX - iconRealX, mRenderY);
++
++		// Fox: anchor the icon to its real raster size, not the layout
++		// slot. The slot (mRenderW/H via ScaleX/ScaleY) and the image
++		// (min-scale, aspect kept) diverge on non-1080 panels, so a
++		// slot-based origin pushed the glyph off the padding/text math.
++		// The icon right edge now lands exactly mPadding left of the
++		// text on any panel and any style, with or without wide-theme
++		// variants. When raster == slot (1080 panels) every expression
++		// below reduces to the stock one — zero behavior change there.
++		int iw = finalImage->GetWidth();
++		int ih = finalImage->GetHeight();
++		if (iw <= 0 || ih <= 0) {
++			iw = mRenderW;
++			ih = mRenderH;
++		}
++		int iconRealX = textW + mPadding + iw;
++		int ix = mRenderX - iconRealX;
++		int iy = (mRenderH > ih) ? mRenderY + (mRenderH - ih) / 2 : mRenderY;
++
++		if (!mStateMode) {
++			// Slot-based fill rect mapped onto the drawn image.
++			int fx = ix + (mRenderW > 0 ? (mDX - mRenderX) * iw / mRenderW : mDX - mRenderX);
++			int fw = (mRenderW > 0 ? mDW * iw / mRenderW : mDW);
++			int fh = (mRenderH > 0 ? mDH * ih / mRenderH : mDH);
++			int fy = (mRenderH > 0 ? (mDY - mRenderY) * ih / mRenderH : mDY - mRenderY);
++			int height = fh * mBatteryPercent / 100;
++			gr_fill(fx, iy + fy + fh - height, fw + 1, height + 1);
++		}
++
++		gr_blit(finalImage->GetResource(), 0, 0, iw, ih, ix, iy);
+ 
+ 
+ 		if (!mCharge || !mCharge->GetResource())
+ 			return 0;
+-		if (mBatteryCharge == 1)
+-			gr_blit(mCharge->GetResource(), 0, 0, mCW, mCH, mCX - iconRealX, mCY);
++		if (mBatteryCharge == 1) {
++			int bx = ix + (mRenderW > 0 ? (mCX - mRenderX) * iw / mRenderW : mCX - mRenderX);
++			int by = iy + (mRenderH > 0 ? (mCY - mRenderY) * ih / mRenderH : mCY - mRenderY);
++			gr_blit(mCharge->GetResource(), 0, 0, mCW, mCH, bx, by);
++		}
+ 
+ 	}
+ 
