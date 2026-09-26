@@ -797,9 +797,9 @@ static int runPages(const char *page_name, const int stop_on_page_done)
 				fox_f_sum += (uint64_t)TWFunc::timespec_diff_ms(fox_mid, fox_end);
 				if (++fox_n >= 120)
 				{
-					// Fox fps_boost mk4 marker: bump when re-cutting the
+					// Fox fps_boost mk5 marker: bump when re-cutting the
 					// branch build to verify on device what is flashed.
-					LOGINFO("foxfps/mk4: render avg %llu ms, flip avg %llu ms (%u frames)\n",
+					LOGINFO("foxfps/mk5: render avg %llu ms, flip avg %llu ms (%u frames)\n",
 						(unsigned long long)(fox_r_sum / fox_n),
 						(unsigned long long)(fox_f_sum / fox_n), fox_n);
 					fox_r_sum = fox_f_sum = 0;
