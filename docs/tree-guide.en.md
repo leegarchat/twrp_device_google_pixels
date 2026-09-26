@@ -69,7 +69,6 @@ Paths are relative to `device/google/pixels/`.
 | `system/bin/reflash_twrp.sh` | Reflash recovery from inside recovery |
 | `system/bin/{siw,iw}` | Partition reading without mounting + DM mapping, LP utilities |
 | `system/bin/*.zip` | Payloads: FIXBACKUPKSU, EXPANDPARTITIONS |
-| `system/bin/nboot.lz4` | Compressed boot component (in LGZ exclusions) |
 | `system/etc/{fox_kdf.conf,task_profiles.json}` | KDF pipelines, task profiles |
 | `system/etc/vintf/` + `vendor/etc/vintf/` | VINTF matrices and manifests in the image |
 | `first_stage-ramdisk-files.txt` | First-stage ramdisk file list |

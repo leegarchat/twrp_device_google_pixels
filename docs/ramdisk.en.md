@@ -25,7 +25,6 @@ Only overlays of **its own family** go into the image (`device.mk` filters
 | `runatboot.sh` | Empty OFox hook |
 | `reflash_twrp.sh` | Reflash from inside recovery (below) |
 | `siw`, `iw` | Partition reads without mounting + DM mapping, LP tools |
-| `nboot.lz4` | Compressed boot component (in LGZ exclusions) |
 | `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Payloads for installation from the GUI |
 
 ## `system/etc/` and `vendor/etc/`
@@ -45,9 +44,11 @@ Only overlays of **its own family** go into the image (`device.mk` filters
 
 ## Reflash from inside (`reflash_twrp.sh`)
 
-Reflashing recovery without a PC: takes the `kernel_bootcfg` entry
-(`FOX_KERNEL_VER` is stamped by the callback from `.gen_kernel.mk`) and file lists
-from the callback snapshot manifest. The image is built **without DTB**
-(`DTB_SZ 0`, vendor_boot dtb-free) — stripping is mandatory, otherwise
-overwriting will clobber adjacent fragments. The `unpack -h`
-(header/bootconfig) stamp is written single-record.
+Reflashing recovery without a PC: snapshots both `vendor_boot` slots,
+builds a recovery-only cpio payload from `/ramdisk_snapshot` (first_stage
+paths excluded — each slot provides its own), and rebuilds each slot image
+from its own stock image via `bootsmasher-install` (smart replace: header,
+cmdline and dtb come from the slot itself, nothing is stamped). Both slots
+are flashed only if the free-space policy holds, then verified by
+fetch-back compare. Stock-image backups go to
+`/sdcard/backup_vendor_boot/` when userdata is writable.

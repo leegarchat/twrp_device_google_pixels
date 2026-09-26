@@ -167,7 +167,6 @@ LGZ_EXCLUDE_LIST=(
     "ramdisk_snapshot_manifest.txt"
     "recovery_file_list.txt"
     "first_stage_file_list.txt"
-    "nboot.lz4"
 )
 
 # Pack policy: dirs (default, V9-verified set) or all (legacy experimental).
@@ -242,8 +241,9 @@ tree, out, platform = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.
 # Kernel cmdline/bootconfig normalization is shared verbatim with
 # gen_kernel_mk.py (single source of truth: families/*/family.json
 # `kernels` + devices/*/pixel.json overrides). The flat strings emitted
-# here feed reflash_twrp.sh, which stamps them into the repacked
-# vendor_boot header via `magiskboot unpack -h` substitution.
+# here describe each device's kernel profile for non-AIO flows;
+# reflash_twrp.sh stamps nothing — slots are rebuilt from their own
+# stock images (smart replace, header/cmdline/dtb kept).
 sys.path.insert(0, str(pathlib.Path(tree) / 'include' / 'prebuilt'))
 from gen_kernel_mk import norm_cmdline, effective_profile
 merged = {}
@@ -288,8 +288,9 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     # Single record: the kernel THIS image is built with. Version comes
     # from families/<fam>/.gen_kernel.mk (FOX_KERNEL_VER, written by
     # build.sh pre-lunch); env vars don't survive recipe shells.
-    # No runtime detection: reflash stamps exactly this, or falls back
-    # to the nboot.lz4 base header when the record is absent.
+    # No runtime detection: when the record is absent the family
+    # default_kernel applies. (No nboot fallback exists anymore;
+    # reflash keeps each slot's own stock header.)
     ver = ''
     genmk = tree / 'families' / pj.get('family', '') / '.gen_kernel.mk'
     try:

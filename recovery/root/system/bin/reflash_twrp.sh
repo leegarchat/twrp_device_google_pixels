@@ -11,7 +11,7 @@
 #   2. backup snapshots -> /sdcard/backup_vendor_boot/ (best effort;
 #      install proceeds without backup when userdata is unwritable)
 #   3. build a recovery-ONLY cpio payload from /ramdisk_snapshot
-#      (no first_stage paths, no nboot, no first_stage lists) and rebuild
+#      (no first_stage paths, no first_stage lists) and rebuild
 #      each slot image with it via `bootsmasher-install install --file` —
 #      first_stage, header, cmdline and dtb come from each slot's own
 #      stock image ("smart replace", same binary as the installer uses)
@@ -124,8 +124,7 @@ fi
 
 # --- [3/4] recovery-only payload + per-slot rebuild ---
 # Payload = snapshot files minus everything that is not recovery content:
-# first_stage paths (each slot's own stock image provides first_stage),
-# the nboot base header and first_stage lists (magiskboot flow is gone).
+# first_stage paths (each slot's own stock image provides first_stage).
 # KEPT ON PURPOSE: lgz_cluster.lgz (packed files — binaries/libs/toybox —
 # without it the reflashed image would miss every LGZ-packed file at the
 # next boot), recovery_file_list.txt + ramdisk_snapshot_manifest.txt
@@ -134,7 +133,6 @@ fi
 # are skipped here — the cluster inside the payload restores them.
 echo "- Building recovery-only payload from snapshot..."
 grep -v -e "^first_stage_ramdisk" -e "first_stage_ramdisk/" \
-        -e "^nboot" -e "bin/nboot.lz4$" \
         -e "^ramdisk-files.txt$" \
         -e "^first_stage-ramdisk-files.txt$" -e "^first_stage_file_list.txt$" \
     "$RECOVERY_LIST" > "$FOLDER/payload_list_full.txt" \
