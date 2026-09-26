@@ -3129,25 +3129,14 @@ static std::string FoxOtgCoveredDevice(void) {
 	return FoxNormalizeBlock(target);
 }
 
-static bool FoxIsUsbOtgDuplicate(TWPartition* part) {
-	if (!part->Is_SubPartition || part->SubPartition_Of != "/auto0")
+static bool FoxIsUsbOtgDuplicate(bool isSub, const std::string& subOf,
+				   const std::string& blkDevice) {
+	if (!isSub || subOf != "/auto0")
 		return false;
 	std::string covered = FoxOtgCoveredDevice();
 	if (covered.empty())
 		return false;
-	return FoxNormalizeBlock(part->Primary_Block_Device) == covered;
-}
-
-// Live scan: does the /auto0 USB parent currently own any volumes?
-// (Has_SubPartition is set once at fstab write; hotplug volumes appear
-// later, so scan the live list instead of trusting the flag.)
-static bool FoxUsbParentHasVolumes(const std::vector<TWPartition*>& parts) {
-	for (std::vector<TWPartition*>::const_iterator it = parts.begin();
-	     it != parts.end(); ++it) {
-		if ((*it)->Is_SubPartition && (*it)->SubPartition_Of == "/auto0")
-			return true;
-	}
-	return false;
+	return FoxNormalizeBlock(blkDevice) == covered;
 }
 
 void TWPartitionManager::Get_Partition_List(string ListType,
@@ -3155,6 +3144,18 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 					    *Partition_List)
 {
   std::vector < TWPartition * >::iterator iter;
+  // Fox: live scan for /auto0 USB volumes (hotplug volumes appear after
+  // fstab write, so the write-once Has_SubPartition flag can't be trusted
+  // here). Computed once, used by the mount/storage filters below.
+  bool foxUsbHasVolumes = false;
+  for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
+    {
+      if ((*iter)->Is_SubPartition && (*iter)->SubPartition_Of == "/auto0")
+	{
+	  foxUsbHasVolumes = true;
+	  break;
+	}
+    }
   if (ListType == "mount")
     {
       for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
@@ -3173,17 +3174,18 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 	      // Fox: the /auto0 parent is never mountable once partitions
 	      // exist (a partitioned disk cannot mount as a whole) — its
 	      // volumes carry the data. Hide it whenever volumes are known
-	      // (live scan: the flag is set once at fstab write, hotplug
-	      // volumes appear later); the no-partition (superfloppy) case
+	      // (live scan above); the no-partition (superfloppy) case
 	      // still mounts the parent directly, so it stays visible then.
 	      if ((*iter)->Mount_Point == "/auto0" && !(*iter)->Is_SubPartition
-	          && FoxUsbParentHasVolumes(Partitions))
+	          && foxUsbHasVolumes)
 	        continue;
 	      // Fox: hide the first USB volume (/auto0-1, ...) when it IS
 	      // the /usb_otg device (same block node via the otg-usb
 	      // symlink) — otherwise the standard path and the vold volume
 	      // show the same partition twice. Volumes 2..N stay listed.
-	      if (FoxIsUsbOtgDuplicate(*iter))
+	      if (FoxIsUsbOtgDuplicate((*iter)->Is_SubPartition,
+	                               (*iter)->SubPartition_Of,
+	                               (*iter)->Primary_Block_Device))
 	        continue;
 	      struct PartitionList part;
 	      part.Display_Name = (*iter)->Display_Name;
@@ -3224,9 +3226,11 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 	          (*iter)->Storage_Path.compare(0, 5, "/auto") == 0)
 	        continue;
 	      if ((*iter)->Storage_Path == "/auto0" && !(*iter)->Is_SubPartition
-	          && FoxUsbParentHasVolumes(Partitions))
+	          && foxUsbHasVolumes)
 	        continue;
-	      if (FoxIsUsbOtgDuplicate(*iter))
+	      if (FoxIsUsbOtgDuplicate((*iter)->Is_SubPartition,
+	                               (*iter)->SubPartition_Of,
+	                               (*iter)->Primary_Block_Device))
 	        continue;
 	      struct PartitionList part;
 	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
