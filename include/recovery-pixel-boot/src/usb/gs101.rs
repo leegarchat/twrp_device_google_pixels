@@ -167,7 +167,7 @@ fn siw_map(base: &str, slot: &str) -> bool {
         }
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);
-            info(&format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            info(format!("siw map {node} FAILED: status={} {err}", out.status).trim());
             Path::new(&node).exists()
         }
         Err(e) => {
@@ -194,6 +194,29 @@ fn slot_suffix() -> String {
         .unwrap_or_default()
 }
 
+/// Read-only mount helper (NULL fstype = kernel auto-probe, like the
+/// shell `mount -r`). Returns true on success.
+fn mount_ro(src: &str, dst: &str) -> bool {
+    let (Some(s), Some(d)) = (
+        std::ffi::CString::new(src).ok(),
+        std::ffi::CString::new(dst).ok(),
+    ) else {
+        return false;
+    };
+    // SAFETY: s/d are live NUL-terminated CStrings; mount(2) ro with NULL
+    // fstype/data is the standard probe call.
+    let rc = unsafe {
+        libc::mount(
+            s.as_ptr(),
+            d.as_ptr(),
+            std::ptr::null(),
+            libc::MS_RDONLY,
+            std::ptr::null(),
+        )
+    };
+    rc == 0
+}
+
 /// Last-resort hunt for `aoc_usb_driver.ko` on the live `/vendor` (mapped
 /// on demand via siw, mounted ro under a private dir, unmounted after).
 /// insmod straight from the mount (a loaded module never needs the file
@@ -213,25 +236,7 @@ fn load_aoc_from_vendor() -> bool {
     }
     let node = mapper_node("vendor", &slot);
     let _ = std::fs::create_dir_all(MNT);
-    // SAFETY: node/mnt are static/derived paths without NUL bytes in
-    // practice; mount(2) ro with NULL fstype/data is the standard probe.
-    let rc = {
-        let src = std::ffi::CString::new(node.as_str()).ok();
-        let dst = std::ffi::CString::new(MNT).ok();
-        match (src, dst) {
-            (Some(s), Some(d)) => unsafe {
-                libc::mount(
-                    s.as_ptr(),
-                    d.as_ptr(),
-                    std::ptr::null(),
-                    libc::MS_RDONLY,
-                    std::ptr::null(),
-                )
-            },
-            _ => -1,
-        }
-    };
-    if rc != 0 {
+    if !mount_ro(&node, MNT) {
         info("aoc hunt: vendor mount FAILED");
         return false;
     }

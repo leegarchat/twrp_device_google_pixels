@@ -314,7 +314,7 @@ fn siw_map(base: &str, slot: &str) -> bool {
         }
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);
-            info(&format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            info(format!("siw map {node} FAILED: status={} {err}", out.status).trim());
             Path::new(&node).exists()
         }
         Err(e) => {
