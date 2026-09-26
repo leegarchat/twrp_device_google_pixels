@@ -214,6 +214,12 @@ fn mount_ro(src: &str, dst: &str) -> bool {
             std::ptr::null(),
         )
     };
+    if rc != 0 {
+        info(&format!(
+            "mount {src} on {dst} FAILED: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
     rc == 0
 }
 
@@ -600,6 +606,14 @@ fn switch_to_host(current: &mut String) {
         return;
     }
     info(">>> SWITCHING TO HOST MODE <<<");
+    // Lazy hooks hunt: the patch-time hunt runs before ko_stage exists
+    // and before dm-0 may be mapped, so retry here — by now the tree is
+    // settled. No-op when hooks are already live. Without them the xhci
+    // probe below fails -22 and enumeration is impossible.
+    if !use_native_otg() && !is_module_loaded("aoc_usb_driver") {
+        info("host: hooks missing, late aoc hunt");
+        load_aoc_from_vendor();
+    }
     let _ = std::fs::write(UDC_FILE, b"\n");
     if Path::new(CHARGER_VALUE).exists() {
         let _ = std::fs::write(CHARGER_VALUE, b"49\n");

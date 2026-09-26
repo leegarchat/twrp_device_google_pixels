@@ -415,6 +415,12 @@ fn mount_ro(source: &str, target: &str) -> bool {
             std::ptr::null(),
         )
     };
+    if rc != 0 {
+        info(&format!(
+            "mount {source} on {target} FAILED: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
     rc == 0
 }
 

@@ -2190,8 +2190,10 @@ int TWFunc::Set_Brightness(std::string brightness_value)
           brightness_value = std::to_string(max_brightness);
         }
       }
-      LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n",
-	      brightness_value.c_str());
+      LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s (slider pct %s of max %s)\n",
+	      brightness_value.c_str(),
+	      DataManager::GetStrValue("tw_brightness_pct").c_str(),
+	      DataManager::GetStrValue("tw_brightness_max").c_str());
       result =
 	TWFunc::write_to_file(DataManager::GetStrValue("tw_brightness_file"),
 			      brightness_value);
