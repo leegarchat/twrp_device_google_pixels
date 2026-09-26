@@ -785,9 +785,20 @@ fn pick_otg_disk() -> Option<String> {
     for n in &names {
         let dir = Path::new("/sys/block").join(n);
         let removable = read_trim(&dir.join("removable").to_string_lossy()) == "1";
-        let dev = std::fs::read_link(dir.join("device"))
+        // read_link returns the raw (usually relative:
+        // ../../../1-1:1.0/...) target, which never names the USB ancestors
+        // — canonicalize first so the "usb" check sees the real
+        // /sys/devices/... path (field-proven: the raw link matched
+        // nothing, otg-usb was never created, OTG dedup never engaged).
+        let dev = dir
+            .join("device")
+            .canonicalize()
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .unwrap_or_else(|_| {
+                std::fs::read_link(dir.join("device"))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
         let has_usb = dev.contains("usb");
         let has_part = Path::new(&format!("/dev/block/{n}1")).exists();
         cands.push((n.clone(), removable, has_usb, has_part));
