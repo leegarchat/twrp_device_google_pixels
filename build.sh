@@ -973,6 +973,11 @@ for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
     if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
         break
     fi
+    # Success marker for the push/admin gates below: set HERE, right after
+    # the build (a failed mka breaks out above before reaching this). It
+    # must precede the Telegram push block — the old position after it
+    # meant the gate never saw success and every push was skipped.
+    FOX_BUILD_OK=1
 
     echo ""
     echo "=============================================="
@@ -1194,4 +1199,5 @@ fi
 echo "=============================================="
 echo "  Artifacts in: $BUILDS_DIR/"
 echo "=============================================="
-FOX_BUILD_OK=1
+# NOTE: FOX_BUILD_OK is set right after mka succeeds (line ~980), not
+# here — the Telegram push/admin gates above must see it.
