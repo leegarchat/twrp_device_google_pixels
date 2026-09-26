@@ -217,31 +217,53 @@ fn mount_ro(src: &str, dst: &str) -> bool {
     rc == 0
 }
 
-/// Last-resort hunt for `aoc_usb_driver.ko` on the live `/vendor` (mapped
-/// on demand via siw, mounted ro under a private dir, unmounted after).
-/// insmod straight from the mount (a loaded module never needs the file
-/// again). Returns true when the hooks provider is loaded afterwards.
+/// Last-resort hunt for `aoc_usb_driver.ko`: first the touch system's
+/// ko_stage (siw-streamed vendor_dlkm .ko, both slots), then the live
+/// `/vendor` image — `/dev/block/by-name/vendor` first (unsuffixed =
+/// current slot, first-stage pre-mapped; siw map on vendor is a dead end,
+/// field-proven on laguna), siw-created mapper mount as fallback.
+/// Mounted ro under a private dir, unmounted after; insmod straight from
+/// the mount (a loaded module never needs the file again). Returns true
+/// when the hooks provider is loaded afterwards.
 fn load_aoc_from_vendor() -> bool {
     if is_module_loaded("aoc_usb_driver") {
         return true;
     }
+    for sfx in ["_a", "_b"] {
+        let cand = format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko");
+        if Path::new(&cand).is_file() {
+            match load_kernel_module(Path::new(&cand)) {
+                Ok(()) => {
+                    info(&format!("aoc_usb_driver loaded from {cand} (xhci hooks live)"));
+                    return true;
+                }
+                Err(e) => info(&format!("aoc_usb_driver insmod from {cand} FAILED: {e}")),
+            }
+        }
+    }
     const MNT: &str = "/dev/otg_mnt_vendor";
     let slot = slot_suffix();
-    if slot.is_empty() {
-        info("aoc hunt: unknown slot, cannot map vendor");
-        return false;
-    }
-    if !siw_map("vendor", &slot) {
-        return false;
-    }
-    let node = mapper_node("vendor", &slot);
     let _ = std::fs::create_dir_all(MNT);
-    if !mount_ro(&node, MNT) {
-        info("aoc hunt: vendor mount FAILED");
-        return false;
+    if mount_ro("/dev/block/by-name/vendor", MNT) {
+        info("aoc hunt: vendor via by-name (first-stage mapped)");
+    } else {
+        if slot.is_empty() {
+            info("aoc hunt: unknown slot, cannot map vendor");
+            return false;
+        }
+        let mut siw_mounted = false;
+        if siw_map("vendor", &slot) {
+            let node = mapper_node("vendor", &slot);
+            siw_mounted = mount_ro(&node, MNT);
+        }
+        if !siw_mounted {
+            info("aoc hunt: vendor mount FAILED (by-name and siw)");
+            return false;
+        }
     }
+    let src_dir = MNT;
     let mut found: Option<std::path::PathBuf> = None;
-    let mut stack = vec![std::path::PathBuf::from(format!("{MNT}/lib/modules"))];
+    let mut stack = vec![std::path::PathBuf::from(format!("{src_dir}/lib/modules"))];
     while let Some(p) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&p) else {
             continue;
