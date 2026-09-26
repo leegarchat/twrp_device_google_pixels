@@ -371,24 +371,25 @@ fn load_aoc_from_vendor() -> bool {
             info("aoc hunt: unknown slot, cannot map vendor");
             return false;
         }
+        // Loop device before dm-mapper: fully independent of dm state
+        // (live-proven on shiba: loop0 + dm-0 side by side), while
+        // `siw map` on vendor is known-flaky (exit 0, no node).
         let mut siw_mounted = false;
-        if siw_map("vendor", &slot) {
+        if let Some(loopnode) = siw_connect_node("vendor", &slot) {
+            if mount_ro(&loopnode, MNT) {
+                info("aoc hunt: vendor via siw loop device");
+                siw_mounted = true;
+                from_loop = true;
+            } else {
+                siw_disconnect("vendor", &slot);
+            }
+        }
+        if !siw_mounted && siw_map("vendor", &slot) {
             let node = mapper_node("vendor", &slot);
             siw_mounted = mount_ro(&node, MNT);
         }
         if !siw_mounted {
-            if let Some(loopnode) = siw_connect_node("vendor", &slot) {
-                if mount_ro(&loopnode, MNT) {
-                    info("aoc hunt: vendor via siw loop device");
-                    siw_mounted = true;
-                    from_loop = true;
-                } else {
-                    siw_disconnect("vendor", &slot);
-                }
-            }
-        }
-        if !siw_mounted {
-            info("aoc hunt: vendor mount FAILED (by-name, siw map and loop)");
+            info("aoc hunt: vendor mount FAILED (by-name, loop and siw map)");
             return false;
         }
     }

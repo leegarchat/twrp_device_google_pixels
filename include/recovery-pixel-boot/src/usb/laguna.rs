@@ -702,9 +702,11 @@ fn stage_aoc() -> bool {
         if mount_ro("/dev/block/by-name/vendor", OTG_MNT_VENDOR) {
             info("vendor via by-name (first-stage mapped)");
             vendor_mnt = Some(OTG_MNT_VENDOR);
-        } else if siw_map("vendor", &slot) && mount_ro(&mapped_vendor, OTG_MNT_VENDOR) {
-            vendor_mnt = Some(OTG_MNT_VENDOR);
         } else if let Some(loopnode) = siw_connect_node("vendor", &slot) {
+            // Loop device before dm-mapper: fully independent of dm state
+            // (live-proven on shiba: /dev/block/loop0 + dm-0 mounted side
+            // by side), while `siw map` on vendor is known-flaky
+            // (exit 0, no node).
             if mount_ro(&loopnode, OTG_MNT_VENDOR) {
                 info("vendor via siw loop device");
                 vendor_mnt = Some(OTG_MNT_VENDOR);
@@ -712,6 +714,12 @@ fn stage_aoc() -> bool {
             } else {
                 siw_disconnect("vendor", &slot);
             }
+        }
+        if vendor_mnt.is_none()
+            && siw_map("vendor", &slot)
+            && mount_ro(&mapped_vendor, OTG_MNT_VENDOR)
+        {
+            vendor_mnt = Some(OTG_MNT_VENDOR);
         }
     }
     if let Some(mnt) = vendor_mnt {

@@ -428,7 +428,9 @@ fn siw_map(base: &str, slot: &str) -> bool {
 /// Copy the AoC runtime out of the live vendor/vendor_dlkm into RAM
 /// (P11 `:27-42`). Mount sources, richest first: pre-mapped
 /// `/dev/block/by-name/vendor` (unsuffixed = current slot, first-stage
-/// mapped — no slot logic, no siw), siw dm-mapper node, siw loop device.
+/// mapped — no slot logic, no siw), siw loop device (dm-independent,
+/// live-proven side-by-side with dm-0), siw dm-mapper node last (flaky
+/// on vendor: exit 0, no node).
 /// KO additionally comes from ko_stage / first-stage ramdisk / the
 /// standard ko-fetch mechanism before any mount. Second-stage-proof:
 /// whatever first-stage normalized (or didn't), one source works.
@@ -476,11 +478,10 @@ fn stage_aoc(slot: &str) -> bool {
         if mount_ro("/dev/block/by-name/vendor", MNT_VENDOR) {
             info("vendor via by-name (first-stage mapped)");
             vendor_mnt = Some(MNT_VENDOR);
-        } else if siw_map("vendor", slot)
-            && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
-        {
-            vendor_mnt = Some(MNT_VENDOR);
         } else if let Some(loopnode) = siw_connect_node("vendor", slot) {
+            // Loop device before dm-mapper: fully independent of dm state
+            // (live-proven on shiba: loop0 + dm-0 side by side), while
+            // `siw map` on vendor is known-flaky (exit 0, no node).
             if mount_ro(&loopnode, MNT_VENDOR) {
                 info("vendor via siw loop device");
                 vendor_mnt = Some(MNT_VENDOR);
@@ -488,6 +489,12 @@ fn stage_aoc(slot: &str) -> bool {
             } else {
                 siw_disconnect("vendor", slot);
             }
+        }
+        if vendor_mnt.is_none()
+            && siw_map("vendor", slot)
+            && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
+        {
+            vendor_mnt = Some(MNT_VENDOR);
         }
     }
     if let Some(mnt) = vendor_mnt {
