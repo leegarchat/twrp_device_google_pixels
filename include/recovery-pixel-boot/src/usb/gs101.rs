@@ -120,6 +120,160 @@ fn chain_pos(name: &str) -> Option<usize> {
     STOCK_USB_CHAIN.iter().position(|m| *m == name)
 }
 
+/// Mapper node path, mirroring `siw map` naming (`-p vendor --suffix b`
+/// -> `/dev/block/mapper/vendor_b`, same helper as laguna.rs — kept local
+/// until the shared usb helper lands). Pure (testable).
+fn mapper_node(base: &str, slot: &str) -> String {
+    format!("/dev/block/mapper/{base}_{}", slot.trim_start_matches('_'))
+}
+
+/// Create a dm-mapper node via `siw` (`siw map /dev/block/by-name/super
+/// -p <part> --suffix <a|b> -s <0|1>`). Field lesson (raven test9 flog):
+/// `aoc_usb_driver.ko` is in NONE of the visible roots (/lib/modules,
+/// /vendor_dlkm, /vendor unmounted, /system) — the only remaining home
+/// is `/vendor/lib/modules`, and nothing maps `/vendor` in recovery.
+/// True when the node exists afterwards (pre-existing or just created).
+fn siw_map(base: &str, slot: &str) -> bool {
+    let node = mapper_node(base, slot);
+    if Path::new(&node).exists() {
+        return true;
+    }
+    let sfx = slot.trim_start_matches('_');
+    let num = match slot {
+        "_a" => "0",
+        "_b" => "1",
+        _ => {
+            info(&format!("siw map: unknown slot suffix {slot:?}, trying both"));
+            return siw_map(base, "_a") || siw_map(base, "_b");
+        }
+    };
+    info(&format!("siw map: creating {node}"));
+    match std::process::Command::new("/system/bin/siw")
+        .args([
+            "map",
+            "/dev/block/by-name/super",
+            "-p",
+            base,
+            "--suffix",
+            sfx,
+            "-s",
+            num,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() && Path::new(&node).exists() => {
+            info(&format!("siw map: {node} created"));
+            true
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            info(&format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            Path::new(&node).exists()
+        }
+        Err(e) => {
+            info(&format!("siw map: cannot run /system/bin/siw: {e}"));
+            false
+        }
+    }
+}
+
+/// Current slot suffix (`ro.boot.slot_suffix`, bootconfig fallback).
+fn slot_suffix() -> String {
+    let prop = get_prop("ro.boot.slot_suffix").trim().to_string();
+    if prop == "_a" || prop == "_b" {
+        return prop;
+    }
+    std::fs::read_to_string("/proc/bootconfig")
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == "androidboot.slot_suffix").then(|| v.trim().trim_matches('"').to_string())
+        })
+        .find(|s| s == "_a" || s == "_b")
+        .unwrap_or_default()
+}
+
+/// Last-resort hunt for `aoc_usb_driver.ko` on the live `/vendor` (mapped
+/// on demand via siw, mounted ro under a private dir, unmounted after).
+/// insmod straight from the mount (a loaded module never needs the file
+/// again). Returns true when the hooks provider is loaded afterwards.
+fn load_aoc_from_vendor() -> bool {
+    if is_module_loaded("aoc_usb_driver") {
+        return true;
+    }
+    const MNT: &str = "/dev/otg_mnt_vendor";
+    let slot = slot_suffix();
+    if slot.is_empty() {
+        info("aoc hunt: unknown slot, cannot map vendor");
+        return false;
+    }
+    if !siw_map("vendor", &slot) {
+        return false;
+    }
+    let node = mapper_node("vendor", &slot);
+    let _ = std::fs::create_dir_all(MNT);
+    // SAFETY: node/mnt are static/derived paths without NUL bytes in
+    // practice; mount(2) ro with NULL fstype/data is the standard probe.
+    let rc = {
+        let src = std::ffi::CString::new(node.as_str()).ok();
+        let dst = std::ffi::CString::new(MNT).ok();
+        match (src, dst) {
+            (Some(s), Some(d)) => unsafe {
+                libc::mount(
+                    s.as_ptr(),
+                    d.as_ptr(),
+                    std::ptr::null(),
+                    libc::MS_RDONLY,
+                    std::ptr::null(),
+                )
+            },
+            _ => -1,
+        }
+    };
+    if rc != 0 {
+        info("aoc hunt: vendor mount FAILED");
+        return false;
+    }
+    let mut found: Option<std::path::PathBuf> = None;
+    let mut stack = vec![std::path::PathBuf::from(format!("{MNT}/lib/modules"))];
+    while let Some(p) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&p) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let q = e.path();
+            if q.is_dir() {
+                stack.push(q);
+            } else if q.file_name().map(|n| n == "aoc_usb_driver.ko").unwrap_or(false) {
+                found = Some(q);
+                break;
+            }
+        }
+        if found.is_some() {
+            break;
+        }
+    }
+    let mut ok = false;
+    if let Some(ko) = found {
+        info(&format!("aoc hunt: found {}", ko.display()));
+        match load_kernel_module(&ko) {
+            Ok(()) => {
+                info("aoc_usb_driver loaded from vendor (xhci hooks live)");
+                ok = true;
+            }
+            Err(e) => info(&format!("aoc_usb_driver insmod from vendor FAILED: {e}")),
+        }
+    } else {
+        info("aoc hunt: aoc_usb_driver.ko NOT on vendor (not shipped for gs101?)");
+    }
+    // SAFETY: MNT is a valid NUL-terminated C string; umount(2) failure ignored.
+    unsafe {
+        libc::umount(b"/dev/otg_mnt_vendor\0".as_ptr() as *const libc::c_char);
+    }
+    ok
+}
+
 /// Best-effort insmod of one STOCK module (strict flags: stock modules
 /// always match the running kernel by construction). Returns true when
 /// loaded or already loaded.
@@ -261,6 +415,12 @@ pub fn run_otg_patch() -> Result<(), String> {
         chain_ok &= insmod_stock(m);
     }
     let glue = Path::new(OTG_ID).exists();
+    // The hooks provider lives outside every visible root (raven test9
+    // flog: not in /lib/modules, /vendor_dlkm or /system) — hunt it on
+    // the live vendor image before declaring the chain state.
+    if !is_module_loaded("aoc_usb_driver") {
+        load_aoc_from_vendor();
+    }
     info(&format!(
         "chain done (all_found={chain_ok}): OTG_ID node {}, CHARGER_MODE voter {}, xhci hooks {}",
         if glue { "present" } else { "MISSING" },
@@ -561,5 +721,11 @@ mod tests {
         );
         let empty: Vec<String> = Vec::new();
         assert_eq!(pick_role_entry(&empty), None);
+    }
+
+    #[test]
+    fn mapper_node_naming_matches_siw() {
+        assert_eq!(mapper_node("vendor", "_b"), "/dev/block/mapper/vendor_b");
+        assert_eq!(mapper_node("vendor_dlkm", "_a"), "/dev/block/mapper/vendor_dlkm_a");
     }
 }
