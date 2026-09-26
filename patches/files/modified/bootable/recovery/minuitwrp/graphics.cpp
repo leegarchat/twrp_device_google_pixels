@@ -318,18 +318,16 @@ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
 
     // Image resources keep their aspect ratio, but GUI widgets can request
     // the independently scaled layout bounds (X/Y) from this 1:1 blitter.
-    // Fit smaller surfaces into that destination rectangle rather than
-    // reading past the resource buffer; center the fitted image in its slot.
+    // Clamp to the source buffer (no OOB reads) but keep the caller's
+    // top-left position: it already accounts for padding/alignment
+    // (battery icon vs percent text, slider handle vs touch point), and
+    // shifting it breaks composite layouts.
     if (!surface || sx < 0 || sy < 0 || w <= 0 || h <= 0 ||
         sx >= surface->width || sy >= surface->height) {
         return;
     }
-    const int requested_w = w;
-    const int requested_h = h;
     w = std::min(w, static_cast<int>(surface->width) - sx);
     h = std::min(h, static_cast<int>(surface->height) - sy);
-    dx += (requested_w - w) / 2;
-    dy += (requested_h - h) / 2;
 
     if(surface->format == GGL_PIXEL_FORMAT_RGBX_8888)
         gl->disable(gl, GGL_BLEND);
