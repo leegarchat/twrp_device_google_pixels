@@ -1089,7 +1089,15 @@ done
 # Non-fatal by design: network/API flakes must never fail a good build.
 # Guarded on the post-process vars: if the pack loop never ran (failed or
 # skipped build), there is no zip to push and no garbage path is built.
-if [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
+# Hard gate on FOX_BUILD_OK (set only after successful artifacts): without
+# it a stale zip from a previous run would pass the -f check below and go
+# to testers as if it were fresh (seen live: ninja failed, tag removed,
+# yet the old test9 zip was pushed to all groups).
+if [[ "${FOX_BUILD_OK:-}" != 1 ]]; then
+    if [[ -n "${FOX_PUSH_GROUP:-}" ]]; then
+        echo "[build] Push SKIPPED: build did not complete (no fresh zip; stale artifacts left untouched)"
+    fi
+elif [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
     _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$OFOX_PREFIX" | cut -d'-' -f2)-${BUILD_NAME:-Beta}-aio.zip"
     # -D/--diff-tag: range = previous reachable tag .. fresh -g tag (or
     # HEAD when built without -g). A fresh tag sits exactly on HEAD, so
