@@ -406,6 +406,31 @@ pub fn run_boot() -> Result<(), String> {
         }
     }
 
+    // USB/OTG stock modules, right after touch, same process, strictly
+    // sequential: concurrent ko-fetch streams to shared /dev/ko_stage +
+    // /dev/stage_*.img paths would clobber each other. The OTG daemon
+    // never streams images itself — it only picks up staged files and
+    // read-only mounts from here on.
+    if !cfg.usb_modules.is_empty() {
+        let part = if cfg.part_usb.is_empty() {
+            "vendor_dlkm"
+        } else {
+            cfg.part_usb.as_str()
+        };
+        info(&format!(
+            "usb modules: loading {} from {part}",
+            cfg.usb_modules.join(" ")
+        ));
+        if fetch_stock_modules(part, &cfg.usb_modules) {
+            info("usb modules: all loaded successfully");
+        } else {
+            warn(&format!(
+                "usb modules: missing after fetch: {} (OTG degrades to device mode)",
+                cfg.usb_modules.join(" ")
+            ));
+        }
+    }
+
     // Backlight may still read dark here (late panel probe vs TWRP's
     // one-shot discovery); nudge before the GUI settles. No-op when
     // TWRP already set a sane value.

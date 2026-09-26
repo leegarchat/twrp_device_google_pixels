@@ -21,6 +21,9 @@
     "ftm5",
     "goodixfp"
   ],
+  "usb_modules": [
+    "aoc_usb_driver"
+  ],
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",
   "props": {

@@ -80,7 +80,6 @@
 //! symlink maintenance, and parks (never exits) — an exiting non-oneshot
 //! service would respawn-loop.
 
-use crate::boot::fetch_stock_modules;
 use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{
     detect_kernel_env, is_module_loaded, load_kernel_module, log_msg,
@@ -671,20 +670,11 @@ fn stage_aoc() -> bool {
             &format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko"),
         );
     }
-    // Standard mechanism (ko-fetch shell stage: siw|iw stream, map+mount
-    // +loop-connect fallback, both slots) for the KO — one mechanism for
-    // touch and OTG instead of two. No-op when first-stage autoloaded it;
-    // ko-fetch also (re)populates ko_stage, so pick the file up again.
-    if !Path::new(AOC_KO).is_file()
-        && fetch_stock_modules("vendor_dlkm", &["aoc_usb_driver".to_string()])
-    {
-        for sfx in ["_a", "_b"] {
-            copy_if_src(
-                AOC_KO,
-                &format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko"),
-            );
-        }
-    }
+    // NOTE: no image streaming here — `usb_modules` from pixel.json are
+    // loaded by the boot process (sequential, race-free) before any daemon
+    // starts; concurrent ko-fetch streams would clobber the shared
+    // /dev/ko_stage + /dev/stage_*.img paths. This function only picks up
+    // staged files and read-only mounts from here on.
     if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
         return true;
     }

@@ -14,6 +14,14 @@ pub struct DeviceConfig {    pub family: String,
     pub soc_family: String,
     pub touch_modules: Vec<String>,
     pub part_touch: String,
+    /// USB/OTG stock modules loaded right after touch, sequentially in the
+    /// same boot process (no concurrency possible). Same standard ko-fetch
+    /// mechanism as touch — the OTG daemon never streams images itself.
+    /// Empty (default) = family needs nothing beyond first-stage (zuma,
+    /// gs201, zumapro: whole Samsung stack autoloads from the ramdisk).
+    pub usb_modules: Vec<String>,
+    /// LP partition base holding `usb_modules` (default "vendor_dlkm").
+    pub part_usb: String,
     pub part_vendor: String,
     /// Partition holding provider modules that touch/camera drivers depend
     /// on but that live outside vendor_dlkm (e.g. "system_dlkm" for
@@ -370,6 +378,15 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
         soc_family: get_str(pairs, "soc_family"),
         touch_modules: get_arr(pairs, "touch_modules"),
         part_touch: get_str(pairs, "part_touch"),
+        usb_modules: get_arr(pairs, "usb_modules"),
+        part_usb: {
+            let v = get_str(pairs, "part_usb");
+            if v.is_empty() {
+                "vendor_dlkm".to_string()
+            } else {
+                v
+            }
+        },
         part_vendor: get_str(pairs, "part_vendor"),
         part_sysdlkm: get_str(pairs, "part_sysdlkm"),
         preload_modules: get_arr(pairs, "preload_modules"),
@@ -584,6 +601,29 @@ mod tests {
             c.props.iter().find(|(k, _)| k == "ro.product.model").unwrap().1,
             "Pixel 8"
         );
+        // usb_modules absent in the old fixture: empty + dlkm default.
+        assert!(c.usb_modules.is_empty());
+        assert_eq!(c.part_usb, "vendor_dlkm");
+    }
+
+    #[test]
+    fn usb_modules_parse_with_part_default() {
+        let d = std::env::temp_dir().join(format!("fox_test_usb_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"mustang": {"family": "laguna", "usb_modules": ["aoc_usb_driver"], "props": {}},
+            "shiba": {"family": "zuma", "props": {}}}"#,
+        )
+        .unwrap();
+        let m = load_device_config_from(&f, "mustang").unwrap();
+        assert_eq!(m.usb_modules, vec!["aoc_usb_driver"]);
+        assert_eq!(m.part_usb, "vendor_dlkm");
+        let s = load_device_config_from(&f, "shiba").unwrap();
+        assert!(s.usb_modules.is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

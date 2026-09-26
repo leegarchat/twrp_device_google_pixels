@@ -34,7 +34,6 @@
 //! - Stock trees without the Samsung DLKM set stay well-behaved devices
 //!   (adb safe) instead of pretending host works.
 
-use crate::boot::fetch_stock_modules;
 use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{
     detect_kernel_env, find_candidates, is_module_loaded, ko_try_load,
@@ -352,12 +351,11 @@ fn load_aoc_from_vendor() -> bool {
             }
         }
     }
-    // Standard mechanism (ko-fetch shell stage) for the KO — one mechanism
-    // for touch and OTG instead of two. No-op when already loaded.
-    if fetch_stock_modules("vendor_dlkm", &["aoc_usb_driver".to_string()]) {
-        info("aoc_usb_driver via standard ko-fetch (xhci hooks live)");
-        return true;
-    }
+    // NOTE: no image streaming here — `usb_modules` from pixel.json are
+    // loaded by the boot process (sequential, race-free) before any daemon
+    // starts; concurrent ko-fetch streams would clobber the shared
+    // /dev/ko_stage + /dev/stage_*.img paths. Vendor mounts below are
+    // read-only with private dirs — race-free by construction.
     const MNT: &str = "/dev/otg_mnt_vendor";
     let slot = slot_suffix();
     let _ = std::fs::create_dir_all(MNT);

@@ -75,7 +75,6 @@
 //! touch UDC, gadget, role or voter state — TCPC + role-sw negotiate modes
 //! on their own).
 
-use crate::boot::fetch_stock_modules;
 use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg};
 use crate::props::{get_prop, set_prop};
 use std::ffi::CString;
@@ -455,22 +454,11 @@ fn stage_aoc(slot: &str) -> bool {
             Err(e) => info(&format!("stage: first-stage copy FAILED: {e}")),
         }
     }
-    // Standard mechanism (ko-fetch shell stage: siw|iw stream, map+mount
-    // +loop-connect fallback, both slots) — one mechanism for touch and
-    // OTG instead of two; ko-fetch also (re)populates ko_stage.
-    if !Path::new(RAM_KO).is_file()
-        && fetch_stock_modules("vendor_dlkm", &["aoc_usb_driver".to_string()])
-    {
-        for sfx in ["_a", "_b"] {
-            let cand = format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko");
-            if !Path::new(RAM_KO).is_file() && Path::new(&cand).is_file() {
-                let _ = std::fs::copy(&cand, RAM_KO);
-            }
-        }
-        if Path::new(RAM_KO).is_file() {
-            info("staged module via standard ko-fetch");
-        }
-    }
+    // NOTE: no image streaming here — `usb_modules` from pixel.json are
+    // loaded by the boot process (sequential, race-free) before any daemon
+    // starts; concurrent ko-fetch streams would clobber the shared
+    // /dev/ko_stage + /dev/stage_*.img paths. File pickups + read-only
+    // mounts only from here on.
     let _ = std::fs::create_dir_all(RAM_DIR);
     let mut vendor_loop: Option<String> = None;
     let mut vendor_mnt: Option<&str> = None;

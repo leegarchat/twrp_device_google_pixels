@@ -17,6 +17,9 @@
     "goog_touch_interface",
     "sec_touch"
   ],
+  "usb_modules": [
+    "aoc_usb_driver"
+  ],
   "part_touch": "vendor_dlkm",
   "part_vendor": "vendor",
   "cs40l26_pm": "",
