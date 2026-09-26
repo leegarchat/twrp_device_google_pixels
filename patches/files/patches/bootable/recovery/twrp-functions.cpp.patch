@@ -65,7 +65,7 @@
  			if (!dataPart->UnMount(false)) {
  				usleep(16384);
  				dataPart->UnMount(false, MNT_FORCE | MNT_DETACH);
-@@ -2071,18 +2110,94 @@
+@@ -2071,18 +2110,104 @@
    return true;
  }
  
@@ -149,6 +149,16 @@
 +          brightness_value = std::to_string(max_brightness);
 +        }
 +      }
++      // Fox: panel quirk — s6e3hc3 (gs101) blanks the screen at exactly
++      // 2048 (2^11), reproducible in Android too (Google kernel-module
++      // bug; field-proven by a 10→3200 loop test on raven that went dark
++      // at 2048 only). Step over it: 2048 → 2049 is visually identical
++      // and harmless on panels without the bug, so apply unconditionally
++      // (before the clamp below, which still caps any over-range result).
++      if (brightness_value == "2048") {
++        LOGINFO("TWFunc::Set_Brightness: quirk 2048 -> 2049 (2^11 panel blank)\n");
++        brightness_value = "2049";
++      }
        LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n",
  	      brightness_value.c_str());
        result =
@@ -160,7 +170,7 @@
        DataManager::GetValue("tw_secondary_brightness_file",
  			    secondary_brightness_file);
        if (!secondary_brightness_file.empty())
-@@ -2090,7 +2205,9 @@
+@@ -2090,7 +2215,9 @@
  	  LOGINFO
  	    ("TWFunc::Set_Brightness: Setting secondary brightness control to %s\n",
  	     brightness_value.c_str());
@@ -171,7 +181,7 @@
  	}
      }
    return result;
-@@ -2597,7 +2714,18 @@
+@@ -2597,7 +2724,18 @@
        gui_msg(Msg(msg::kWarning, "fox_unencrypted=* Storage is not encrypted"));
  
  #ifdef PRODUCT_PLATFORM
