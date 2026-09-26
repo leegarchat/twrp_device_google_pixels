@@ -314,7 +314,11 @@ fn siw_map(base: &str, slot: &str) -> bool {
         }
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);
-            info(format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            let answer = String::from_utf8_lossy(&out.stdout);
+            info(
+                format!("siw map {node} FAILED: status={} err={err} out={answer}", out.status)
+                    .trim(),
+            );
             Path::new(&node).exists()
         }
         Err(e) => {
@@ -325,21 +329,41 @@ fn siw_map(base: &str, slot: &str) -> bool {
 }
 
 /// Copy the AoC runtime out of the live vendor/vendor_dlkm into RAM
-/// (P11 `:27-42`). Mapper nodes are created on demand via siw (see
-/// [`siw_map`]) — nobody maps `/vendor` in recovery otherwise.
+/// (P11 `:27-42`). `/dev/block/by-name/vendor` (unsuffixed = current
+/// slot, first-stage pre-mapped, field-proven on laguna) wins — no slot
+/// logic, no siw involved; the siw-created mapper mount is the fallback.
 fn stage_aoc(slot: &str) -> bool {
     if staged() {
         return true;
     }
+    // The touch system siw-streams every vendor_dlkm .ko into ko_stage —
+    // grab the KO from there when the mapper dance is unnecessary.
+    for sfx in ["_a", "_b"] {
+        let cand = format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko");
+        if !Path::new(RAM_KO).is_file() && Path::new(&cand).is_file() {
+            match std::fs::copy(&cand, RAM_KO) {
+                Ok(_) => info(&format!("staged module from {cand}")),
+                Err(e) => info(&format!("stage: ko_stage copy FAILED: {e}")),
+            }
+        }
+    }
     let _ = std::fs::create_dir_all(RAM_DIR);
-    if !Path::new(RAM_AOCD).is_file()
-        && siw_map("vendor", slot)
-        && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
-    {
-        let src = Path::new(MNT_VENDOR).join(VENDOR_AOCD);
+    let mut vendor_mnt: Option<&str> = None;
+    if !Path::new(RAM_AOCD).is_file() {
+        if mount_ro("/dev/block/by-name/vendor", MNT_VENDOR) {
+            info("vendor via by-name (first-stage mapped)");
+            vendor_mnt = Some(MNT_VENDOR);
+        } else if siw_map("vendor", slot)
+            && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
+        {
+            vendor_mnt = Some(MNT_VENDOR);
+        }
+    }
+    if let Some(mnt) = vendor_mnt {
+        let src = Path::new(mnt).join(VENDOR_AOCD);
         if std::fs::copy(src, RAM_AOCD).is_ok() {
             for lib in AOC_LIBS {
-                let from = Path::new(MNT_VENDOR).join(format!("lib64/{lib}.so"));
+                let from = Path::new(mnt).join(format!("lib64/{lib}.so"));
                 let to = Path::new(RAM_LIB).join(format!("{lib}.so"));
                 let _ = std::fs::create_dir_all(RAM_LIB);
                 if std::fs::copy(&from, &to).is_err() {
@@ -352,7 +376,7 @@ fn stage_aoc(slot: &str) -> bool {
         } else {
             info("stage: aocd copy FAILED (vendor not ready?)");
         }
-        umount(MNT_VENDOR);
+        umount(mnt);
     }
     if !Path::new(RAM_KO).is_file()
         && siw_map("vendor_dlkm", slot)

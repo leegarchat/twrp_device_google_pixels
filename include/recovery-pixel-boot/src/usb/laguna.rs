@@ -498,7 +498,11 @@ fn siw_map(base: &str, slot: &str) -> bool {
         }
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);
-            info(format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            let answer = String::from_utf8_lossy(&out.stdout);
+            info(
+                format!("siw map {node} FAILED: status={} err={err} out={answer}", out.status)
+                    .trim(),
+            );
             Path::new(&node).exists()
         }
         Err(e) => {
@@ -525,27 +529,44 @@ fn stage_aoc() -> bool {
     }
     copy_if_src(AOC_KO, VENDOR_DLKM_KO);
     copy_if_src(AOC_KO, FIRSTSTAGE_KO);
+    // The touch system siw-streams every vendor_dlkm .ko into ko_stage
+    // (runs before our later attempts) — pick the KO up from there when
+    // the mapper dance is unnecessary. Both slots: ko-fetch tries live
+    // first, then the opposite one.
+    for sfx in ["_a", "_b"] {
+        copy_if_src(
+            AOC_KO,
+            &format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko"),
+        );
+    }
     if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
         return true;
     }
-    // Slow path: dm-mapper mounts. Mapper nodes appear late — and
-    // `/vendor` is NEVER mapped by anyone in recovery (field-proven:
-    // the touch system maps only vendor_dlkm on demand), so create the
-    // mapping ourselves via siw instead of waiting for it.
+    // Slow path: mount the vendor image. `/dev/block/by-name/vendor`
+    // (unsuffixed = current slot, first-stage pre-mapped to dm-0,
+    // field-proven on mustang) wins — no slot logic, no siw involved.
+    // The siw-created mapper mount is the fallback for trees where
+    // first-stage did not map it.
     let slot = slot_suffix();
     let mapped_vendor = format!("/dev/block/mapper/vendor{slot}");
     let mapped_dlkm = format!("/dev/block/mapper/vendor_dlkm{slot}");
-    if !Path::new(AOCD_BIN).is_file()
-        && siw_map("vendor", &slot)
-        && mount_ro(&mapped_vendor, OTG_MNT_VENDOR)
-    {
-        copy_if_src(AOCD_BIN, &format!("{OTG_MNT_VENDOR}/bin/aocd"));
+    let mut vendor_mnt: Option<&str> = None;
+    if !Path::new(AOCD_BIN).is_file() {
+        if mount_ro("/dev/block/by-name/vendor", OTG_MNT_VENDOR) {
+            info("vendor via by-name (first-stage mapped)");
+            vendor_mnt = Some(OTG_MNT_VENDOR);
+        } else if siw_map("vendor", &slot) && mount_ro(&mapped_vendor, OTG_MNT_VENDOR) {
+            vendor_mnt = Some(OTG_MNT_VENDOR);
+        }
+    }
+    if let Some(mnt) = vendor_mnt {
+        copy_if_src(AOCD_BIN, &format!("{mnt}/bin/aocd"));
         for lib in AOC_LIBS {
             let dst = format!("{AOC_LIB}/{lib}.so");
-            let src = format!("{OTG_MNT_VENDOR}/lib64/{lib}.so");
+            let src = format!("{mnt}/lib64/{lib}.so");
             copy_if_src(&dst, &src);
         }
-        umount(OTG_MNT_VENDOR);
+        umount(mnt);
         use std::os::unix::fs::PermissionsExt;
         if let Ok(md) = std::fs::metadata(AOCD_BIN) {
             let mut perm = md.permissions();
