@@ -69,12 +69,27 @@ const OTG_USB_LINK: &str = "/dev/block/otg-usb";
 /// charger). Missing files are skipped LOUDLY (non-Samsung trees lack them).
 /// gs101 PHY is `phy-exynos-usbdrd-super` (gs101_defconfig:209, no EUSB
 /// variant) — NOT zuma's `phy-exynos-usbdrd-eusb-super`.
+/// xhci/AoC tail (field-proven necessity, 8.13 raven flog): host role
+/// switch probes `xhci-hcd-exynos`, whose probe FAILS with -EINVAL
+/// (`Offload hooks or init function is null!`, xhci-exynos.c:647-655)
+/// unless `aoc_usb_driver.ko` registered its ops — its module_init calls
+/// xhci_offload_helper_init() unconditionally, before aoc_driver_register
+/// (aoc_usb_dev.c:421-431; hooks impl in xhci_hooks_impl_whi.c:389-401,
+/// linked into aoc_usb_driver via Kbuild:13). The stock gs101 ramdisk
+/// list has no aoc_usb_driver (only aoc_core/char/control), so first-stage
+/// never loads it and host mode can never enumerate without this preload.
+/// Order: xhci driver -> mailbox -> aoc_core -> aoc_usb_driver (hooks land
+/// at insmod, long before the role switch probes xhci).
 const STOCK_USB_CHAIN: &[&str] = &[
     "gvotable",
     "usb_psy",
     "max77759_helper",
     "phy-exynos-usbdrd-super",
     "dwc3-exynos-usb",
+    "xhci-exynos",
+    "mailbox-wc",
+    "aoc_core",
+    "aoc_usb_driver",
     "google_tcpci_shim",
     "tcpci_max77759",
     "google-charger",
@@ -247,12 +262,17 @@ pub fn run_otg_patch() -> Result<(), String> {
     }
     let glue = Path::new(OTG_ID).exists();
     info(&format!(
-        "chain done (all_found={chain_ok}): OTG_ID node {}, CHARGER_MODE voter {}",
+        "chain done (all_found={chain_ok}): OTG_ID node {}, CHARGER_MODE voter {}, xhci hooks {}",
         if glue { "present" } else { "MISSING" },
         if Path::new(CHARGER_VALUE).exists() {
             "present"
         } else {
             "MISSING"
+        },
+        if Path::new("/sys/module/aoc_usb_driver").exists() {
+            "registered (aoc_usb_driver loaded)"
+        } else {
+            "MISSING (xhci host probe will fail -22)"
         }
     ));
 
@@ -501,6 +521,20 @@ mod tests {
         assert!(pos("google_tcpci_shim") < pos("tcpci_max77759"));
         assert!(pos("tcpci_max77759") < pos("google-charger"));
         assert!(pos("max77759_helper") < pos("tcpci_max77759"));
+    }
+
+    #[test]
+    fn xhci_hooks_chain_order_holds() {
+        // xhci probe at role-switch time needs aoc_usb_driver's ops
+        // (xhci-exynos.c:647-655); hooks register at insmod
+        // (aoc_usb_dev.c:421-431), so the AoC tail must come after the
+        // glue and before any host switch: mailbox -> core -> usb driver.
+        let pos = |m: &str| chain_pos(m).expect(m);
+        assert!(pos("dwc3-exynos-usb") < pos("xhci-exynos"));
+        assert!(pos("xhci-exynos") < pos("mailbox-wc"));
+        assert!(pos("mailbox-wc") < pos("aoc_core"));
+        assert!(pos("aoc_core") < pos("aoc_usb_driver"));
+        assert!(pos("aoc_usb_driver") < pos("tcpci_max77759"));
     }
 
     #[test]
