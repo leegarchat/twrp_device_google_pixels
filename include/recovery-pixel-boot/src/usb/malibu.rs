@@ -75,6 +75,7 @@
 //! touch UDC, gadget, role or voter state — TCPC + role-sw negotiate modes
 //! on their own).
 
+use crate::boot::fetch_stock_modules;
 use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg};
 use crate::props::{get_prop, set_prop};
 use std::ffi::CString;
@@ -148,13 +149,6 @@ const OTG_USB_LINK: &str = "/dev/block/otg-usb";
 const AOCD_SETTLE_SECS: u64 = 4;
 /// Supervisor tick (P11 `:82`: `sleep 3`).
 const TICK_SECS: u64 = 3;
-/// Patch-time staging retries: dm-mapper nodes appear late (P11 `:25-26`,
-/// retried from the loop until they appear).
-const STAGE_ATTEMPTS: u32 = 10;
-/// Patch-time bounded `aocd` relaunch attempts (P11 `:60-63` relaunches a
-/// fresh instance until `usb_control` appears; bounded here so the oneshot
-/// patch terminates — the daemon keeps retrying afterwards).
-const AOCD_ATTEMPTS: u32 = 6;
 
 fn info(msg: &str) {
     log_msg(TAG, "INFO", msg);
@@ -267,6 +261,109 @@ fn staged() -> bool {
     Path::new(RAM_AOCD).is_file() && Path::new(RAM_KO).is_file()
 }
 
+/// argv builder for `siw connect` (pure, testable): loop-device mapping
+/// that bypasses device-mapper entirely. Unknown slot reads as None
+/// (no unbounded recursion across daemon ticks).
+fn siw_connect_args(base: &str, slot: &str) -> Option<Vec<String>> {
+    let num = match slot {
+        "_a" => "0",
+        "_b" => "1",
+        _ => return None,
+    };
+    Some(vec![
+        "connect".to_string(),
+        "/dev/block/by-name/super".to_string(),
+        "-p".to_string(),
+        base.to_string(),
+        "--suffix".to_string(),
+        slot.trim_start_matches('_').to_string(),
+        "-s".to_string(),
+        num.to_string(),
+    ])
+}
+
+/// Loop node (`/dev/loopN`) from `siw connect` output (pure, testable).
+fn parse_loop_node(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|tok| {
+        let t = tok.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/');
+        let t = t.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+        let rest = t.strip_prefix("/dev/loop")?;
+        (!rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())).then(|| t.to_string())
+    })
+}
+
+/// Loop-device mapping fallback (`siw connect`) for when dm mapping yields
+/// no usable node (seen live on laguna: `siw map` exits 0 but creates
+/// nothing for vendor). Returns the /dev/loopN node — caller mounts ro,
+/// copies, umounts, then MUST call [`siw_disconnect`]. Best-effort + loud.
+fn siw_connect_node(base: &str, slot: &str) -> Option<String> {
+    let args = match siw_connect_args(base, slot) {
+        Some(a) => a,
+        None => {
+            info(&format!("siw connect: unknown slot suffix {slot:?}, skipped"));
+            return None;
+        }
+    };
+    info(&format!("siw connect: mapping {base} (slot {slot}) via loop device"));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match std::process::Command::new("/system/bin/siw")
+        .args(&arg_refs)
+        .output()
+    {
+        Ok(out) => {
+            let combined = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            match parse_loop_node(&combined) {
+                Some(node) if Path::new(&node).exists() => {
+                    info(&format!("siw connect: {node} for {base}"));
+                    Some(node)
+                }
+                Some(node) => {
+                    info(&format!("siw connect: parsed {node} but node absent"));
+                    None
+                }
+                None => {
+                    info(&format!("siw connect {base} FAILED: status={}", out.status));
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            info(&format!("siw connect: cannot run /system/bin/siw: {e}"));
+            None
+        }
+    }
+}
+
+/// Release a loop device created by [`siw_connect_node`] (best-effort).
+fn siw_disconnect(base: &str, slot: &str) {
+    let (num, sfx) = match slot {
+        "_a" => ("0", "a"),
+        "_b" => ("1", "b"),
+        _ => return,
+    };
+    match std::process::Command::new("/system/bin/siw")
+        .args([
+            "disconnect",
+            "/dev/block/by-name/super",
+            "-p",
+            base,
+            "--suffix",
+            sfx,
+            "-s",
+            num,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() => info(&format!("siw disconnect: {base} released")),
+        Ok(out) => info(&format!("siw disconnect {base} warning: status={}", out.status)),
+        Err(e) => info(&format!("siw disconnect: cannot run siw: {e}")),
+    }
+}
+
 /// Mapper node path, mirroring `siw map` naming (`-p vendor_dlkm
 /// --suffix b` -> `/dev/block/mapper/vendor_dlkm_b`, field-proven on
 /// laguna). Pure (testable).
@@ -329,9 +426,12 @@ fn siw_map(base: &str, slot: &str) -> bool {
 }
 
 /// Copy the AoC runtime out of the live vendor/vendor_dlkm into RAM
-/// (P11 `:27-42`). `/dev/block/by-name/vendor` (unsuffixed = current
-/// slot, first-stage pre-mapped, field-proven on laguna) wins — no slot
-/// logic, no siw involved; the siw-created mapper mount is the fallback.
+/// (P11 `:27-42`). Mount sources, richest first: pre-mapped
+/// `/dev/block/by-name/vendor` (unsuffixed = current slot, first-stage
+/// mapped — no slot logic, no siw), siw dm-mapper node, siw loop device.
+/// KO additionally comes from ko_stage / first-stage ramdisk / the
+/// standard ko-fetch mechanism before any mount. Second-stage-proof:
+/// whatever first-stage normalized (or didn't), one source works.
 fn stage_aoc(slot: &str) -> bool {
     if staged() {
         return true;
@@ -347,7 +447,30 @@ fn stage_aoc(slot: &str) -> bool {
             }
         }
     }
+    if !Path::new(RAM_KO).is_file() && Path::new("/lib/modules/aoc_usb_driver.ko").is_file() {
+        match std::fs::copy("/lib/modules/aoc_usb_driver.ko", RAM_KO) {
+            Ok(_) => info("staged module from first-stage ramdisk"),
+            Err(e) => info(&format!("stage: first-stage copy FAILED: {e}")),
+        }
+    }
+    // Standard mechanism (ko-fetch shell stage: siw|iw stream, map+mount
+    // +loop-connect fallback, both slots) — one mechanism for touch and
+    // OTG instead of two; ko-fetch also (re)populates ko_stage.
+    if !Path::new(RAM_KO).is_file()
+        && fetch_stock_modules("vendor_dlkm", &["aoc_usb_driver".to_string()])
+    {
+        for sfx in ["_a", "_b"] {
+            let cand = format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko");
+            if !Path::new(RAM_KO).is_file() && Path::new(&cand).is_file() {
+                let _ = std::fs::copy(&cand, RAM_KO);
+            }
+        }
+        if Path::new(RAM_KO).is_file() {
+            info("staged module via standard ko-fetch");
+        }
+    }
     let _ = std::fs::create_dir_all(RAM_DIR);
+    let mut vendor_loop: Option<String> = None;
     let mut vendor_mnt: Option<&str> = None;
     if !Path::new(RAM_AOCD).is_file() {
         if mount_ro("/dev/block/by-name/vendor", MNT_VENDOR) {
@@ -357,6 +480,14 @@ fn stage_aoc(slot: &str) -> bool {
             && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
         {
             vendor_mnt = Some(MNT_VENDOR);
+        } else if let Some(loopnode) = siw_connect_node("vendor", slot) {
+            if mount_ro(&loopnode, MNT_VENDOR) {
+                info("vendor via siw loop device");
+                vendor_mnt = Some(MNT_VENDOR);
+                vendor_loop = Some(loopnode);
+            } else {
+                siw_disconnect("vendor", slot);
+            }
         }
     }
     if let Some(mnt) = vendor_mnt {
@@ -377,22 +508,44 @@ fn stage_aoc(slot: &str) -> bool {
             info("stage: aocd copy FAILED (vendor not ready?)");
         }
         umount(mnt);
-    }
-    if !Path::new(RAM_KO).is_file()
-        && siw_map("vendor_dlkm", slot)
-        && mount_ro(&format!("{MAP_VDLKM}{slot}"), MNT_VDLKM)
-    {
-        let mut hits = Vec::new();
-        find_named(Path::new(MNT_VDLKM), "aoc_usb_driver.ko", &mut hits);
-        match hits.first() {
-            Some(ko) => {
-                if std::fs::copy(ko, RAM_KO).is_ok() {
-                    info(&format!("staged module from {}", ko.display()));
-                }
-            }
-            None => info("stage: aoc_usb_driver.ko NOT found on vendor_dlkm"),
+        if vendor_loop.is_some() {
+            siw_disconnect("vendor", slot);
         }
-        umount(MNT_VDLKM);
+    }
+    // KO from the vendor_dlkm image: dm-mapper mount first (proven for
+    // dlkm — touch maps it daily), siw loop device as fallback.
+    if !Path::new(RAM_KO).is_file() {
+        let mut dlkm_loop: Option<String> = None;
+        let mut dlkm_mnt: Option<&str> = None;
+        if siw_map("vendor_dlkm", slot)
+            && mount_ro(&format!("{MAP_VDLKM}{slot}"), MNT_VDLKM)
+        {
+            dlkm_mnt = Some(MNT_VDLKM);
+        } else if let Some(loopnode) = siw_connect_node("vendor_dlkm", slot) {
+            if mount_ro(&loopnode, MNT_VDLKM) {
+                info("vendor_dlkm via siw loop device");
+                dlkm_mnt = Some(MNT_VDLKM);
+                dlkm_loop = Some(loopnode);
+            } else {
+                siw_disconnect("vendor_dlkm", slot);
+            }
+        }
+        if let Some(mnt) = dlkm_mnt {
+            let mut hits = Vec::new();
+            find_named(Path::new(mnt), "aoc_usb_driver.ko", &mut hits);
+            match hits.first() {
+                Some(ko) => {
+                    if std::fs::copy(ko, RAM_KO).is_ok() {
+                        info(&format!("staged module from {}", ko.display()));
+                    }
+                }
+                None => info("stage: aoc_usb_driver.ko NOT found on vendor_dlkm"),
+            }
+            umount(mnt);
+            if dlkm_loop.is_some() {
+                siw_disconnect("vendor_dlkm", slot);
+            }
+        }
     }
     staged()
 }
@@ -697,10 +850,12 @@ fn keep_vote_alive(voted: &mut bool) {
     }
 }
 
-/// otg-patch (oneshot, service `otg_enable`): stage the stock AoC runtime
-/// into RAM → insmod once → bounded `aocd` relaunch until the `usb_control`
-/// vote is live → `sys.usb.patch_dwc3=1` (gates `otg_auto`). `0` + `Err`
-/// otherwise: device mode survives, adb safe.
+/// otg-patch (oneshot, service `otg_enable`): fast steps only (one
+/// sleep-free staging attempt), then releases the supervisor. Heavy
+/// staging + vote are SECOND-STAGE work (rc daemon, normalized env) —
+/// this oneshot runs before by-name/dm nodes exist. Sets
+/// `sys.usb.patch_dwc3=1` to start `otg_auto`, which owns host state
+/// from there; device mode (adb) always survives regardless.
 pub fn run_otg_patch() -> Result<(), String> {
     info("starting OTG patch routine (malibu: stage AoC runtime + vote)");
     // ONLY 6.12 exists on malibu; anything else is unverified → fail closed.
@@ -723,65 +878,22 @@ pub fn run_otg_patch() -> Result<(), String> {
         }
     }
 
-    // 1. Stage aocd + 6 libs + module into tmpfs (dm-mapper nodes appear
-    // late — retry bounded; the daemon retries forever afterwards).
+    // AoC staging is SECOND-STAGE work (rc daemon, normalized env):
+    // this oneshot runs before by-name/dm nodes exist, so bounded retries
+    // here only delay boot and still fail. One fast attempt now
+    // (ko_stage + first-stage ramdisk + standard ko-fetch are already
+    // visible — stage_aoc never sleeps), then release otg_auto: the
+    // supervisor retries staging + vote forever and owns host state.
+    // No i2c TCPC patch by design (SPMI bus — see module docs).
     let slot = slot_suffix();
     info(&format!("slot suffix: {slot:?}"));
-    let mut ok = false;
-    for attempt in 0..STAGE_ATTEMPTS {
-        if stage_aoc(&slot) {
-            ok = true;
-            break;
-        }
-        info(&format!(
-            "staging pending (attempt {}/{STAGE_ATTEMPTS}, vendor nodes late?)",
-            attempt + 1
-        ));
-        sleep(Duration::from_secs(TICK_SECS));
+    if stage_aoc(&slot) {
+        info("staged aocd + libs + module into RAM (fast path)");
+    } else {
+        info("staging deferred to otg-auto supervisor (second stage)");
     }
-    if !ok {
-        info("staging FAILED: staying in device mode");
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        return Err("malibu otg: staging failed".into());
-    }
-    info("staged aocd + 6 libs + module into RAM");
-
-    // 2. Module into the kernel (once; first-stage already loaded aoc_core
-    // + gvotable, its dep providers).
-    if !ensure_module() {
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        return Err("malibu otg: aoc_usb_driver load failed".into());
-    }
-
-    // 3. The vote: relaunch flaky aocd until usb_control appears (bounded —
-    // the daemon keeps this alive afterwards).
-    let mut voted = usb_control_live();
-    for _ in 0..AOCD_ATTEMPTS {
-        keep_vote_alive(&mut voted);
-        if voted {
-            break;
-        }
-        sleep(Duration::from_secs(TICK_SECS));
-    }
-    if !voted {
-        info("AoC vote NOT live after bounded relaunches: staying in device mode");
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        return Err("malibu otg: aoc vote not live".into());
-    }
-
-    // 4. Report the host predicate (role AND sourced VBUS — never role
-    // alone). At boot with no accessory attached this is normally
-    // device/offline; the live vote above is what serves a later attach,
-    // so it only informs the log here.
-    info(&format!(
-        "vote live: data_role={:?} source_online={:?} host_active={}",
-        read_data_role(),
-        read_source_online(),
-        host_active()
-    ));
-    // No i2c TCPC patch by design (SPMI bus — see module docs).
     set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
-    info("OTG patch routine finished, sys.usb.patch_dwc3=1");
+    info("OTG patch routine finished, supervisor released (sys.usb.patch_dwc3=1)");
     Ok(())
 }
 
@@ -880,6 +992,29 @@ mod tests {
         assert_eq!(mapper_node("vendor", "_b"), "/dev/block/mapper/vendor_b");
         assert_eq!(mapper_node("vendor_dlkm", "_b"), "/dev/block/mapper/vendor_dlkm_b");
         assert_eq!(mapper_node("vendor", "_a"), "/dev/block/mapper/vendor_a");
+    }
+
+    #[test]
+    fn siw_connect_args_cover_both_slots() {
+        let a = siw_connect_args("vendor", "_a").unwrap();
+        assert_eq!(a[0], "connect");
+        assert!(a.contains(&"vendor".to_string()));
+        assert!(a.contains(&"a".to_string()));
+        assert!(a.contains(&"0".to_string()));
+        let b = siw_connect_args("vendor_dlkm", "_b").unwrap();
+        assert!(b.contains(&"1".to_string()));
+        assert!(siw_connect_args("vendor", "").is_none());
+    }
+
+    #[test]
+    fn loop_node_parsed_from_chatter() {
+        assert_eq!(
+            parse_loop_node("Created /dev/loop0 for vendor_b"),
+            Some("/dev/loop0".to_string())
+        );
+        assert_eq!(parse_loop_node("/dev/loop12"), Some("/dev/loop12".to_string()));
+        assert_eq!(parse_loop_node("error: no such partition"), None);
+        assert_eq!(parse_loop_node(""), None);
     }
 
     #[test]

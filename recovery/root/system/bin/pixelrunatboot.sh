@@ -134,6 +134,47 @@ _siw_map_copy() {
     [ "$_n" -gt 0 ]
 }
 
+# --- siw connect (loop device) + mount + copy fallback ----------------------
+# _siw_connect_copy <partbase> <suffix-a|b> <slotnum> <subdir> <outdir> <findname>
+# Loop-device mapping for when device-mapper mapping yields no usable node
+# (seen live: `siw map` exits 0 but creates nothing for vendor; loop
+# devices bypass device-mapper entirely). Copies matching files to outdir,
+# prints staged paths. Returns 0 if >=1. Always disconnects the loop node.
+_siw_connect_copy() {
+    local _part="$1" _sfx="$2" _slot="$3" _subdir="$4" _outdir="$5" _fname="$6"
+    local _loop _mnt _n _f _base
+    if [ ! -x "$SIW" ]; then
+        plog "siw-connect" "binary missing: $SIW"
+        return 1
+    fi
+    _loop=$("$SIW" connect "$SUPER" -p "$_part" --suffix "$_sfx" -s "$_slot" 2>>"$LOGF" | grep -o '/dev/loop[0-9][0-9]*' | head -1)
+    if [ -z "$_loop" ] || [ ! -b "$_loop" ]; then
+        plog "siw-connect" "no loop node for ${_part} suffix=${_sfx} slot=${_slot}"
+        return 1
+    fi
+    plog "siw-connect" "loop node $_loop for ${_part}_${_sfx}"
+    _mnt="/dev/stage_mnt_$$"
+    mkdir -p "$_mnt"
+    _n=0
+    if mount -r "$_loop" "$_mnt" 2>>"$LOGF"; then
+        mkdir -p "$_outdir" 2>/dev/null
+        for _f in $(find "$_mnt/$_subdir" -maxdepth 3 -type f -name "$_fname" 2>/dev/null); do
+            _base=$(basename "$_f")
+            if cp -f "$_f" "$_outdir/$_base" 2>>"$LOGF"; then
+                echo "$_outdir/$_base"
+                _n=$((_n + 1))
+            fi
+        done
+        umount "$_mnt" 2>/dev/null
+    else
+        plog "siw-connect" "mount failed: $_loop"
+    fi
+    rmdir "$_mnt" 2>/dev/null
+    "$SIW" disconnect "$SUPER" -p "$_part" --suffix "$_sfx" -s "$_slot" >>"$LOGF" 2>&1 \
+        || plog "siw-connect" "disconnect warning for ${_part}_${_sfx}"
+    [ "$_n" -gt 0 ]
+}
+
 case "$1" in
     props-apply)
         # props-apply <family> <key=value>...
@@ -185,6 +226,11 @@ case "$1" in
         fi
         # Fallback: siw map + mount + find + cp.
         if _siw_map_copy "$_part" "_${_sfx}" "$_slot" "" "$_out" '*.ko'; then
+            exit 0
+        fi
+        # Fallback 2: siw connect (loop device) + mount + find + cp.
+        # Covers dm-mapping yielding no usable node.
+        if _siw_connect_copy "$_part" "$_sfx" "$_slot" "" "$_out" '*.ko'; then
             exit 0
         fi
         plog "ko-fetch" "all methods failed: ${_part}_${_sfx}"

@@ -139,6 +139,37 @@ fn check_modules_loaded(modules: &[String]) -> bool {
     }
 }
 
+/// Standard stock-module fetch+load through the ko-fetch shell stage
+/// (siw|iw stream with map+mount+loop-connect fallback, both slots).
+/// Shared by touch init and USB/OTG staging — one mechanism, not two:
+/// call this first, mount-hunt only for non-.ko files (aocd/libs) that
+/// ko-fetch cannot carry. `part` is the LP base ("vendor_dlkm"),
+/// `modules` the .ko basenames (either dash spelling).
+/// Fast no-op when everything is already loaded (first-stage autoload),
+/// so daemons can call it every tick without re-streaming images.
+pub(crate) fn fetch_stock_modules(part: &str, modules: &[String]) -> bool {
+    if modules
+        .iter()
+        .map(|m| m.replace('-', "_"))
+        .all(|n| is_module_loaded(&n))
+    {
+        return true;
+    }
+    let (suffix, unsuffix, slot, unslot) = detect_slots();
+    let sfx = suffix.trim_start_matches('_');
+    let usfx = unsuffix.trim_start_matches('_');
+    if !sfx.is_empty() && try_slot(part, sfx, &slot, modules) {
+        return true;
+    }
+    if !usfx.is_empty() && try_slot(part, usfx, &unslot, modules) {
+        return true;
+    }
+    modules
+        .iter()
+        .map(|m| m.replace('-', "_"))
+        .all(|n| is_module_loaded(&n))
+}
+
 /// Fetch .ko staging for one slot via siw|iw (shell stage), load wanted ones.
 /// Returns true when nothing is missing afterwards.
 fn try_slot(part: &str, sfx: &str, slotnum: &str, modules: &[String]) -> bool {

@@ -34,6 +34,7 @@
 //! - Stock trees without the Samsung DLKM set stay well-behaved devices
 //!   (adb safe) instead of pretending host works.
 
+use crate::boot::fetch_stock_modules;
 use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{
     detect_kernel_env, find_candidates, is_module_loaded, ko_try_load,
@@ -223,11 +224,115 @@ fn mount_ro(src: &str, dst: &str) -> bool {
     rc == 0
 }
 
-/// Last-resort hunt for `aoc_usb_driver.ko`: first the touch system's
-/// ko_stage (siw-streamed vendor_dlkm .ko, both slots), then the live
-/// `/vendor` image — `/dev/block/by-name/vendor` first (unsuffixed =
-/// current slot, first-stage pre-mapped; siw map on vendor is a dead end,
-/// field-proven on laguna), siw-created mapper mount as fallback.
+/// argv builder for `siw connect` (pure, testable): loop-device mapping
+/// that bypasses device-mapper entirely. Unknown slot reads as None
+/// (no unbounded recursion across daemon ticks).
+fn siw_connect_args(base: &str, slot: &str) -> Option<Vec<String>> {
+    let num = match slot {
+        "_a" => "0",
+        "_b" => "1",
+        _ => return None,
+    };
+    Some(vec![
+        "connect".to_string(),
+        "/dev/block/by-name/super".to_string(),
+        "-p".to_string(),
+        base.to_string(),
+        "--suffix".to_string(),
+        slot.trim_start_matches('_').to_string(),
+        "-s".to_string(),
+        num.to_string(),
+    ])
+}
+
+/// Loop node (`/dev/loopN`) from `siw connect` output (pure, testable).
+fn parse_loop_node(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|tok| {
+        let t = tok.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/');
+        let t = t.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+        let rest = t.strip_prefix("/dev/loop")?;
+        (!rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())).then(|| t.to_string())
+    })
+}
+
+/// Loop-device mapping fallback (`siw connect`) for when dm mapping yields
+/// no usable node (seen live: `siw map` exits 0 but creates nothing for
+/// vendor). Returns the /dev/loopN node — caller mounts ro, copies,
+/// umounts, then MUST call [`siw_disconnect`]. Best-effort + loud.
+fn siw_connect_node(base: &str, slot: &str) -> Option<String> {
+    let args = match siw_connect_args(base, slot) {
+        Some(a) => a,
+        None => {
+            info(&format!("siw connect: unknown slot suffix {slot:?}, skipped"));
+            return None;
+        }
+    };
+    info(&format!("siw connect: mapping {base} (slot {slot}) via loop device"));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match std::process::Command::new("/system/bin/siw")
+        .args(&arg_refs)
+        .output()
+    {
+        Ok(out) => {
+            let combined = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            match parse_loop_node(&combined) {
+                Some(node) if Path::new(&node).exists() => {
+                    info(&format!("siw connect: {node} for {base}"));
+                    Some(node)
+                }
+                Some(node) => {
+                    info(&format!("siw connect: parsed {node} but node absent"));
+                    None
+                }
+                None => {
+                    info(&format!("siw connect {base} FAILED: status={}", out.status));
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            info(&format!("siw connect: cannot run /system/bin/siw: {e}"));
+            None
+        }
+    }
+}
+
+/// Release a loop device created by [`siw_connect_node`] (best-effort).
+fn siw_disconnect(base: &str, slot: &str) {
+    let (num, sfx) = match slot {
+        "_a" => ("0", "a"),
+        "_b" => ("1", "b"),
+        _ => return,
+    };
+    match std::process::Command::new("/system/bin/siw")
+        .args([
+            "disconnect",
+            "/dev/block/by-name/super",
+            "-p",
+            base,
+            "--suffix",
+            sfx,
+            "-s",
+            num,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() => info(&format!("siw disconnect: {base} released")),
+        Ok(out) => info(&format!("siw disconnect {base} warning: status={}", out.status)),
+        Err(e) => info(&format!("siw disconnect: cannot run siw: {e}")),
+    }
+}
+
+/// Last-resort hunt for `aoc_usb_driver.ko`: ko_stage first, then the
+/// standard ko-fetch mechanism (siw|iw stream, map+mount+loop fallback),
+/// then the live `/vendor` image — `/dev/block/by-name/vendor` first
+/// (unsuffixed = current slot, first-stage pre-mapped; siw map on vendor
+/// is a dead end, field-proven on laguna), siw mapper and siw loop mounts
+/// as fallbacks.
 /// Mounted ro under a private dir, unmounted after; insmod straight from
 /// the mount (a loaded module never needs the file again). Returns true
 /// when the hooks provider is loaded afterwards.
@@ -247,9 +352,18 @@ fn load_aoc_from_vendor() -> bool {
             }
         }
     }
+    // Standard mechanism (ko-fetch shell stage) for the KO — one mechanism
+    // for touch and OTG instead of two. No-op when already loaded.
+    if fetch_stock_modules("vendor_dlkm", &["aoc_usb_driver".to_string()]) {
+        info("aoc_usb_driver via standard ko-fetch (xhci hooks live)");
+        return true;
+    }
     const MNT: &str = "/dev/otg_mnt_vendor";
     let slot = slot_suffix();
     let _ = std::fs::create_dir_all(MNT);
+    // True when MNT currently holds a loop-device mount (needs
+    // siw_disconnect after umount); by-name/dm mounts need no release.
+    let mut from_loop = false;
     if mount_ro("/dev/block/by-name/vendor", MNT) {
         info("aoc hunt: vendor via by-name (first-stage mapped)");
     } else {
@@ -263,7 +377,18 @@ fn load_aoc_from_vendor() -> bool {
             siw_mounted = mount_ro(&node, MNT);
         }
         if !siw_mounted {
-            info("aoc hunt: vendor mount FAILED (by-name and siw)");
+            if let Some(loopnode) = siw_connect_node("vendor", &slot) {
+                if mount_ro(&loopnode, MNT) {
+                    info("aoc hunt: vendor via siw loop device");
+                    siw_mounted = true;
+                    from_loop = true;
+                } else {
+                    siw_disconnect("vendor", &slot);
+                }
+            }
+        }
+        if !siw_mounted {
+            info("aoc hunt: vendor mount FAILED (by-name, siw map and loop)");
             return false;
         }
     }
@@ -303,6 +428,9 @@ fn load_aoc_from_vendor() -> bool {
     // SAFETY: MNT is a valid NUL-terminated C string; umount(2) failure ignored.
     unsafe {
         libc::umount(b"/dev/otg_mnt_vendor\0".as_ptr() as *const libc::c_char);
+    }
+    if from_loop {
+        siw_disconnect("vendor", &slot);
     }
     ok
 }
@@ -762,6 +890,29 @@ mod tests {
         );
         let empty: Vec<String> = Vec::new();
         assert_eq!(pick_role_entry(&empty), None);
+    }
+
+    #[test]
+    fn siw_connect_args_cover_both_slots() {
+        let a = siw_connect_args("vendor", "_a").unwrap();
+        assert_eq!(a[0], "connect");
+        assert!(a.contains(&"vendor".to_string()));
+        assert!(a.contains(&"a".to_string()));
+        assert!(a.contains(&"0".to_string()));
+        let b = siw_connect_args("vendor_dlkm", "_b").unwrap();
+        assert!(b.contains(&"1".to_string()));
+        assert!(siw_connect_args("vendor", "").is_none());
+    }
+
+    #[test]
+    fn loop_node_parsed_from_chatter() {
+        assert_eq!(
+            parse_loop_node("Created /dev/loop0 for vendor_b"),
+            Some("/dev/loop0".to_string())
+        );
+        assert_eq!(parse_loop_node("/dev/loop3"), Some("/dev/loop3".to_string()));
+        assert_eq!(parse_loop_node("error: no such partition"), None);
+        assert_eq!(parse_loop_node(""), None);
     }
 
     #[test]

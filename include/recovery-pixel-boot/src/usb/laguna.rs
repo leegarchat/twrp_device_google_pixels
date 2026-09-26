@@ -80,6 +80,7 @@
 //! symlink maintenance, and parks (never exits) — an exiting non-oneshot
 //! service would respawn-loop.
 
+use crate::boot::fetch_stock_modules;
 use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{
     detect_kernel_env, is_module_loaded, load_kernel_module, log_msg,
@@ -518,6 +519,131 @@ fn siw_map(base: &str, slot: &str) -> bool {
     }
 }
 
+/// argv builder for `siw connect` (pure, testable): loop-device mapping
+/// that bypasses device-mapper entirely. Used when `siw map` yields no
+/// usable node. Unknown slot reads as None (caller skips: unbounded
+/// both-slot recursion could leak loop devices across daemon ticks).
+fn siw_connect_args(base: &str, slot: &str) -> Option<Vec<String>> {
+    let num = match slot {
+        "_a" => "0",
+        "_b" => "1",
+        _ => return None,
+    };
+    Some(vec![
+        "connect".to_string(),
+        "/dev/block/by-name/super".to_string(),
+        "-p".to_string(),
+        base.to_string(),
+        "--suffix".to_string(),
+        slot.trim_start_matches('_').to_string(),
+        "-s".to_string(),
+        num.to_string(),
+    ])
+}
+
+/// Loop node (`/dev/loopN`) from `siw connect` output (pure, testable).
+/// The tool prints human text around the node; scan whitespace tokens.
+fn parse_loop_node(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|tok| {
+        let t = tok.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/');
+        let t = t.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+        let rest = t.strip_prefix("/dev/loop")?;
+        (!rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())).then(|| t.to_string())
+    })
+}
+
+/// Loop-device mapping fallback (`siw connect`) for when dm mapping yields
+/// no usable node (seen live: `siw map` exits 0 but creates nothing for
+/// vendor). Returns the /dev/loopN node — caller mounts ro, copies,
+/// umounts, then MUST call [`siw_disconnect`]. Best-effort + loud.
+fn siw_connect_node(base: &str, slot: &str) -> Option<String> {
+    let args = match siw_connect_args(base, slot) {
+        Some(a) => a,
+        None => {
+            info(&format!("siw connect: unknown slot suffix {slot:?}, skipped"));
+            return None;
+        }
+    };
+    info(&format!("siw connect: mapping {base} (slot {slot}) via loop device"));
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match std::process::Command::new("/system/bin/siw")
+        .args(&arg_refs)
+        .output()
+    {
+        Ok(out) => {
+            let combined = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            match parse_loop_node(&combined) {
+                Some(node) if Path::new(&node).exists() => {
+                    info(&format!("siw connect: {node} for {base}"));
+                    Some(node)
+                }
+                Some(node) => {
+                    info(&format!("siw connect: parsed {node} but node absent"));
+                    None
+                }
+                None => {
+                    info(&format!("siw connect {base} FAILED: status={}", out.status));
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            info(&format!("siw connect: cannot run /system/bin/siw: {e}"));
+            None
+        }
+    }
+}
+
+/// Release a loop device created by [`siw_connect_node`] (best-effort).
+fn siw_disconnect(base: &str, slot: &str) {
+    let (num, sfx) = match slot {
+        "_a" => ("0", "a"),
+        "_b" => ("1", "b"),
+        _ => return,
+    };
+    match std::process::Command::new("/system/bin/siw")
+        .args([
+            "disconnect",
+            "/dev/block/by-name/super",
+            "-p",
+            base,
+            "--suffix",
+            sfx,
+            "-s",
+            num,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() => info(&format!("siw disconnect: {base} released")),
+        Ok(out) => info(&format!("siw disconnect {base} warning: status={}", out.status)),
+        Err(e) => info(&format!("siw disconnect: cannot run siw: {e}")),
+    }
+}
+
+/// First `$name` file under `root` (recursive, shell `find $MD -name …
+/// | head -1` equivalent). Pure filesystem walk.
+fn find_file_under(root: &Path, name: &str) -> Option<PathBuf> {
+    let mut stack: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    while let Some(p) = stack.pop() {
+        if p.is_dir() {
+            if let Ok(inner) = std::fs::read_dir(&p) {
+                stack.extend(inner.flatten().map(|e| e.path()));
+            }
+        } else if p.file_name().map(|n| n == name).unwrap_or(false) {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// Stage the AoC runtime into tmpfs so a later vendor unmount cannot pull
 /// it out from under the running daemon (P11 `otg_yogi.sh:10-13`).
 /// Tries already-mounted `/vendor` (+ `/vendor_dlkm`, `/lib/modules`)
@@ -545,6 +671,20 @@ fn stage_aoc() -> bool {
             &format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko"),
         );
     }
+    // Standard mechanism (ko-fetch shell stage: siw|iw stream, map+mount
+    // +loop-connect fallback, both slots) for the KO — one mechanism for
+    // touch and OTG instead of two. No-op when first-stage autoloaded it;
+    // ko-fetch also (re)populates ko_stage, so pick the file up again.
+    if !Path::new(AOC_KO).is_file()
+        && fetch_stock_modules("vendor_dlkm", &["aoc_usb_driver".to_string()])
+    {
+        for sfx in ["_a", "_b"] {
+            copy_if_src(
+                AOC_KO,
+                &format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko"),
+            );
+        }
+    }
     if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
         return true;
     }
@@ -557,12 +697,21 @@ fn stage_aoc() -> bool {
     let mapped_vendor = format!("/dev/block/mapper/vendor{slot}");
     let mapped_dlkm = format!("/dev/block/mapper/vendor_dlkm{slot}");
     let mut vendor_mnt: Option<&str> = None;
+    let mut vendor_loop: Option<String> = None;
     if !Path::new(AOCD_BIN).is_file() {
         if mount_ro("/dev/block/by-name/vendor", OTG_MNT_VENDOR) {
             info("vendor via by-name (first-stage mapped)");
             vendor_mnt = Some(OTG_MNT_VENDOR);
         } else if siw_map("vendor", &slot) && mount_ro(&mapped_vendor, OTG_MNT_VENDOR) {
             vendor_mnt = Some(OTG_MNT_VENDOR);
+        } else if let Some(loopnode) = siw_connect_node("vendor", &slot) {
+            if mount_ro(&loopnode, OTG_MNT_VENDOR) {
+                info("vendor via siw loop device");
+                vendor_mnt = Some(OTG_MNT_VENDOR);
+                vendor_loop = Some(loopnode);
+            } else {
+                siw_disconnect("vendor", &slot);
+            }
         }
     }
     if let Some(mnt) = vendor_mnt {
@@ -573,6 +722,9 @@ fn stage_aoc() -> bool {
             copy_if_src(&dst, &src);
         }
         umount(mnt);
+        if vendor_loop.is_some() {
+            siw_disconnect("vendor", &slot);
+        }
         use std::os::unix::fs::PermissionsExt;
         if let Ok(md) = std::fs::metadata(AOCD_BIN) {
             let mut perm = md.permissions();
@@ -580,36 +732,32 @@ fn stage_aoc() -> bool {
             let _ = std::fs::set_permissions(AOCD_BIN, perm);
         }
     }
-    if !Path::new(AOC_KO).is_file()
-        && siw_map("vendor_dlkm", &slot)
-        && mount_ro(&mapped_dlkm, OTG_MNT_VDLKM)
-    {
-        // `find $MD -name aoc_usb_driver.ko | head -1` in shell.
-        let mut found: Option<PathBuf> = None;
-        if let Ok(rd) = std::fs::read_dir(OTG_MNT_VDLKM) {
-            let mut stack: Vec<PathBuf> =
-                rd.flatten().map(|e| e.path()).collect();
-            while let Some(p) = stack.pop() {
-                if p.is_dir() {
-                    if let Ok(inner) = std::fs::read_dir(&p) {
-                        for e in inner.flatten() {
-                            stack.push(e.path());
-                        }
-                    }
-                } else if p
-                    .file_name()
-                    .map(|n| n == "aoc_usb_driver.ko")
-                    .unwrap_or(false)
-                {
-                    found = Some(p);
-                    break;
-                }
+    // KO from the vendor_dlkm image: dm-mapper mount first (proven for
+    // dlkm — touch maps it daily), siw loop device as fallback.
+    if !Path::new(AOC_KO).is_file() {
+        let mut dlkm_mnt: Option<&str> = None;
+        let mut dlkm_loop: Option<String> = None;
+        if siw_map("vendor_dlkm", &slot) && mount_ro(&mapped_dlkm, OTG_MNT_VDLKM) {
+            dlkm_mnt = Some(OTG_MNT_VDLKM);
+        } else if let Some(loopnode) = siw_connect_node("vendor_dlkm", &slot) {
+            if mount_ro(&loopnode, OTG_MNT_VDLKM) {
+                info("vendor_dlkm via siw loop device");
+                dlkm_mnt = Some(OTG_MNT_VDLKM);
+                dlkm_loop = Some(loopnode);
+            } else {
+                siw_disconnect("vendor_dlkm", &slot);
             }
         }
-        if let Some(ko) = found {
-            copy_if_src(AOC_KO, &ko.to_string_lossy());
+        if let Some(mnt) = dlkm_mnt {
+            // `find $MD -name aoc_usb_driver.ko | head -1` in shell.
+            if let Some(ko) = find_file_under(Path::new(mnt), "aoc_usb_driver.ko") {
+                copy_if_src(AOC_KO, &ko.to_string_lossy());
+            }
+            umount(mnt);
+            if dlkm_loop.is_some() {
+                siw_disconnect("vendor_dlkm", &slot);
+            }
         }
-        umount(OTG_MNT_VDLKM);
     }
     Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file()
 }
@@ -760,6 +908,10 @@ fn launch_aocd() {
 /// running kernel by construction) then, if `usb_control` is missing but
 /// the AoC is responsive, relaunch `aocd` (flaky startup — a fresh
 /// instance is what eventually gets the service up, P11 `otg_yogi.sh:60`).
+/// One AoC bring-up pass for the daemon loop (second stage only — it
+/// sleeps): insmod the staged KO, then ensure the vote is live
+/// (present → true; responsive-but-voteless → relaunch once; daemon
+/// dead → launch). Returns true when `usb_control` is live.
 fn aoc_bringup_once() -> bool {
     if !is_module_loaded("aoc_usb_driver") && Path::new(AOC_KO).is_file() {
         match load_kernel_module(Path::new(AOC_KO)) {
@@ -781,6 +933,10 @@ fn aoc_bringup_once() -> bool {
             return true;
         }
         info("usb_control still missing after relaunch (will retry from daemon)");
+    } else if !aocd_running() {
+        info("aocd not running; launching staged copy");
+        launch_aocd();
+        sleep(Duration::from_secs(4));
     } else {
         info("AoC not responsive yet (firmware still coming up?)");
     }
@@ -864,9 +1020,12 @@ fn resolve_udc() -> String {
     sysfs.into_iter().next().unwrap_or_else(|| UDC_FALLBACK.to_string())
 }
 
-/// laguna `otg-patch` (oneshot): stock chain → TCPC note → AoC staging →
-/// verified host. Sets `sys.usb.patch_dwc3=1` ONLY on verified host
-/// (role+data_role+psy); `0` + `Err` otherwise (device mode, adb safe).
+/// laguna `otg-patch` (oneshot): fast steps only (stock chain preload,
+/// TCPC note, one sleep-free staging attempt), then releases the daemon.
+/// Heavy staging + bringup + verify are SECOND-STAGE work (rc daemon,
+/// normalized env) — this oneshot runs before by-name/dm nodes exist.
+/// Sets `sys.usb.patch_dwc3=1` to start `otg_auto`, which owns host state
+/// from there; device mode (adb) always survives regardless.
 pub fn run_otg_patch() -> Result<(), String> {
     let gen = detect_generation();
     info(&format!("starting OTG patch routine (laguna, gen={gen:?})"));
@@ -897,50 +1056,21 @@ pub fn run_otg_patch() -> Result<(), String> {
         Err(e) => info(&format!("TCPC switch not configured: {e}")),
     }
 
-    // 3. AoC staging (bounded in the oneshot; the daemon retries forever).
-    // Handles both already-mounted /vendor and dm-mapper mounts.
-    let mut staged = Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file();
-    for attempt in 1..=3 {
-        if staged {
-            break;
-        }
-        info(&format!("AoC staging attempt {attempt}/3"));
-        staged = stage_aoc();
-        if !staged {
-            sleep(Duration::from_secs(2));
-        }
-    }
-    if staged {
-        info("staged aocd + libs + module into RAM (/tmp/aoc)");
+    // 3. AoC staging is SECOND-STAGE work (rc daemon, normalized env):
+    // this oneshot runs before by-name/dm nodes exist, so bounded retries
+    // here only delay boot and still fail. One fast attempt now
+    // (first-stage roots + ko_stage + standard ko-fetch are already
+    // visible — stage_aoc never sleeps), then release otg_auto: the
+    // daemon retries staging + bringup + verify forever and owns host
+    // state from there.
+    if stage_aoc() {
+        info("staged aocd + libs + module into RAM (fast path)");
     } else {
-        info("AoC staging incomplete (siw map + copy both failed?)");
+        info("staging deferred to otg-auto daemon (second stage)");
     }
-
-    // 4. AoC bring-up (bounded): insmod + flaky-startup relaunch.
-    let mut aoc_ok = aoc_has_usb_control();
-    for attempt in 1..=3 {
-        if aoc_ok {
-            break;
-        }
-        info(&format!("AoC bring-up attempt {attempt}/3"));
-        aoc_ok = aoc_bringup_once();
-        if !aoc_ok {
-            sleep(Duration::from_secs(2));
-        }
-    }
-
-    // 5. Verified-host gate (never role alone).
-    if aoc_ok && verify_host() {
-        let udc = resolve_udc();
-        info(&format!("laguna host path ACTIVE (UDC {udc}), sys.usb.patch_dwc3=1"));
-        set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
-        info("OTG patch routine finished");
-        Ok(())
-    } else {
-        info("host NOT verified (need usb_control + role=host + data_role=host + psy=1)");
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        Err("laguna otg: host not verified (staying in device mode)".into())
-    }
+    set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
+    info("OTG patch routine finished, daemon released (sys.usb.patch_dwc3=1)");
+    Ok(())
 }
 
 /// laguna `otg-auto`: AoC watchdog + `/dev/block/otg-usb` maintenance.
@@ -958,6 +1088,16 @@ pub fn run_otg_auto() -> ! {
     ));
     info("waiting 3s for boot to settle");
     sleep(Duration::from_secs(3));
+    // Gadget UDC resolution is observability only (logged once, never
+    // written: direct writes are a no-op on this SoC).
+    info(&format!(
+        "gadget UDC resolves to {} (reference only)",
+        resolve_udc()
+    ));
+    // Edge-triggered host verification (loud legs via verify_host, no
+    // per-tick spam).
+    let mut last_state = (String::new(), String::new(), String::new());
+    let mut was_verified = false;
     loop {
         if !(Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file())
             && stage_aoc()
@@ -965,29 +1105,9 @@ pub fn run_otg_auto() -> ! {
             info("staged aocd + libs + module into RAM");
         }
         if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
-            if !is_module_loaded("aoc_usb_driver") && Path::new(AOC_KO).is_file() {
-                match load_kernel_module(Path::new(AOC_KO)) {
-                    Ok(()) => info("aoc_usb_driver loaded from staged RAM copy"),
-                    Err(e) => info(&format!("staged aoc_usb_driver FAILED: {e}")),
-                }
-            }
-            if aoc_has_usb_control() {
-                info("aocd up; AOC vote live");
-            } else if aoc_responsive() {
-                info("AoC responsive without usb_control; relaunching aocd");
-                kill_aocd();
-                launch_aocd();
-                sleep(Duration::from_secs(4));
-                if aoc_has_usb_control() {
-                    info("aocd up; AOC vote live");
-                }
-            } else if !aocd_running() {
-                info("aocd not running; launching staged copy");
-                launch_aocd();
-                sleep(Duration::from_secs(4));
-            }
-            // Observability only: log the election-visible state, never
-            // force it (direct writes are a no-op on this SoC).
+            // Second-stage bring-up (sleeps inside — never oneshot-fast).
+            aoc_bringup_once();
+            // Verify on state change only; verify_host() logs every leg.
             let role = find_usb_role()
                 .map(|p| read_trim(&p.to_string_lossy()))
                 .unwrap_or_default();
@@ -995,9 +1115,18 @@ pub fn run_otg_auto() -> ! {
                 .map(|p| read_trim(&p.to_string_lossy()))
                 .unwrap_or_default();
             let (psy, _) = read_source_psy();
-            if !role.is_empty() || !data_role.is_empty() || !psy.is_empty() {
-                info(&format!("state: role={role:?} data_role={data_role:?} psy={psy:?}"));
+            let triple = (role, data_role, psy);
+            if triple != last_state
+                && (!triple.0.is_empty() || !triple.1.is_empty() || !triple.2.is_empty())
+            {
+                last_state = triple.clone();
+                verify_host();
             }
+            let now_verified = is_host_verified(&triple.0, &triple.1, &triple.2);
+            if now_verified && !was_verified {
+                info("daemon: HOST verified (role+data_role+psy) — serving attach");
+            }
+            was_verified = now_verified;
             ensure_otg_symlink();
         }
         sleep(Duration::from_secs(3));
@@ -1056,5 +1185,31 @@ mod tests {
         assert_eq!(mapper_node("vendor", "_b"), "/dev/block/mapper/vendor_b");
         assert_eq!(mapper_node("vendor_dlkm", "_b"), "/dev/block/mapper/vendor_dlkm_b");
         assert_eq!(mapper_node("vendor", "_a"), "/dev/block/mapper/vendor_a");
+    }
+
+    #[test]
+    fn siw_connect_args_cover_both_slots() {
+        // Same selector shape as siw map: base + suffix letter + slot num.
+        let a = siw_connect_args("vendor", "_a").unwrap();
+        assert_eq!(a[0], "connect");
+        assert!(a.contains(&"vendor".to_string()));
+        assert!(a.contains(&"a".to_string()));
+        assert!(a.contains(&"0".to_string()));
+        let b = siw_connect_args("vendor_dlkm", "_b").unwrap();
+        assert!(b.contains(&"1".to_string()));
+        // Unknown slot: no unbounded recursion (daemon ticks forever).
+        assert!(siw_connect_args("vendor", "").is_none());
+        assert!(siw_connect_args("vendor", "_c").is_none());
+    }
+
+    #[test]
+    fn loop_node_parsed_from_chatter() {
+        assert_eq!(
+            parse_loop_node("Created /dev/loop0 for vendor_b"),
+            Some("/dev/loop0".to_string())
+        );
+        assert_eq!(parse_loop_node("/dev/loop7"), Some("/dev/loop7".to_string()));
+        assert_eq!(parse_loop_node("error: no such partition"), None);
+        assert_eq!(parse_loop_node(""), None);
     }
 }
