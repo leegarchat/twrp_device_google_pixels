@@ -267,14 +267,73 @@ fn staged() -> bool {
     Path::new(RAM_AOCD).is_file() && Path::new(RAM_KO).is_file()
 }
 
+/// Mapper node path, mirroring `siw map` naming (`-p vendor_dlkm
+/// --suffix b` -> `/dev/block/mapper/vendor_dlkm_b`, field-proven on
+/// laguna). Pure (testable).
+fn mapper_node(base: &str, slot: &str) -> String {
+    format!("/dev/block/mapper/{base}_{}", slot.trim_start_matches('_'))
+}
+
+/// Create a dm-mapper node via `siw` (same call the shell
+/// `pixelrunatboot.sh:_siw_map` uses: `siw map
+/// /dev/block/by-name/super -p <part> --suffix <a|b> -s <0|1>`).
+/// Field lesson from laguna (mustang 6.6 flog): nothing maps `/vendor`
+/// in recovery, so waiting for the node is waiting forever. True when
+/// the node exists afterwards (pre-existing or just created).
+fn siw_map(base: &str, slot: &str) -> bool {
+    let node = mapper_node(base, slot);
+    if Path::new(&node).exists() {
+        return true;
+    }
+    let sfx = slot.trim_start_matches('_');
+    let num = match slot {
+        "_a" => "0",
+        "_b" => "1",
+        _ => {
+            info(&format!("siw map: unknown slot suffix {slot:?}, trying both"));
+            return siw_map(base, "_a") || siw_map(base, "_b");
+        }
+    };
+    info(&format!("siw map: creating {node}"));
+    match std::process::Command::new("/system/bin/siw")
+        .args([
+            "map",
+            "/dev/block/by-name/super",
+            "-p",
+            base,
+            "--suffix",
+            sfx,
+            "-s",
+            num,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() && Path::new(&node).exists() => {
+            info(&format!("siw map: {node} created"));
+            true
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            info(&format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            Path::new(&node).exists()
+        }
+        Err(e) => {
+            info(&format!("siw map: cannot run /system/bin/siw: {e}"));
+            false
+        }
+    }
+}
+
 /// Copy the AoC runtime out of the live vendor/vendor_dlkm into RAM
-/// (P11 `:27-42`). dm-mapper nodes may be late — the caller retries.
+/// (P11 `:27-42`). Mapper nodes are created on demand via siw (see
+/// [`siw_map`]) — nobody maps `/vendor` in recovery otherwise.
 fn stage_aoc(slot: &str) -> bool {
     if staged() {
         return true;
     }
     let _ = std::fs::create_dir_all(RAM_DIR);
     if !Path::new(RAM_AOCD).is_file()
+        && siw_map("vendor", slot)
         && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
     {
         let src = Path::new(MNT_VENDOR).join(VENDOR_AOCD);
@@ -295,7 +354,10 @@ fn stage_aoc(slot: &str) -> bool {
         }
         umount(MNT_VENDOR);
     }
-    if !Path::new(RAM_KO).is_file() && mount_ro(&format!("{MAP_VDLKM}{slot}"), MNT_VDLKM) {
+    if !Path::new(RAM_KO).is_file()
+        && siw_map("vendor_dlkm", slot)
+        && mount_ro(&format!("{MAP_VDLKM}{slot}"), MNT_VDLKM)
+    {
         let mut hits = Vec::new();
         find_named(Path::new(MNT_VDLKM), "aoc_usb_driver.ko", &mut hits);
         match hits.first() {
@@ -785,6 +847,15 @@ mod tests {
         assert_eq!(pick_role_entry(&one), Some("other-switch".to_string()));
         let empty: Vec<String> = Vec::new();
         assert_eq!(pick_role_entry(&empty), None);
+    }
+
+    #[test]
+    fn mapper_node_naming_matches_siw() {
+        // `siw map -p vendor_dlkm --suffix b` creates
+        // `/dev/block/mapper/vendor_dlkm_b` (laguna field-proven).
+        assert_eq!(mapper_node("vendor", "_b"), "/dev/block/mapper/vendor_b");
+        assert_eq!(mapper_node("vendor_dlkm", "_b"), "/dev/block/mapper/vendor_dlkm_b");
+        assert_eq!(mapper_node("vendor", "_a"), "/dev/block/mapper/vendor_a");
     }
 
     #[test]
