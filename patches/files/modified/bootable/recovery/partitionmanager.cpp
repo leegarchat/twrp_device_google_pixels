@@ -3095,6 +3095,61 @@ int TWPartitionManager::Partition_SDCard(void)
   return true;
 }
 
+// Fox: single standard OTG path with extras for the rest.
+//
+// /usb_otg (flags entry -> /dev/block/otg-usb, a symlink the OTG daemon
+// keeps on the current first USB partition) is THE standard ext-storage
+// path: Mount, file manager and backup target it. vold still enumerates
+// every partition as /auto0-N (needed: partitions 2..N have no other
+// representation), so without suppression the first partition shows
+// twice (/usb_otg + /auto0-1) and the unmountable /auto0 parent clutters
+// every list. Suppression is by device identity, never by name:
+// a subpartition is hidden only when its block device IS the otg-usb
+// target (daemon dead / symlink missing -> old behavior, nothing hidden).
+static std::string FoxNormalizeBlock(const std::string& dev) {
+	std::string out;
+	out.reserve(dev.size());
+	for (size_t i = 0; i < dev.size(); i++) {
+		if (dev[i] == '/' && !out.empty() && out[out.size() - 1] == '/')
+			continue;
+		out.push_back(dev[i]);
+	}
+	return out;
+}
+
+static std::string FoxOtgCoveredDevice(void) {
+	char link[256];
+	ssize_t n = readlink("/dev/block/otg-usb", link, sizeof(link) - 1);
+	if (n <= 0)
+		return "";
+	link[n] = '\0';
+	std::string target = link;
+	if (!target.empty() && target[0] != '/')
+		target = "/dev/block/" + target;
+	return FoxNormalizeBlock(target);
+}
+
+static bool FoxIsUsbOtgDuplicate(TWPartition* part) {
+	if (!part->Is_SubPartition || part->SubPartition_Of != "/auto0")
+		return false;
+	std::string covered = FoxOtgCoveredDevice();
+	if (covered.empty())
+		return false;
+	return FoxNormalizeBlock(part->Primary_Block_Device) == covered;
+}
+
+// Live scan: does the /auto0 USB parent currently own any volumes?
+// (Has_SubPartition is set once at fstab write; hotplug volumes appear
+// later, so scan the live list instead of trusting the flag.)
+static bool FoxUsbParentHasVolumes(const std::vector<TWPartition*>& parts) {
+	for (std::vector<TWPartition*>::const_iterator it = parts.begin();
+	     it != parts.end(); ++it) {
+		if ((*it)->Is_SubPartition && (*it)->SubPartition_Of == "/auto0")
+			return true;
+	}
+	return false;
+}
+
 void TWPartitionManager::Get_Partition_List(string ListType,
 					    std::vector < PartitionList >
 					    *Partition_List)
@@ -3114,6 +3169,21 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 	      // is untouched.
 	      if (!(*iter)->Is_Present &&
 	          (*iter)->Mount_Point.compare(0, 5, "/auto") == 0)
+	        continue;
+	      // Fox: the /auto0 parent is never mountable once partitions
+	      // exist (a partitioned disk cannot mount as a whole) — its
+	      // volumes carry the data. Hide it whenever volumes are known
+	      // (live scan: the flag is set once at fstab write, hotplug
+	      // volumes appear later); the no-partition (superfloppy) case
+	      // still mounts the parent directly, so it stays visible then.
+	      if ((*iter)->Mount_Point == "/auto0" && !(*iter)->Is_SubPartition
+	          && FoxUsbParentHasVolumes(Partitions))
+	        continue;
+	      // Fox: hide the first USB volume (/auto0-1, ...) when it IS
+	      // the /usb_otg device (same block node via the otg-usb
+	      // symlink) — otherwise the standard path and the vold volume
+	      // show the same partition twice. Volumes 2..N stay listed.
+	      if (FoxIsUsbOtgDuplicate(*iter))
 	        continue;
 	      struct PartitionList part;
 	      part.Display_Name = (*iter)->Display_Name;
@@ -3144,8 +3214,20 @@ void TWPartitionManager::Get_Partition_List(string ListType,
       string Current_Storage = DataManager::GetCurrentStoragePath();
       for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
 	{
-	  if ((*iter)->Is_Storage)
+      if ((*iter)->Is_Storage)
 	    {
+	      // Fox: same OTG dedup as the mount list — the /auto0 parent
+	      // (unmountable with partitions) and the first volume when it
+	      // duplicates /usb_otg stay out of the storage selector; the
+	      // flags-based /usb_otg entry itself is untouched.
+	      if (!(*iter)->Is_Present &&
+	          (*iter)->Storage_Path.compare(0, 5, "/auto") == 0)
+	        continue;
+	      if ((*iter)->Storage_Path == "/auto0" && !(*iter)->Is_SubPartition
+	          && FoxUsbParentHasVolumes(Partitions))
+	        continue;
+	      if (FoxIsUsbOtgDuplicate(*iter))
+	        continue;
 	      struct PartitionList part;
 	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
 	      part.Display_Name = (*iter)->Storage_Name + " (";
