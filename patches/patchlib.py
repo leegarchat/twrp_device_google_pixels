@@ -210,9 +210,21 @@ class SnapshotPatch(BasePatch):
 
         if conflicts:
             # Fallback: try unified diff via `patch` before giving up.
+            # Guarded: a STALE stored patch can reverse-apply cleanly on a
+            # tree that holds an older snapshot ("already applied") while
+            # the current snapshot hunks are absent — that masks drift and
+            # ships stale code silently. Accept the fallback only when every
+            # current new_block is verifiably present afterwards.
             fallback = self._try_unified_fallback(context, target_path)
             if fallback is not None:
-                return fallback
+                if hunks and all(
+                    _contains_block(_read_lines(target_path), h.new_block) for h in hunks
+                ):
+                    return fallback
+                conflicts.append(
+                    "unified fallback does not cover current snapshot "
+                    "(stored .patch is stale; refresh it from modified/)"
+                )
             details = "\n".join(conflicts)
             if self.patch_file is not None and self.patch_file.exists():
                 details += f"\nManual patch available: {self.patch_file}"
