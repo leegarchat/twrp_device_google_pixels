@@ -447,6 +447,67 @@ fn copy_if_src(dst: &str, src: &str) -> bool {
     }
 }
 
+/// Mapper node path for a super partition base + slot suffix, mirroring
+/// `siw map` naming (`-p vendor_dlkm --suffix b` ->
+/// `/dev/block/mapper/vendor_dlkm_b`). Pure (testable).
+fn mapper_node(base: &str, slot: &str) -> String {
+    format!("/dev/block/mapper/{base}_{}", slot.trim_start_matches('_'))
+}
+
+/// Create a dm-mapper node ourselves via the `siw` tool (same call the
+/// shell `pixelrunatboot.sh:_siw_map` uses for touch .ko staging:
+/// `siw map /dev/block/by-name/super -p <part> --suffix <a|b> -s <0|1>`
+/// creates `/dev/block/mapper/<part>[_suffix]`, e.g. `-p vendor_dlkm
+/// --suffix b` -> `/dev/block/mapper/vendor_dlkm_b`, field-proven in the
+/// mustang flog).
+/// Field lesson (mustang 6.6 flog): nothing maps `/vendor` in recovery —
+/// the touch system only maps `vendor_dlkm` on demand — so waiting for
+/// `/dev/block/mapper/vendor$slot` to appear is waiting forever. Returns
+/// true when the node exists afterwards (pre-existing or just created).
+fn siw_map(base: &str, slot: &str) -> bool {
+    let node = mapper_node(base, slot);
+    if Path::new(&node).exists() {
+        return true;
+    }
+    let num = match slot {
+        "_a" => "0",
+        "_b" => "1",
+        _ => {
+            info(&format!("siw map: unknown slot suffix {slot:?}, trying both"));
+            return siw_map(base, "_a") || siw_map(base, "_b");
+        }
+    };
+    let sfx = slot.trim_start_matches('_');
+    info(&format!("siw map: creating {node}"));
+    match std::process::Command::new("/system/bin/siw")
+        .args([
+            "map",
+            "/dev/block/by-name/super",
+            "-p",
+            base,
+            "--suffix",
+            sfx,
+            "-s",
+            num,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() && Path::new(&node).exists() => {
+            info(&format!("siw map: {node} created"));
+            true
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            info(&format!("siw map {node} FAILED: status={} {err}", out.status).trim());
+            Path::new(&node).exists()
+        }
+        Err(e) => {
+            info(&format!("siw map: cannot run /system/bin/siw: {e}"));
+            false
+        }
+    }
+}
+
 /// Stage the AoC runtime into tmpfs so a later vendor unmount cannot pull
 /// it out from under the running daemon (P11 `otg_yogi.sh:10-13`).
 /// Tries already-mounted `/vendor` (+ `/vendor_dlkm`, `/lib/modules`)
@@ -467,13 +528,15 @@ fn stage_aoc() -> bool {
     if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
         return true;
     }
-    // Slow path: dm-mapper mounts (mapper nodes appear late — the daemon
-    // retries this from its loop, like the shell script).
+    // Slow path: dm-mapper mounts. Mapper nodes appear late — and
+    // `/vendor` is NEVER mapped by anyone in recovery (field-proven:
+    // the touch system maps only vendor_dlkm on demand), so create the
+    // mapping ourselves via siw instead of waiting for it.
     let slot = slot_suffix();
     let mapped_vendor = format!("/dev/block/mapper/vendor{slot}");
     let mapped_dlkm = format!("/dev/block/mapper/vendor_dlkm{slot}");
     if !Path::new(AOCD_BIN).is_file()
-        && Path::new(&mapped_vendor).exists()
+        && siw_map("vendor", &slot)
         && mount_ro(&mapped_vendor, OTG_MNT_VENDOR)
     {
         copy_if_src(AOCD_BIN, &format!("{OTG_MNT_VENDOR}/bin/aocd"));
@@ -491,7 +554,7 @@ fn stage_aoc() -> bool {
         }
     }
     if !Path::new(AOC_KO).is_file()
-        && Path::new(&mapped_dlkm).exists()
+        && siw_map("vendor_dlkm", &slot)
         && mount_ro(&mapped_dlkm, OTG_MNT_VDLKM)
     {
         // `find $MD -name aoc_usb_driver.ko | head -1` in shell.
@@ -823,7 +886,7 @@ pub fn run_otg_patch() -> Result<(), String> {
     if staged {
         info("staged aocd + libs + module into RAM (/tmp/aoc)");
     } else {
-        info("AoC staging incomplete (mapper nodes not up yet?)");
+        info("AoC staging incomplete (siw map + copy both failed?)");
     }
 
     // 4. AoC bring-up (bounded): insmod + flaky-startup relaunch.
@@ -957,5 +1020,14 @@ mod tests {
         // DTB `dwc3@c400000` (reg 0xc400000) — never zuma's 11210000.
         assert!(UDC_FALLBACK.contains("c400000"));
         assert!(!UDC_FALLBACK.contains("11210000"));
+    }
+
+    #[test]
+    fn mapper_node_naming_matches_siw() {
+        // Field-proven: `siw map -p vendor_dlkm --suffix b` creates
+        // `/dev/block/mapper/vendor_dlkm_b` (mustang flog map-copy line).
+        assert_eq!(mapper_node("vendor", "_b"), "/dev/block/mapper/vendor_b");
+        assert_eq!(mapper_node("vendor_dlkm", "_b"), "/dev/block/mapper/vendor_dlkm_b");
+        assert_eq!(mapper_node("vendor", "_a"), "/dev/block/mapper/vendor_a");
     }
 }
