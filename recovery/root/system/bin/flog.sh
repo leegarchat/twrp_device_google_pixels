@@ -5,9 +5,9 @@
 #   flog.sh
 #
 # Collects recovery.log, weaver.log, dmesg, logcat, props, slot info,
-# reflash/install logs, backlight state and a hardware inventory
-# (by-name map, UDC/role, i2c/gpio, DT flash node, power, drm, mounts)
-# into ONE archive:
+# reflash/install logs, backlight + OTG state snapshots and a hardware
+# inventory (by-name map, UDC/role, i2c/gpio, DT flash node, power, drm,
+# mounts) into ONE archive:
 #   /data/media/0/fox_logs/fox_logs_<timestamp>.tar.gz
 # (userdata decrypted + writable). When userdata is unavailable, falls
 # back to /tmp/fox_logs/fox_logs_<timestamp>.tar.gz and prints an
@@ -207,6 +207,50 @@ echo "flog: + backlight.txt"
     mount 2>/dev/null | grep -E "^/dev" || cat /proc/mounts 2>/dev/null | grep -E "^/dev"
 } > "$DEST/hardware.txt" 2>/dev/null
 echo "flog: + hardware.txt"
+
+# --- OTG state snapshot (host/device decision inputs in one place, so
+# testers never need manual sysfs cats: VBUS sensor, source psy (host
+# proof), role switches, OTG_ID, VBUS voter, UDC bind, otg-usb link) ---
+{
+    echo "## VBUS sensors (1 = PC attached -> device mode)"
+    for _v in /sys/class/power_supply/usb/online /sys/class/power_supply/usb/present /sys/class/power_supply/usb-charger/online; do
+        [ -f "$_v" ] && printf '  %s=%s\n' "$_v" "$(cat "$_v" 2>/dev/null)"
+    done
+    echo "## tcpm-source-psy (1 = WE source VBUS -> host active)"
+    for _s in /sys/class/power_supply/tcpm-source-psy-*/online; do
+        [ -f "$_s" ] && printf '  %s=%s\n' "$_s" "$(cat "$_s" 2>/dev/null)"
+    done
+    echo "## usb_role switches"
+    for _r in /sys/class/usb_role/*/role; do
+        [ -f "$_r" ] && printf '  %s=%s\n' "$_r" "$(cat "$_r" 2>/dev/null)"
+    done
+    echo "## typec port (TCPM election, laguna/malibu path)"
+    for _t in /sys/class/typec/*/; do
+        [ -d "$_t" ] || continue
+        echo "== $_t"
+        for _n in data_role power_role preferred_role port_type power_operation_mode; do
+            [ -f "$_t/$_n" ] && printf '  %s=%s\n' "$_n" "$(cat "$_t/$_n" 2>/dev/null)"
+        done
+    done
+    echo "## dwc3_exynos_otg_id (0 = host asserted, 1 = device)"
+    for _o in $(find /sys/devices/platform -name dwc3_exynos_otg_id 2>/dev/null); do
+        printf '  %s=%s\n' "$_o" "$(cat "$_o" 2>/dev/null)"
+    done
+    echo "## CHARGER_MODE voter"
+    for _c in /sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value /sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active; do
+        [ -f "$_c" ] && printf '  %s=%s\n' "$_c" "$(cat "$_c" 2>/dev/null)"
+    done
+    echo "## gadget bind + otg-usb link"
+    [ -f /config/usb_gadget/g1/UDC ] && printf '  UDC=%s\n' "$(cat /config/usb_gadget/g1/UDC 2>/dev/null)"
+    printf '  otg-usb -> %s\n' "$(readlink /dev/block/otg-usb 2>/dev/null)"
+    ls /sys/bus/usb/devices/ 2>/dev/null | tr '\n' ' ' | sed 's/^/  usb devices: /'
+    echo ""
+    echo "## usb props"
+    for _p in sys.usb.patch_dwc3 sys.usb.ffs.ready sys.usb.state sys.usb.config sys.usb.controller; do
+        printf '  %s=%s\n' "$_p" "$(getprop "$_p" 2>/dev/null)"
+    done
+} > "$DEST/otg.txt" 2>/dev/null
+echo "flog: + otg.txt"
 
 # --- pstore (survives reboot; empty dir listing is also an answer) ---
 if [ -d /sys/fs/pstore ] && ls -la /sys/fs/pstore/ > "$DEST/pstore_ls.txt" 2>/dev/null; then
