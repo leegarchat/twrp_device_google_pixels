@@ -8,7 +8,7 @@
  
  extern "C" {
  #include "../twcommon.h"
-@@ -387,6 +388,59 @@
+@@ -387,16 +388,85 @@
  	RenderStdItem(yPos, selected, NULL, "implement RenderItem!");
  }
  
@@ -68,17 +68,78 @@
  void GUIScrollList::RenderStdItem(int yPos, bool selected, ImageResource* icon, const char* text, const char* addtext, int groupStatus)
  {
  	COLOR highlightColor = {0, 0, 0, 0};
-@@ -447,7 +501,8 @@
+ 
+-	if (DataManager::GetStrValue("of_hw_control_mode") == "1") {
+-		COLOR* clr_ptr = &mFocusColor;
+-		ConvertStrToColor(DataManager::GetStrValue("theme_accent_dark"), clr_ptr);
+-		highlightColor = mFocusColor;
+-	} else {
+-		highlightColor = mHighlightColor;
++	// Fox fps_boost: highlight inputs hoisted out of the per-row path —
++	// two DataManager lookups + a color parse per row per frame otherwise.
++	// Recomputed only when the inputs change; mFocusColor ends identical.
++	static std::string fox_last_mode, fox_last_accent;
++	static COLOR fox_cached_highlight = {0, 0, 0, 0};
++	static bool fox_hl_init = false;
++	{
++		std::string fox_mode = DataManager::GetStrValue("of_hw_control_mode");
++		if (fox_mode == "1") {
++			std::string fox_accent = DataManager::GetStrValue("theme_accent_dark");
++			if (!fox_hl_init || fox_mode != fox_last_mode || fox_accent != fox_last_accent) {
++				COLOR* clr_ptr = &mFocusColor;
++				ConvertStrToColor(fox_accent, clr_ptr);
++				fox_cached_highlight = mFocusColor;
++				fox_last_mode = fox_mode;
++				fox_last_accent = fox_accent;
++				fox_hl_init = true;
++			}
++			highlightColor = fox_cached_highlight;
++		} else {
++			highlightColor = mHighlightColor;
++		}
+ 	}
+ 
+ 	bool isHighlight = false;
+@@ -421,9 +491,6 @@
+ 		GGLSurface *surface = nullptr;
+ 		uint32_t* img = nullptr;
+ 		uint32_t* hl_img = nullptr;
+-		surface = (GGLSurface *)malloc(sizeof(GGLSurface));
+-		memset(surface, 0, sizeof(GGLSurface));
+-		surface->version = sizeof(surface);
+ 
+ 		// [Yacha] Apply padding correctly to the group background
+ 		if (groupStatus == 1 || groupStatus == 4) { // First or single item
+@@ -447,7 +514,27 @@
  			corners = RoundedCornerFlags::ALL;
  		}
  
 -		img = createShape(w, h, r, s, groupColor, corners);
++		// Fox fps_boost: body rows have square corners (r=0 above) — a flat
++		// fill of the same logical color draws identical visible bytes to
++		// the cached shape blit (gr_fill learns the packed color by
++		// read-back) while skipping the textured path entirely. Rounded
++		// start/end rows and translucent themes keep the shape path.
++		if (groupStatus == 2 && groupColor.alpha == 255 &&
++		    (!isHighlight || highlightColor.alpha == 255)) {
++			gr_color(groupColor.red, groupColor.green, groupColor.blue, groupColor.alpha);
++			gr_fill(x, y, w, h);
++			if (isHighlight) {
++				gr_color(highlightColor.red, highlightColor.green, highlightColor.blue,
++					highlightColor.alpha);
++				gr_fill(x, y, w, h);
++			}
++		} else {
++		surface = (GGLSurface *)malloc(sizeof(GGLSurface));
++		memset(surface, 0, sizeof(GGLSurface));
++		surface->version = sizeof(surface);
++
 +		// Fox fps_boost: borrowed cached shape, do NOT free (see above).
 +		img = fox_cached_shape(w, h, r, s, groupColor, corners);
  
  		surface->width = w;
  		surface->height = h;
-@@ -457,13 +512,11 @@
+@@ -457,13 +544,12 @@
  
  		gr_blit((gr_surface)surface, 0, 0, w, h, x, y);
  		if (isHighlight) {
@@ -90,6 +151,7 @@
  		res_free_surface(surface);
 -		free(img);
 -		free(hl_img);
++		}
  
  		// render group arrow
  		if (groupArrow && groupArrow->GetResource()) {

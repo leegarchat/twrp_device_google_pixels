@@ -24,9 +24,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <fstream>
+#include <atomic>
+#include <cstdint>
+#include <mutex>
 #include <cutils/properties.h>
 #include <thread>
 
@@ -62,6 +66,7 @@ static std::atomic_int vib_on_count = 0;
 
 #define LEDS_HAPTICS_DURATION_FILE	"/sys/class/leds/vibrator/duration"
 #define LEDS_HAPTICS_ACTIVATE_FILE	"/sys/class/leds/vibrator/activate"
+#define LEDS_HAPTICS_BRIGHTNESS_FILE	"/sys/class/leds/vibrator/brightness"
 
 #ifndef SYN_REPORT
 #define SYN_REPORT          0x00
@@ -135,15 +140,26 @@ static inline int ABS(int x) {
 }
 
 int write_to_file(const std::string& fn, const std::string& line) {
-    FILE *file;
-    file = fopen(fn.c_str(), "w");
-    if (file != NULL) {
-        fwrite(line.c_str(), line.size(), 1, file);
-        fclose(file);
-        return 0;
+    FILE *file = fopen(fn.c_str(), "w");
+    if (file == NULL) {
+        LOGE("Failed to open %s for writing: %s\n", fn.c_str(), strerror(errno));
+        return -1;
     }
-    LOGI("Cannot find file %s\n", fn.c_str());
-    return -1;
+
+    errno = 0;
+    const size_t written = fwrite(line.c_str(), 1, line.size(), file);
+    const int write_errno = errno;
+    errno = 0;
+    const int close_status = fclose(file);
+    const int close_errno = errno;
+    if (written != line.size() || close_status != 0) {
+        int error = write_errno ? write_errno : close_errno;
+        if (error == 0)
+            error = EIO;
+        LOGE("Failed to write %s: %s\n", fn.c_str(), strerror(error));
+        return -1;
+    }
+    return 0;
 }
 
 #ifndef TW_NO_HAPTICS
@@ -191,11 +207,10 @@ static int fox_vibro_scale(void) {
     return cached;
 }
 
-// Fox: gs101 runtime detector for the LEDS auto-deassert below (same
+// Fox: gs101 runtime detector for the dedicated haptics backend (same
 // contract as is_gs101_family() in recovery-pixel-boot/otg.rs:
 // soc_family prop primary, codename fallback). Cached, props are
 // process-stable here.
-static int fox_vib_on_count = 0;
 static int fox_is_gs101(void) {
     static int cached = -1;
     if (cached < 0) {
@@ -276,6 +291,35 @@ static int vibrate_ff(int timeout_ms)
     return (ret < 0) ? -1 : 0;
 }
 
+// The gs101 transient trigger's activate attribute is readable but not
+// writable on affected recovery builds. Control the LED through its writable
+// brightness attribute instead, then force it off after the requested pulse.
+// A generation counter prevents an older timer from cutting off a newer tap.
+static std::mutex gs101_haptics_mutex;
+static std::uint64_t gs101_haptics_generation = 0;
+
+static int vibrate_gs101_brightness(int timeout_ms)
+{
+    if (timeout_ms <= 0)
+        return 0;
+
+    std::uint64_t generation;
+    {
+        std::lock_guard<std::mutex> lock(gs101_haptics_mutex);
+        if (write_to_file(LEDS_HAPTICS_BRIGHTNESS_FILE, "255") != 0)
+            return -1;
+        generation = ++gs101_haptics_generation;
+    }
+
+    std::thread([generation, timeout_ms] {
+        usleep(timeout_ms * 1000);
+        std::lock_guard<std::mutex> lock(gs101_haptics_mutex);
+        if (generation == gs101_haptics_generation)
+            write_to_file(LEDS_HAPTICS_BRIGHTNESS_FILE, "0");
+    }).detach();
+    return 0;
+}
+
 int vibrate(int timeout_ms)
 {
     if (timeout_ms > 10000) timeout_ms = 1000;
@@ -311,49 +355,27 @@ int vibrate(int timeout_ms)
         write_to_file(VIBRATOR_TIMEOUT_FILE, tout);
     }
 #else
-    // Fox (gs101 stuck-vibration): the LEDS activate API is
-    // duration-based, but the old code only checked for the activate
-    // file. On Pixel 6 (raven leds/vibrator) the effect runs
-    // stale/default — possibly stuck — while activate is never
-    // deasserted, so every tap turns into a continuous buzz. Require
-    // BOTH activate and duration files; otherwise fall through to the
-    // FF path below, which terminates precisely via replay.length (and
-    // honors ro.recovery.vibro_scale). Devices with a healthy LEDS pair
-    // behave exactly as before. Backend is picked once (modules are up
-    // before the first tap) and traced so flog shows which path a unit
-    // took: 0=leds 1=timed_output 2=ff.
+    // Backend is picked once (modules are up before the first tap) and
+    // traced so flog shows which path a unit took:
+    // 0=transient LEDS 1=timed_output 2=force feedback 3=gs101 brightness.
     static int vib_backend = -1;
     if (vib_backend < 0) {
-        if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good() &&
+        if (fox_is_gs101())
+            vib_backend = 3;
+        else if (std::ifstream(LEDS_HAPTICS_ACTIVATE_FILE).good() &&
             std::ifstream(LEDS_HAPTICS_DURATION_FILE).good())
             vib_backend = 0;
         else if (std::ifstream(VIBRATOR_TIMEOUT_FILE).good())
             vib_backend = 1;
         else
             vib_backend = 2;
-        LOGE("[TRACE] vibrate: backend %d (0=leds 1=timed_output 2=ff)\n", vib_backend);
+        LOGE("[TRACE] vibrate: backend %d (0=leds 1=timed_output 2=ff 3=gs101-brightness)\n", vib_backend);
     }
-    if (vib_backend == 0) {
+    if (vib_backend == 3) {
+        vibrate_gs101_brightness(timeout_ms);
+    } else if (vib_backend == 0) {
         write_to_file(LEDS_HAPTICS_DURATION_FILE, tout);
         write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "1");
-        // Fox (gs101 latching LEDS driver): field-proven on raven — the
-        // effect runs on after activate=1 (duration ignored/stale) and
-        // nothing ever deasserts it, so one tap becomes a continuous
-        // buzz. Deassert after the requested duration on a detached
-        // thread, refcounted so rapid taps don't cut each other short
-        // (mirrors the QTI AIDL FIX_OFF pattern above). On a healthy
-        // driver the trailing 0-write is a no-op. gs101-gated: no other
-        // family changes behavior.
-        if (fox_is_gs101()) {
-            fox_vib_on_count++;
-            int vib_ms = timeout_ms;
-            std::thread([vib_ms] {
-                usleep(vib_ms * 1000);
-                fox_vib_on_count--;
-                if (!fox_vib_on_count)
-                    write_to_file(LEDS_HAPTICS_ACTIVATE_FILE, "0");
-            }).detach();
-        }
     } else if (vib_backend == 1) {
         write_to_file(VIBRATOR_TIMEOUT_FILE, tout);
     } else {

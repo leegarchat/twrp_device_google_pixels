@@ -1,10 +1,17 @@
 --- a/bootable/recovery/minuitwrp/graphics.cpp
 +++ b/bootable/recovery/minuitwrp/graphics.cpp
-@@ -58,6 +58,24 @@
- static unsigned char gr_current_r = 255;
+@@ -35,6 +35,7 @@
+ #include <time.h>
+ 
+ #include <cutils/properties.h>
++#include <stdint.h>
+ #include <pixelflinger/pixelflinger.h>
+ #include "gui/placement.h"
+ #include "minuitwrp/minui.h"
+@@ -59,6 +60,24 @@
  static unsigned char gr_current_g = 255;
  static unsigned char gr_current_b = 255;
-+
+ 
 +// Fox AIO: runtime R/B channel swap selector. Display/GPU generations
 +// disagree about byte order (Mali families gs101/gs201/zuma/zumapro render
 +// correctly with the patched no-swap path, PowerVR malibu/laguna need the
@@ -22,10 +29,213 @@
 +    }
 +    return g_fox_rb_swap == 1;
 +}
- 
++
  GRSurface* gr_draw = NULL;
  
-@@ -174,7 +192,11 @@
+ static GGLContext *gr_context = 0;
+@@ -117,6 +136,178 @@
+     return twrpTruetype::gr_ttf_textExWH(gl, x, y + y_scale, s, vfont, measured_width + x, -1, gr_draw);
+ }
+ 
++/* Fox fps_boost: CPU-side clip mirror + direct 32bpp raster fast paths.
++ * Every gr_blit/gr_fill currently pays a full pixelflinger round-trip
++ * (bindTexture + texEnvi/texGeni + recti + state toggles per call) plus a
++ * generic software rasterizer. With ~150 blits and ~10MB of flat fills per
++ * file-list frame at 120Hz (8.3ms budget), that overhead is the 3-4ms we
++ * are over. Fast paths engage only when bit-identical to the slow path:
++ *  - gr_rotation == 0 (rotation is boot-fixed, never changes at runtime);
++ *  - 32bpp, source and dest share the same 8888 layout (positional copy,
++ *    no channel lore; alpha is always byte 3 of the word on LE);
++ *  - rects clamped to both surfaces (no OOB reads/writes) and intersected
++ *    with a CPU mirror of gr_clip/gr_noclip (kept 1:1 below);
++ *  - fills: the packed 4 bytes pixelflinger writes for a logical (r,g,b)
++ *    are learned once per color by reading back one pixel after a
++ *    slow-path fill — exact on every family/format/swap combo by
++ *    construction (theme colors are bounded; overflow stays slow).
++ * Blend is src-over straight alpha; +/-1 LSB vs GGL rounding on
++ * antialiased edges is invisible (recovery UI has no gradients). The dst
++ * alpha byte is preserved on partial blends (scanout ignores it).
++ * Anything else falls through to pixelflinger unchanged.
++ */
++static bool fox_clip_on = false;
++static int fox_clip_x = 0, fox_clip_y = 0, fox_clip_w = 0, fox_clip_h = 0;
++static unsigned long long fox_blt_n = 0, fox_blt_px = 0, fox_blt_us = 0;
++
++struct FoxFillEntry { uint8_t r, g, b; uint32_t px; bool used; };
++static FoxFillEntry fox_fill_cache[32];
++
++static bool fox_fill_lookup(uint8_t r, uint8_t g, uint8_t b, uint32_t *px) {
++    for (int i = 0; i < 32; i++) {
++        if (fox_fill_cache[i].used && fox_fill_cache[i].r == r &&
++            fox_fill_cache[i].g == g && fox_fill_cache[i].b == b) {
++            *px = fox_fill_cache[i].px;
++            return true;
++        }
++    }
++    return false;
++}
++
++static void fox_fill_learn(uint8_t r, uint8_t g, uint8_t b, uint32_t px) {
++    for (int i = 0; i < 32; i++) {
++        if (!fox_fill_cache[i].used) {
++            fox_fill_cache[i].r = r;
++            fox_fill_cache[i].g = g;
++            fox_fill_cache[i].b = b;
++            fox_fill_cache[i].px = px;
++            fox_fill_cache[i].used = true;
++            return;
++        }
++    }
++}
++
++/* Intersect (x,y,w,h) with the draw surface and the active clip mirror
++ * (rotation-0 logical coords). False = nothing would be drawn. */
++static bool fox_clip_rect(int *x, int *y, int *w, int *h) {
++    if (!gr_draw || !gr_draw->data || *w <= 0 || *h <= 0)
++        return false;
++    if (*x < 0) { *w += *x; *x = 0; }
++    if (*y < 0) { *h += *y; *y = 0; }
++    if (*x + *w > gr_draw->width) *w = gr_draw->width - *x;
++    if (*y + *h > gr_draw->height) *h = gr_draw->height - *y;
++    if (fox_clip_on) {
++        int x2 = *x + *w, y2 = *y + *h;
++        int cx2 = fox_clip_x + fox_clip_w, cy2 = fox_clip_y + fox_clip_h;
++        if (*x < fox_clip_x) *x = fox_clip_x;
++        if (*y < fox_clip_y) *y = fox_clip_y;
++        if (x2 > cx2) x2 = cx2;
++        if (y2 > cy2) y2 = cy2;
++        *w = x2 - *x; *h = y2 - *y;
++    }
++    return *w > 0 && *h > 0;
++}
++
++/* Blit census accounting shared by the slow and fast paths (temporary,
++ * remove before merge). */
++static void fox_blit_account(const struct timespec *b0, const struct timespec *b1,
++                             unsigned long long px) {
++    long long fox_dns = (long long)(b1->tv_sec - b0->tv_sec) * 1000000000LL +
++        (long long)(b1->tv_nsec - b0->tv_nsec);
++    if (fox_dns < 0) fox_dns = 0;
++    fox_blt_n++;
++    fox_blt_px += px;
++    fox_blt_us += (unsigned long long)fox_dns / 1000ULL;
++    if (fox_blt_n >= 20000) {
++        printf("foxblit: %llu blits, %llu Mpix, %llu ms total (avg %llu us/blt)\n",
++            fox_blt_n, fox_blt_px / 1000000ULL, fox_blt_us / 1000ULL,
++            fox_blt_us / (fox_blt_n ? fox_blt_n : 1));
++        fox_blt_n = fox_blt_px = fox_blt_us = 0;
++    }
++}
++
++/* Direct 32bpp blit. True = performed (bytes identical to the pixelflinger
++ * path: positional copy within one shared 8888 layout). */
++static bool fox_fast_blit(gr_surface src0, int sx, int sy, int w, int h, int dx, int dy) {
++    if (gr_rotation != 0 || !gr_draw || !gr_draw->data || gr_draw->pixel_bytes != 4)
++        return false;
++    if (gr_draw->row_bytes < gr_draw->width * 4)
++        return false;
++    GGLSurface *surface = (GGLSurface *)src0;
++    if (!surface || !surface->data || surface->width <= 0 || surface->height <= 0)
++        return false;
++    /* Either side may be RGBA or RGBX: bytes 0-2 are R,G,B on both, byte 3
++     * is alpha-or-don't-care (an RGBX source onto an RGBA dest still copies
++     * positionally exactly like the slow path; the dest X/alpha byte is
++     * never scanned out). Anything else (BGRA, 565, ...) stays slow. */
++    if ((surface->format != GGL_PIXEL_FORMAT_RGBA_8888 &&
++         surface->format != GGL_PIXEL_FORMAT_RGBX_8888) ||
++        (gr_draw->format != GGL_PIXEL_FORMAT_RGBA_8888 &&
++         gr_draw->format != GGL_PIXEL_FORMAT_RGBX_8888))
++        return false;
++    if (surface->stride < surface->width)
++        return false;
++    if (w <= 0 || h <= 0)
++        return true;
++    if (sx < 0) { w += sx; dx -= sx; sx = 0; }
++    if (sy < 0) { h += sy; dy -= sy; sy = 0; }
++    if (sx + w > surface->width) w = surface->width - sx;
++    if (sy + h > surface->height) h = surface->height - sy;
++    if (w <= 0 || h <= 0)
++        return true;
++    if (dx < 0) { w += dx; sx -= dx; dx = 0; }
++    if (dy < 0) { h += dy; sy -= dy; dy = 0; }
++    if (dx + w > gr_draw->width) w = gr_draw->width - dx;
++    if (dy + h > gr_draw->height) h = gr_draw->height - dy;
++    if (w <= 0 || h <= 0)
++        return true;
++    if (fox_clip_on) {
++        int ox = dx, oy = dy;
++        int x2 = dx + w, y2 = dy + h;
++        int cx2 = fox_clip_x + fox_clip_w, cy2 = fox_clip_y + fox_clip_h;
++        if (dx < fox_clip_x) dx = fox_clip_x;
++        if (dy < fox_clip_y) dy = fox_clip_y;
++        if (x2 > cx2) x2 = cx2;
++        if (y2 > cy2) y2 = cy2;
++        if (x2 <= dx || y2 <= dy)
++            return true;
++        sx += dx - ox; sy += dy - oy;
++        w = x2 - dx; h = y2 - dy;
++    }
++    const int src_rb = surface->stride * 4;
++    const unsigned char *srow =
++        surface->data + (size_t)sy * (size_t)src_rb + (size_t)sx * 4;
++    unsigned char *drow =
++        gr_draw->data + (size_t)dy * (size_t)gr_draw->row_bytes + (size_t)dx * 4;
++    if (surface->format == GGL_PIXEL_FORMAT_RGBX_8888) {
++        for (int i = 0; i < h; i++, drow += gr_draw->row_bytes, srow += src_rb)
++            memcpy(drow, srow, (size_t)w * 4);
++        return true;
++    }
++    for (int i = 0; i < h; i++, drow += gr_draw->row_bytes, srow += src_rb) {
++        const uint32_t *s = (const uint32_t *)srow;
++        uint32_t *d = (uint32_t *)drow;
++        for (int j = 0; j < w; j++) {
++            uint32_t sp = s[j];
++            unsigned a = sp >> 24;
++            if (a == 255) {
++                d[j] = sp;
++            } else if (a) {
++                uint32_t dp = d[j];
++                unsigned inv = 255 - a;
++                unsigned r = (unsigned)(sp & 0xff) * a + (unsigned)(dp & 0xff) * inv;
++                unsigned g = (unsigned)((sp >> 8) & 0xff) * a + (unsigned)((dp >> 8) & 0xff) * inv;
++                unsigned b = (unsigned)((sp >> 16) & 0xff) * a + (unsigned)((dp >> 16) & 0xff) * inv;
++                d[j] = (dp & 0xff000000u) |
++                       ((((b + 127) / 255) & 0xff) << 16) |
++                       ((((g + 127) / 255) & 0xff) << 8) |
++                       (((r + 127) / 255) & 0xff);
++            }
++        }
++    }
++    return true;
++}
++
+ void gr_clip(int x, int y, int w, int h)
+ {
+     GGLContext *gl = gr_context;
+@@ -136,6 +327,13 @@
+             break;
+     }
+     gl->enable(gl, GGL_SCISSOR_TEST);
++    /* Fox fps_boost: mirror the clip for the direct raster fast paths
++     * (rotation-0 logical coords; the mirror is only consulted then). */
++    fox_clip_on = true;
++    fox_clip_x = x;
++    fox_clip_y = y;
++    fox_clip_w = w;
++    fox_clip_h = h;
+ }
+ 
+ void gr_noclip()
+@@ -145,6 +343,8 @@
+                 gr_draw->width - 2 * overscan_offset_x,
+                 gr_draw->height - 2 * overscan_offset_y);
+     gl->disable(gl, GGL_SCISSOR_TEST);
++    /* Fox fps_boost: test disabled = no clipping, mirror follows. */
++    fox_clip_on = false;
+ }
+ 
+ void gr_line(int x0, int y0, int x1, int y1, int width)
+@@ -174,7 +374,11 @@
      GGLSurface *surface;
      const int diameter = radius*2 + 1;
      const int radius_check = radius*radius + radius*0.8;
@@ -38,7 +248,7 @@
      uint32_t *data;
  
      surface = (GGLSurface *)malloc(sizeof(GGLSurface));
-@@ -206,7 +228,23 @@
+@@ -206,7 +410,23 @@
  {
      GGLContext *gl = gr_context;
      GGLint color[4];
@@ -63,39 +273,81 @@
      color[0] = ((b << 8) | r) + 1;
      color[1] = ((g << 8) | g) + 1;
      color[2] = ((r << 8) | b) + 1;
-@@ -275,6 +313,12 @@
+@@ -248,6 +468,34 @@
+ 
+ void gr_fill(int x, int y, int w, int h)
+ {
++    /* Fox fps_boost fast path: opaque flat fills are the bulk of every
++     * frame (page + list + separators + header) and pixelflinger recti is
++     * a generic rasterizer for them. New colors take the slow path once
++     * and are learned by read-back (see FoxFillEntry). */
++    bool fox_learn = false;
++    int fox_lx = 0, fox_ly = 0;
++    if (gr_rotation == 0 && gr_draw && gr_draw->data && gr_draw->pixel_bytes == 4 &&
++        gr_is_curr_clr_opaque) {
++        int fx = x, fy = y, fw = w, fh = h;
++        if (fox_clip_rect(&fx, &fy, &fw, &fh)) {
++            uint32_t px;
++            if (fox_fill_lookup(gr_current_r, gr_current_g, gr_current_b, &px)) {
++                unsigned char *row = gr_draw->data +
++                    (size_t)fy * (size_t)gr_draw->row_bytes + (size_t)fx * 4;
++                for (int i = 0; i < fh; i++, row += gr_draw->row_bytes) {
++                    uint32_t *d = (uint32_t *)row;
++                    for (int j = 0; j < fw; j++)
++                        d[j] = px;
++                }
++                return;
++            }
++            fox_learn = true;
++            fox_lx = fx;
++            fox_ly = fy;
++        } else {
++            return;  // empty after surface/clip clamp: slow path draws nothing
++        }
++    }
+     GGLContext *gl = gr_context;
+     int x0_disp, y0_disp, x1_disp, y1_disp;
+     int l_disp, r_disp, t_disp, b_disp;
+@@ -267,6 +515,12 @@
+ 
+     if(gr_is_curr_clr_opaque)
+         gl->enable(gl, GGL_BLEND);
++
++    if (fox_learn) {
++        uint32_t px = *(uint32_t *)(gr_draw->data +
++            (size_t)fox_ly * (size_t)gr_draw->row_bytes + (size_t)fox_lx * 4);
++        fox_fill_learn(gr_current_r, gr_current_g, gr_current_b, px);
++    }
+ }
+ 
+ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
+@@ -275,6 +529,18 @@
          return;
      }
  
-+    // Fox fps_boost: blit census (count + pixels + ms per 120-frame
-+    // window). Temporary, remove before merge.
++    // Fox fps_boost: blit census (count + pixels + ms per 20k-blit
++    // window, slow and fast paths alike). Temporary, remove before merge.
 +    struct timespec fox_b0, fox_b1;
-+    static unsigned long long fox_blt_n = 0, fox_blt_px = 0, fox_blt_us = 0;
 +    clock_gettime(CLOCK_MONOTONIC, &fox_b0);
++
++    if (fox_fast_blit(source, sx, sy, w, h, dx, dy)) {
++        clock_gettime(CLOCK_MONOTONIC, &fox_b1);
++        fox_blit_account(&fox_b0, &fox_b1,
++            (unsigned long long)(w > 0 ? w : 0) * (unsigned long long)(h > 0 ? h : 0));
++        return;
++    }
 +
      GGLContext *gl = gr_context;
      GGLSurface *surface = (GGLSurface*)source;
  
-@@ -327,6 +371,22 @@
+@@ -327,6 +593,10 @@
  
      if(surface->format == GGL_PIXEL_FORMAT_RGBX_8888)
          gl->enable(gl, GGL_BLEND);
 +
 +    clock_gettime(CLOCK_MONOTONIC, &fox_b1);
-+    {
-+        long long fox_dns = (long long)(fox_b1.tv_sec - fox_b0.tv_sec) * 1000000000LL +
-+            (long long)(fox_b1.tv_nsec - fox_b0.tv_nsec);
-+        if (fox_dns < 0) fox_dns = 0;
-+        fox_blt_n++;
-+        fox_blt_px += (unsigned long long)(r_disp - l_disp) * (unsigned long long)(b_disp - t_disp);
-+        fox_blt_us += (unsigned long long)fox_dns / 1000ULL;
-+        if (fox_blt_n >= 20000) {
-+            printf("foxblit: %llu blits, %llu Mpix, %llu ms total (avg %llu us/blt)\n",
-+                fox_blt_n, fox_blt_px / 1000000ULL, fox_blt_us / 1000ULL,
-+                fox_blt_us / (fox_blt_n ? fox_blt_n : 1));
-+            fox_blt_n = fox_blt_px = fox_blt_us = 0;
-+        }
-+    }
++    fox_blit_account(&fox_b0, &fox_b1,
++        (unsigned long long)(r_disp - l_disp) * (unsigned long long)(b_disp - t_disp));
  }
  
  unsigned int gr_get_width(gr_surface surface) {
