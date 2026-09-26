@@ -176,37 +176,25 @@ class SnapshotPatch(BasePatch):
             return self.result("applied", "no snapshot differences", self.target)
 
         working_lines = list(target_lines)
-        changed_hunks: list[Hunk] = []
-        conflicts: list[str] = []
+        working_lines, changed_hunks, conflicts = self._apply_hunks(working_lines, hunks)
+        if (changed_hunks or conflicts) and context.should_bypass(self):
+            return self.result("bypassed", "patch is configured for bypass", self.target)
 
-        for index, hunk in enumerate(hunks, start=1):
-            if _contains_block(working_lines, hunk.new_block):
-                continue
-
-            if context.should_bypass(self):
-                return self.result("bypassed", "patch is configured for bypass", self.target)
-
-            matches = _find_block_indexes(working_lines, hunk.old_block)
-            if len(matches) == 1:
-                start = matches[0]
-                working_lines = (
-                    working_lines[:start]
-                    + hunk.new_block
-                    + working_lines[start + len(hunk.old_block) :]
-                )
-                changed_hunks.append(hunk)
-                continue
-
-            if len(matches) > 1:
-                conflicts.append(
-                    f"hunk {index}: old structure matched {len(matches)} locations "
-                    f"around original lines {hunk.old_range[0]}-{hunk.old_range[1]}"
-                )
-            else:
-                conflicts.append(
-                    f"hunk {index}: neither modified nor original structure matched "
-                    f"around original lines {hunk.old_range[0]}-{hunk.old_range[1]}"
-                )
+        if conflicts and target_lines != original_lines:
+            # Auto-recover: the tree holds another branch's applied snapshot
+            # (or hand edits) — the classic cross-branch drift. Back up the
+            # dirty content, restore the original snapshot, and retry the
+            # hunks once. Only then, if it still fails, report an error.
+            # Genuine upstream drift (target already pristine) skips this:
+            # old_blocks derived from original always match pristine trees.
+            recovered = self._try_recover_and_apply(
+                context, target_path, original_lines, hunks
+            )
+            if recovered is not None:
+                return recovered
+            conflicts.append(
+                "auto-recover failed too (see backup); manual merge required"
+            )
 
         if conflicts:
             # Fallback: try unified diff via `patch` before giving up.
@@ -250,6 +238,93 @@ class SnapshotPatch(BasePatch):
         return self.result(
             "patched",
             f"applied {len(changed_hunks)} structural hunk(s)",
+            self.target,
+        )
+
+    @staticmethod
+    def _apply_hunks(
+        working_lines: list[str], hunks: list["Hunk"]
+    ) -> tuple[list[str], list["Hunk"], list[str]]:
+        """One hunk-application pass. Returns (working, changed, conflicts).
+        Never touches disk."""
+        changed: list[Hunk] = []
+        conflicts: list[str] = []
+        for index, hunk in enumerate(hunks, start=1):
+            if _contains_block(working_lines, hunk.new_block):
+                continue
+            matches = _find_block_indexes(working_lines, hunk.old_block)
+            if len(matches) == 1:
+                start = matches[0]
+                working_lines = (
+                    working_lines[:start]
+                    + hunk.new_block
+                    + working_lines[start + len(hunk.old_block) :]
+                )
+                changed.append(hunk)
+                continue
+            if len(matches) > 1:
+                conflicts.append(
+                    f"hunk {index}: old structure matched {len(matches)} locations "
+                    f"around original lines {hunk.old_range[0]}-{hunk.old_range[1]}"
+                )
+            else:
+                conflicts.append(
+                    f"hunk {index}: neither modified nor original structure matched "
+                    f"around original lines {hunk.old_range[0]}-{hunk.old_range[1]}"
+                )
+        return working_lines, changed, conflicts
+
+    def _try_recover_and_apply(
+        self,
+        context: "PatchContext",
+        target_path: Path,
+        original_lines: list[str],
+        hunks: list["Hunk"],
+    ) -> PatchResult | None:
+        """Back up the dirty tree file, restore the original snapshot, and
+        retry the hunks once. Returns a PatchResult on success, None when
+        recovery is impossible (bypassed config) or still conflicts."""
+        if context.should_bypass(self):
+            return self.result("bypassed", "patch is configured for bypass", self.target)
+        # Dry-run first, from memory: no disk writes in check mode.
+        working, changed, conflicts = self._apply_hunks(
+            list(original_lines), hunks
+        )
+        if conflicts:
+            return None
+        if not context.apply:
+            return self.result(
+                "would_patch",
+                f"would recover to original and apply {len(changed)} structural hunk(s)",
+                self.target,
+            )
+        backup = target_path.with_name(target_path.name + ".foxbak")
+        if backup.exists():
+            n = 1
+            while target_path.with_name(f"{target_path.name}.foxbak.{n}").exists():
+                n += 1
+            backup = target_path.with_name(f"{target_path.name}.foxbak.{n}")
+        try:
+            backup.write_bytes(target_path.read_bytes())
+        except OSError as e:
+            return self.result(
+                "failed",
+                f"auto-recover: cannot back up dirty file: {e}",
+                self.target,
+                manual_hint=self.manual_hint,
+            )
+        try:
+            target_path.write_text("".join(working), encoding="utf-8")
+        except OSError as e:
+            return self.result(
+                "failed",
+                f"auto-recover: cannot write recovered file: {e}",
+                self.target,
+                manual_hint=self.manual_hint,
+            )
+        return self.result(
+            "patched",
+            f"recovered from {backup.name} and applied {len(changed)} structural hunk(s)",
             self.target,
         )
 
