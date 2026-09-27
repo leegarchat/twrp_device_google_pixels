@@ -33,7 +33,7 @@ fits in CHANGES_TEXT_LIMIT chars, otherwise as a `changes_<CUR>.txt`
 document with the caption "changes". build.sh -D computes PREV as the
 previous reachable tag and CUR as the fresh -g tag (or HEAD).
 The zip caption then carries a deep link back to that changes message
-("изменения версии CUR относительно версии PREV"), so the file and
+("Full changes in version CUR since version PREV"), so the file and
 its change list stay connected no matter how the chat scrolls.
 
 --diff-from TAG is the forced variant: collect `git log TAG..HEAD`
@@ -171,21 +171,29 @@ def resolve_tag(repo, tag):
 
 
 def range_names(diff_range, repo):
-    """Split PREV..CUR for the 'changes of CUR vs PREV' link phrase.
+    """Split PREV..CUR for the 'full changes in CUR since PREV' link phrase.
 
-    A CUR of HEAD (the --diff-from form) resolves to the short sha so
-    the phrase names a real version instead of the literal HEAD; any
-    git failure keeps HEAD verbatim.
+    A CUR of HEAD (the --diff-from form, or -D without -g) names the
+    fresh -g tag sitting exactly on HEAD when there is one (that is the
+    version the testers see), else the short sha, else the literal HEAD.
+    Any git failure keeps HEAD verbatim.
     """
     base, _, cur = diff_range.partition("..")
     if cur == "HEAD":
         try:
             out = subprocess.run(
-                ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                ["git", "-C", repo, "describe", "--tags", "--exact-match", "--abbrev=0", "HEAD"],
                 capture_output=True, text=True, timeout=60,
             )
             if out.returncode == 0 and out.stdout.strip():
                 cur = out.stdout.strip()
+            else:
+                out = subprocess.run(
+                    ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if out.returncode == 0 and out.stdout.strip():
+                    cur = out.stdout.strip()
         except Exception:  # noqa: BLE001 — git missing, repo broken, ...
             pass
     return (base or "?"), (cur or "?")
@@ -214,8 +222,8 @@ def zip_caption(zip_name, size_mb, digest, push_text, link=None, base=None, cur=
     if link and base and cur:
         head += (
             f'\n<a href="{html.escape(link, quote=True)}">'
-            f"изменения версии {html.escape(cur)} "
-            f"относительно версии {html.escape(base)}</a>"
+            f"Full changes in version {html.escape(cur)} "
+            f"since version {html.escape(base)}</a>"
         )
     if push_text:
         head += f"\n\n{html.escape(push_text)}"
