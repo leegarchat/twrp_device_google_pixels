@@ -211,7 +211,15 @@ int GUIBattery::Render(void)
 
 	}
 
-	gr_textEx_scaleW(mRenderX - textW, mRenderY + ((mRenderH - mFontHeight) / 2) - 2,
+	// Fox: the percent text lives on its own style-independent row
+	// (battery_text_y theme var — the same row the clock draws on),
+	// never derived from the icon slot: switching icon styles must
+	// not move the text. A theme without the var (foreign themes)
+	// falls back to the stock slot-centered formula.
+	int textY = DataManager::GetIntValue("battery_text_y");
+	if (textY <= 0)
+		textY = mRenderY + ((mRenderH - mFontHeight) / 2) - 2;
+	gr_textEx_scaleW(mRenderX - textW, textY,
 			  mBatteryPercentStr.c_str(), fontResource, 0, TOP_LEFT, false);
 
 	return 0;

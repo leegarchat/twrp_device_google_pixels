@@ -383,8 +383,15 @@
 		<!-- Battery -->
 		<variable name="battery_12_x" value="880-%status_indent_right%"/>
 		<variable name="battery_24_x" value="940-%status_indent_right%"/>
-		<variable name="battery_2_12_x" value="900-%status_indent_right%"/>
-		<variable name="battery_2_24_x" value="960-%status_indent_right%"/>
+		<!-- Fox: unified with pie/circle (were 900/960): with the
+		     clock on the right every style placed its percent text
+		     at its own x, so the text jumped 20px on style switch
+		     while the clock stayed put. The icon keeps its own slot;
+		     the text now ends at the same x in all styles.
+		     Center/right clock groups already share status_right_x
+		     and need no change. -->
+		<variable name="battery_2_12_x" value="880-%status_indent_right%"/>
+		<variable name="battery_2_24_x" value="940-%status_indent_right%"/>
 
 		<variable name="battery_y" value="%status_info_y%+6"/>
 		<!-- Fox: +20 (was +10): the 62x31 style_2 glyph optically
@@ -397,6 +404,12 @@
 		     baseline — left authorial. -->
 		<variable name="battery_2_y" value="%status_info_y%+20"/>
 		<variable name="battery_circle_y" value="%status_info_y%+4"/>
+		<!-- Fox: style-independent percent-text row. GUIBattery drew
+		     the text Y from the icon slot, so the text jumped with
+		     every style (and never matched the clock row exactly).
+		     The code reads this var and draws the text here in all
+		     styles; the icon slot keeps its own geometry. -->
+		<variable name="battery_text_y" value="%status_info_y%"/>
 
 		<!-- File list -->
 		<variable name="fileselector_width" value="%screen_w%"/>
