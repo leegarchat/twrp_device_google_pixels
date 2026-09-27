@@ -88,7 +88,8 @@
 #                     Long lists go to changes_from_<TAG>.txt. Overrides -D.
 #                     TAG must exist, else warning + zip-only.
 #   -T, --text TEXT   With --push: append TEXT to the zip message after the
-#                     md5 line (e.g. -T "looks like OTG is fixed on P10").
+#                     md5 / full-changes-link lines
+#                     (e.g. -T "looks like OTG is fixed on P10").
 #   -h, --help        Show this help.
 # END HELP
 

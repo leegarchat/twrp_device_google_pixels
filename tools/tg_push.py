@@ -24,13 +24,17 @@ Mixing works (--push admin,testers). Pinning in a DM usually fails
 are still delivered. NOTE: "admin" is reserved; a group literally
 named "admin" cannot be addressed (rename it).
 
---text appends a postscript to the zip message after the md5 line.
+--text appends a postscript to the zip message after the md5 line
+(after the full-changes link line when a change list was sent).
 
 --diff collects `git log PREV..CUR` (commit subjects + bodies) from the
 repo and sends it before the zip, per group: as a text message when it
 fits in CHANGES_TEXT_LIMIT chars, otherwise as a `changes_<CUR>.txt`
 document with the caption "changes". build.sh -D computes PREV as the
 previous reachable tag and CUR as the fresh -g tag (or HEAD).
+The zip caption then carries a deep link back to that changes message
+("изменения версии CUR относительно версии PREV"), so the file and
+its change list stay connected no matter how the chat scrolls.
 
 --diff-from TAG is the forced variant: collect `git log TAG..HEAD`
 regardless of which tags sit in between (long file goes to
@@ -55,10 +59,10 @@ member of the chat; pinning needs admin pin rights.
 Admin id: personal user/chat id for DMs (e.g. 123456789 — the user
 must have started the bot with /start, otherwise sends fail).
 
-Sends via send_document with a caption (filename, size, md5 [+ text]),
-then pins the message with notification for all (bot needs admin pin
-rights — a pin failure only warns). Requires aiogram v3
-(pip install aiogram).
+Sends via send_document with a caption (filename, size, md5, optional
+full-changes link back to the change-list message, [+ text]), then pins
+the message with notification for all (bot needs admin pin rights — a
+pin failure only warns). Requires aiogram v3 (pip install aiogram).
 
 Bot API file limit is 50 MB — bigger files are refused with a clear
 error (exit 2). Any other failure exits 1. Success prints message id.
@@ -66,6 +70,7 @@ error (exit 2). Any other failure exits 1. Success prints message id.
 
 import asyncio
 import hashlib
+import html
 import json
 import os
 import subprocess
@@ -165,6 +170,58 @@ def resolve_tag(repo, tag):
     return out.stdout.strip() or None
 
 
+def range_names(diff_range, repo):
+    """Split PREV..CUR for the 'changes of CUR vs PREV' link phrase.
+
+    A CUR of HEAD (the --diff-from form) resolves to the short sha so
+    the phrase names a real version instead of the literal HEAD; any
+    git failure keeps HEAD verbatim.
+    """
+    base, _, cur = diff_range.partition("..")
+    if cur == "HEAD":
+        try:
+            out = subprocess.run(
+                ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                cur = out.stdout.strip()
+        except Exception:  # noqa: BLE001 — git missing, repo broken, ...
+            pass
+    return (base or "?"), (cur or "?")
+
+
+def message_link(chat_id, message_id):
+    """Deep link to a message just sent in this chat.
+
+    Supergroups/channels get the public t.me/c/ form; plain user chats
+    (admin DMs) get the tg:// form clients resolve in place. Either way
+    a client that cannot resolve still shows the caption text.
+    """
+    if chat_id < 0:
+        digits = str(-chat_id)
+        if digits.startswith("100"):
+            digits = digits[3:]
+        return f"https://t.me/c/{digits}/{message_id}"
+    return f"tg://openmessage?user_id={chat_id}&message_id={message_id}"
+
+
+def zip_caption(zip_name, size_mb, digest, push_text, link=None, base=None, cur=None):
+    """File-message caption: name, size|md5, optional full-changes link,
+    optional postscript. Always HTML (escaped), so the link phrase
+    renders as a link and arbitrary --text stays literal."""
+    head = f"{html.escape(zip_name)}\n{size_mb} MB | md5: {digest}"
+    if link and base and cur:
+        head += (
+            f'\n<a href="{html.escape(link, quote=True)}">'
+            f"изменения версии {html.escape(cur)} "
+            f"относительно версии {html.escape(base)}</a>"
+        )
+    if push_text:
+        head += f"\n\n{html.escape(push_text)}"
+    return head
+
+
 def changes_filename(range_):
     if ".." in range_:
         base, _, cur = range_.partition("..")
@@ -199,8 +256,14 @@ async def run_notify(token, chat_ids, text):
     return failed
 
 
-async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
-    """Send the --diff change list, then zip (+pin) per chat. Returns failures."""
+async def run_push(token, chat_ids, zip_path, zip_name, size_mb, digest,
+                 push_text, diff_range, diff_repo):
+    """Send the --diff change list, then zip (+pin) per chat. Returns failures.
+
+    The zip caption links back to the change-list message sent just
+    above in the same chat (message_id is only known after that send,
+    so the caption is built per chat, after the changes land).
+    """
     from aiogram import Bot
     from aiogram.types import FSInputFile
 
@@ -225,8 +288,10 @@ async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
 
     bot = Bot(token=token)
     failed = 0
+    base, cur = range_names(diff_range, diff_repo) if diff_range else (None, None)
     try:
         for group, chat_id in chat_ids:
+            changes_mid = None
             if changes_file:
                 try:
                     doc = await bot.send_document(
@@ -235,6 +300,7 @@ async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
                         caption=f"changes {diff_range}",
                     )
                     print(f"[tg-push] OK '{group}': changes file message_id={doc.message_id}")
+                    changes_mid = doc.message_id
                 except Exception as e:  # noqa: BLE001
                     print(f"ERROR: telegram refused changes file for '{group}': {e}", file=sys.stderr)
                     failed += 1
@@ -242,13 +308,17 @@ async def run_push(token, chat_ids, zip_path, caption, diff_range, diff_repo):
                 try:
                     txt = await bot.send_message(chat_id, f"Changes {diff_range}:\n\n{changes_text}")
                     print(f"[tg-push] OK '{group}': changes message_id={txt.message_id}")
+                    changes_mid = txt.message_id
                 except Exception as e:  # noqa: BLE001
                     print(f"ERROR: telegram refused changes text for '{group}': {e}", file=sys.stderr)
                     failed += 1
 
+            link = message_link(chat_id, changes_mid) if changes_mid else None
+            caption = zip_caption(zip_name, size_mb, digest, push_text, link, base, cur)
             print(f"[tg-push] sending {os.path.basename(zip_path)} to '{group}' ...")
             try:
-                msg = await bot.send_document(chat_id, FSInputFile(zip_path), caption=caption)
+                msg = await bot.send_document(
+                    chat_id, FSInputFile(zip_path), caption=caption, parse_mode="HTML")
                 try:
                     # disable_notification=False (default) = everyone gets notified.
                     await bot.pin_chat_message(chat_id, msg.message_id)
@@ -439,13 +509,11 @@ def main(argv):
         print("ERROR: aiogram v3 is required (pip install aiogram)", file=sys.stderr)
         return 2
     digest = md5_of(zip_path)
-    caption = f"{os.path.basename(zip_path)}\n{size / 1048576:.1f} MB | md5: {digest}"
-    if push_text:
-        caption += f"\n\n{push_text}"
     try:
         failed = asyncio.run(run_push(
-            cfg["token"], chat_ids, os.path.abspath(zip_path), caption,
-            diff_range, repo_path or default_repo_path(),
+            cfg["token"], chat_ids, os.path.abspath(zip_path),
+            os.path.basename(zip_path), f"{size / 1048576:.1f}", digest,
+            push_text, diff_range, repo_path or default_repo_path(),
         ))
     except Exception as e:  # noqa: BLE001 — aiogram init / event loop failure
         print(f"ERROR: telegram client failed: {e}", file=sys.stderr)
