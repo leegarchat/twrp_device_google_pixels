@@ -164,17 +164,27 @@ int GUIBattery::Render(void)
 		// slot. The slot (mRenderW/H via ScaleX/ScaleY) and the image
 		// (min-scale, aspect kept) diverge on non-1080 panels, so a
 		// slot-based origin pushed the glyph off the padding/text math.
-		// The icon right edge now lands exactly mPadding left of the
-		// text on any panel and any style, with or without wide-theme
-		// variants. When raster == slot (1080 panels) every expression
-		// below reduces to the stock one — zero behavior change there.
+		// The icon right edge lands exactly mPadding past the widest
+		// percent string on any panel and any style, with or without
+		// wide-theme variants. When raster == slot (1080 panels) every
+		// expression below reduces to the stock one — zero behavior
+		// change there.
 		int iw = finalImage->GetWidth();
 		int ih = finalImage->GetHeight();
 		if (iw <= 0 || ih <= 0) {
 			iw = mRenderW;
 			ih = mRenderH;
 		}
-		int iconRealX = textW + mPadding + iw;
+		// Fox: the icon lives in its own fixed layout, independent of
+		// the percent text width. Stock anchored the icon at
+		// textW + padding, so every digit change (100 -> 99 -> 9)
+		// dragged the icon sideways and the block shimmied. Anchor to
+		// the widest possible string instead: the icon never moves,
+		// the text stays right-aligned at mRenderX on its own.
+		int maxTextW = twrpTruetype::gr_ttf_measureEx("100%", fontResource);
+		if (maxTextW < textW)
+			maxTextW = textW;
+		int iconRealX = maxTextW + mPadding + iw;
 		int ix = mRenderX - iconRealX;
 		int iy = (mRenderH > ih) ? mRenderY + (mRenderH - ih) / 2 : mRenderY;
 
