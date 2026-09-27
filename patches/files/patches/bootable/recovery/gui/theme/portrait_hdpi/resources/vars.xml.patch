@@ -1,0 +1,19 @@
+--- a/bootable/recovery/gui/theme/portrait_hdpi/resources/vars.xml
++++ b/bootable/recovery/gui/theme/portrait_hdpi/resources/vars.xml
+@@ -387,7 +387,15 @@
+ 		<variable name="battery_2_24_x" value="960-%status_indent_right%"/>
+ 
+ 		<variable name="battery_y" value="%status_info_y%+6"/>
+-		<variable name="battery_2_y" value="%status_info_y%+10"/>
++		<!-- Fox: +20 (was +10): the 62x31 style_2 glyph optically
++		     centers on the status text cap line (measured on shiba:
++		     text cap-center 71.5 at status_info_y=37, so slot top 56;
++		     +1 field refinement, icon sat 1px over the cap-top guide).
++		     +10 pinned the icon 9px above the text row while the text
++		     sits lowered by the status_h placement. Circle/dynamic
++		     styles are taller glyphs already bottom-anchored at the
++		     baseline — left authorial. -->
++		<variable name="battery_2_y" value="%status_info_y%+20"/>
+ 		<variable name="battery_circle_y" value="%status_info_y%+4"/>
+ 
+ 		<!-- File list -->
