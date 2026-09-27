@@ -2,6 +2,11 @@
 # from Windows editors (VSCode via WSL mount, etc.)
 * text=auto eol=lf
 
+# cmd.exe parses .bat only with CRLF in the system ANSI codepage:
+# LF/UTF-8 arrivals from Linux break it ('m' is not recognized, syntax
+# errors). This file MUST stay CRLF + pure ASCII on every checkout.
+installer/install-desktop.bat text eol=crlf
+
 # Explicitly binary — no line-ending conversion
 *.img        binary
 *.bin        binary

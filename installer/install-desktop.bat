@@ -1,4 +1,9 @@
 @echo off
+rem KEEP THIS FILE CRLF + pure ASCII (enforced by .gitattributes):
+rem cmd.exe only parses .bat with CRLF in the system ANSI codepage;
+rem LF/UTF-8 arrivals from Linux break it. Re-save with CRLF after
+rem any edit on Linux. Echo text inside if (...) blocks must escape
+rem parens as ^( ^) or the block falls apart.
 rem Thin launcher for `bootsmasher install` (the whole installer lives in
 rem the binary: menus, fetch/rebuild/report/flash, export.txt paths).
 rem Binaries live in bin\windows\ as install[-small]-windows-<arch>;
@@ -18,7 +23,7 @@ rem confirmation (except --force) so a double-clicked window never
 rem vanishes before the result is read.
 rem NOTE: paths ($ROOT, $BIN, ...) are ALWAYS referenced as !VAR!
 rem (never %VAR%), because %VAR% eats `!` when delayed expansion is
-rem on — and user paths do contain `!` (e.g. ...!App\...). ROOT is
+rem on -- and user paths do contain `!` (e.g. ...!App\...). ROOT is
 rem captured before delayed expansion is even enabled.
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
@@ -146,7 +151,7 @@ if "!NEED_PICK!"=="1" (
     if exist "!PICKFILE!" set /p "PICK=" < "!PICKFILE!"
     del "!PICKFILE!" 2>nul
     if defined PICK (
-      echo Payload (file picker): !PICK!
+      echo Payload ^(file picker^): !PICK!
       set "DROP=!PICK!"
     )
   )
