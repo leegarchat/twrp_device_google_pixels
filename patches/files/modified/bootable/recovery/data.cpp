@@ -1544,8 +1544,6 @@ void DataManager::SetDefaultValues()
   mPersist.SetValue("tw_never_show_system_ro_page", "0");
   mPersist.SetValue("tw_language", EXPAND(TW_DEFAULT_LANGUAGE));
   LOGINFO("LANG: %s\n", EXPAND(TW_DEFAULT_LANGUAGE));
-  // Fox (pixels): maintainer default is Russian (BoardConfig ships en).
-  mPersist.SetValue("tw_language", "ru");
 
   mData.SetValue("tw_has_adopted_storage", "0");
 

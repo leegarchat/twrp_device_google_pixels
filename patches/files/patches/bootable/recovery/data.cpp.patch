@@ -8,11 +8,10 @@
  #include <private/android_filesystem_config.h>
  #include "variables.h"
  #include "data.hpp"
-@@ -322,6 +323,20 @@
- #endif
+@@ -323,6 +324,20 @@
    static bool loaded = false;
    string dev_id;
-+
+ 
 +  // Fox (malibu): /persist is not mounted this early, so Path_Exists
 +  // below always misses and settings silently reset every boot (save
 +  // mounts it, load never did). Mount first; no-op when absent.
@@ -26,9 +25,10 @@
 +    mount("/dev/block/by-name/persist", "/persist", "ext4",
 +          MS_NOATIME | MS_NOSUID | MS_NODEV, NULL);
 +  }
- 
++
    // Only run this function once, and make sure normal settings file has not yet been read
    if (loaded || !mBackingFile.empty()
+       || !TWFunc::Path_Exists(PERSIST_SETTINGS_FILE))
 @@ -802,16 +817,52 @@
      	mConst.SetValue("fox_use_nano_editor", "0");
    #endif
@@ -156,13 +156,4 @@
 +  mPersist.SetValue("tw_screen_timeout_secs", "300");
    mPersist.SetValue("tw_no_screen_timeout", "0");
  #endif
- 
-@@ -1461,6 +1544,8 @@
-   mPersist.SetValue("tw_never_show_system_ro_page", "0");
-   mPersist.SetValue("tw_language", EXPAND(TW_DEFAULT_LANGUAGE));
-   LOGINFO("LANG: %s\n", EXPAND(TW_DEFAULT_LANGUAGE));
-+  // Fox (pixels): maintainer default is Russian (BoardConfig ships en).
-+  mPersist.SetValue("tw_language", "ru");
- 
-   mData.SetValue("tw_has_adopted_storage", "0");
  
