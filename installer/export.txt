@@ -8,7 +8,8 @@
 # Drag-and-drop (or --recovery-img PATH on the command line) overrides
 # RECOVERY_IMG for one run — this file never needs editing just to
 # flash a different payload. A relative --recovery-img resolves
-# against the working directory.
+# against the working directory. With no payload at all (nothing
+# dropped, entry here missing) the launchers pop a system file picker.
 #
 # The binary picks the platform-tools dir by OS (PLATFORM_TOOLS_LINUX
 # on Linux, PLATFORM_TOOLS_WINDOWS on Windows); a bare FASTBOOT_BIN /

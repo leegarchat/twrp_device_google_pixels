@@ -97,6 +97,7 @@ need_file install-recovery.sh
 need_file install-desktop.sh
 need_file install-desktop.bat
 need_file install-desktop.AppImage
+need_file install-desktop.exe
 need_file "$PAYLOAD"
 need_file META-INF/com/google/android/update-binary
 need_file META-INF/com/google/android/updater-script
@@ -113,7 +114,7 @@ chmod 644 module.prop export.txt customize.sh 2>/dev/null || true
 
 rm -f "$OUT"
 zip -qr9 -X "$OUT" module.prop customize.sh export.txt install-recovery.sh \
-    install-desktop.sh install-desktop.bat install-desktop.AppImage \
+    install-desktop.sh install-desktop.bat install-desktop.exe install-desktop.AppImage \
     "$PAYLOAD" bin/ META-INF/
 
 echo "--- $OUT ($(du -h "$OUT" | cut -f1)) ---"
@@ -131,7 +132,7 @@ echo "$NAMES" | grep -x -e install.sh -e install.bat -e install.AppImage && { ec
 echo "$NAMES" | grep -E "^(backup|dist/|target/|platform-tools)" && { echo "BAD: weight outside bin/ inside zip" >&2; exit 1; } || true
 # Everything every consumer needs must be present.
 for f in module.prop customize.sh export.txt install-recovery.sh \
-    install-desktop.sh install-desktop.bat install-desktop.AppImage \
+    install-desktop.sh install-desktop.bat install-desktop.exe install-desktop.AppImage \
     "$PAYLOAD" META-INF/com/google/android/update-binary \
     META-INF/com/google/android/updater-script; do
     echo "$NAMES" | grep -qx "$f" || { echo "BAD: missing $f" >&2; exit 1; }

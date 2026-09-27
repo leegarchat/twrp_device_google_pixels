@@ -9,6 +9,10 @@
 # --recovery-img (overrides export.txt RECOVERY_IMG for this run, no
 # editing needed). This covers drops onto this script and onto
 # install-desktop.AppImage (its AppRun forwards args here unchanged).
+# File managers without drop-onto-executable (KDE Dolphin): right-click
+# the payload -> "Install with OrangeFox" (kde-service-menu/ action),
+# or just double-click: when the export.txt payload is missing the
+# system file picker (kdialog/zenity) asks for it instead of failing.
 # On interactive terminal runs (no --force, not --help) the script
 # pauses for Enter at the end, so a window opened by double-clicking
 # (or install.AppImage) stays readable until RESULT is confirmed.
@@ -69,6 +73,63 @@ for a in "$@"; do
     esac
 done
 case "$EXPORT_FILE" in /*) ;; *) EXPORT_FILE="$PWD/$EXPORT_FILE";; esac
+
+# System file picker: when the run has no payload — nothing dropped,
+# no explicit --recovery-img — and the export.txt payload the binary
+# would pin does not exist, ask the desktop for the file instead of
+# failing (covers stale export.txt after unpacking a new zip next to
+# old configs, and file managers without drop-onto-executable like
+# KDE Dolphin: right-click action aside, a bare double-click lands
+# here too via install-desktop.AppImage).
+# Skipped for scripted/non-payload flows (--force/--file/help and an
+# explicit --recovery-img: the caller knows what it is doing), when
+# the export payload is healthy, and when no desktop session/dialog
+# is available (headless runs keep the binary's clear error).
+_NEED_PICK=1
+if [ -n "$DROP" ]; then
+    _NEED_PICK=0
+else
+    for a in "$@"; do
+        case "$a" in
+            --recovery-img|--recovery-img=*|--force|-h|--help|--file) _NEED_PICK=0; break;;
+        esac
+    done
+fi
+if [ "$_NEED_PICK" = 1 ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+    _PAYLOAD=""
+    if [ -f "$EXPORT_FILE" ]; then
+        _LINE="$(grep -E '^[[:space:]]*RECOVERY_IMG[[:space:]]*=' "$EXPORT_FILE" 2>/dev/null | tail -1)"
+        _VAL="${_LINE#*=}"
+        _VAL="$(printf '%s' "$_VAL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        case "$_VAL" in
+            \"*\") _VAL="${_VAL#\"}"; _VAL="${_VAL%\"}";;
+            \'*\') _VAL="${_VAL#\'}"; _VAL="${_VAL%\'}";;
+        esac
+        case "$_VAL" in
+            /*) _PAYLOAD="$_VAL";;
+            *) [ -n "$_VAL" ] && _PAYLOAD="$(dirname "$EXPORT_FILE")/$_VAL";;
+        esac
+    fi
+    if [ ! -f "$_PAYLOAD" ]; then
+        _START="$(dirname "$EXPORT_FILE")"
+        _PICK=""
+        if command -v kdialog >/dev/null 2>&1; then
+            _PICK="$(kdialog --title "OrangeFox recovery payload" \
+                --getopenfilename "$_START" '*.lz4 *.cpio *.img | Recovery payload' \
+                2>/dev/null || true)"
+        elif command -v zenity >/dev/null 2>&1; then
+            _PICK="$(zenity --file-selection --title="OrangeFox recovery payload" \
+                --filename="$_START/" --file-filter='Payload | *.lz4 *.cpio *.img' \
+                --file-filter='All | *' 2>/dev/null || true)"
+        fi
+        if [ -n "$_PICK" ]; then
+            echo "Payload (file picker): $_PICK"
+            DROP="$_PICK"
+        fi
+    fi
+    unset _PAYLOAD _LINE _VAL _START _PICK
+fi
+unset _NEED_PICK
 
 # Menu runs are interactive; usage/help/--force/--file are not.
 INTERACTIVE=1
