@@ -9,10 +9,9 @@
 # --recovery-img (overrides export.txt RECOVERY_IMG for this run, no
 # editing needed). This covers drops onto this script and onto
 # install-desktop.AppImage (its AppRun forwards args here unchanged).
-# File managers without drop-onto-executable (KDE Dolphin): right-click
-# the payload -> "Install with OrangeFox" (kde-service-menu/ action),
-# or just double-click: when the export.txt payload is missing the
-# system file picker (kdialog/zenity) asks for it instead of failing.
+# File managers without drop-onto-executable (KDE Dolphin): just
+# double-click — when the export.txt payload is missing the system
+# file picker (kdialog/zenity) asks for it instead of failing.
 # On interactive terminal runs (no --force, not --help) the script
 # pauses for Enter at the end, so a window opened by double-clicking
 # (or install.AppImage) stays readable until RESULT is confirmed.
@@ -79,8 +78,8 @@ case "$EXPORT_FILE" in /*) ;; *) EXPORT_FILE="$PWD/$EXPORT_FILE";; esac
 # would pin does not exist, ask the desktop for the file instead of
 # failing (covers stale export.txt after unpacking a new zip next to
 # old configs, and file managers without drop-onto-executable like
-# KDE Dolphin: right-click action aside, a bare double-click lands
-# here too via install-desktop.AppImage).
+# KDE Dolphin, where a bare double-click lands here too via
+# install-desktop.AppImage).
 # Skipped for scripted/non-payload flows (--force/--file/help and an
 # explicit --recovery-img: the caller knows what it is doing), when
 # the export payload is healthy, and when no desktop session/dialog
