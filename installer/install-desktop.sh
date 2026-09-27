@@ -4,12 +4,25 @@
 # Binaries live in bin/<os>/ as install[-small]-<os>-<arch>; the full
 # build wins, small is the fallback. Then legacy spots (next to this
 # script, cargo target dir, PATH). Every argument is forwarded.
+# Drag-and-drop: when the FIRST argument is an existing file (not a
+# flag), it is consumed as the recovery cpio payload and forwarded as
+# --recovery-img (overrides export.txt RECOVERY_IMG for this run, no
+# editing needed). This covers drops onto this script and onto
+# install-desktop.AppImage (its AppRun forwards args here unchanged).
 # On interactive terminal runs (no --force, not --help) the script
 # pauses for Enter at the end, so a window opened by double-clicking
 # (or install.AppImage) stays readable until RESULT is confirmed.
 # (The reboot-to-recovery question lives inside the binary now, so
 # the launcher never asks twice.)
 set -u
+
+# Drag-and-drop payload: a dropped file becomes --recovery-img.
+# Only $1 qualifies (flags and the rest pass through untouched).
+DROP=""
+if [ $# -ge 1 ] && [ -n "${1:-}" ] && [ "${1#-}" = "$1" ] && [ -f "$1" ]; then
+    DROP="$1"
+    shift
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "$(uname -m 2>/dev/null || echo unknown)" in
@@ -77,6 +90,12 @@ for a in "$@"; do
 done
 if [ "$HAS_EXPORT" = 0 ]; then
     set -- --export "$EXPORT_FILE" "$@"
+fi
+# Dropped payload (see top): forwarded as --recovery-img, which the
+# binary applies over export.txt RECOVERY_IMG for this run only.
+if [ -n "$DROP" ]; then
+    echo "Payload (dropped file): $DROP"
+    set -- --recovery-img "$DROP" "$@"
 fi
 "$BIN" install "$@"
 RC=$?

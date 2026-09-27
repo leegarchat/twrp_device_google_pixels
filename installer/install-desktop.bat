@@ -3,7 +3,11 @@ rem Thin launcher for `bootsmasher install` (the whole installer lives in
 rem the binary: menus, fetch/rebuild/report/flash, export.txt paths).
 rem Binaries live in bin\windows\ as install[-small]-windows-<arch>;
 rem the full build wins, small is the fallback. Then legacy spots.
-rem Every argument is forwarded unchanged.
+rem Every argument is forwarded unchanged, except a drag-and-dropped
+rem file: when the FIRST argument is an existing file (not a flag) it
+rem is consumed as the recovery cpio payload and forwarded as
+rem --recovery-img (overrides export.txt RECOVERY_IMG for this run,
+rem no editing needed). Just drop the .lz4 onto this .bat.
 rem On interactive runs the script prints the menu keys up front and
 rem pauses for Enter at the end. (The reboot-to-recovery question lives
 rem inside the binary now, so the launcher never asks twice.)
@@ -62,19 +66,40 @@ if not defined BIN (
   goto finish
 )
 
+rem Drag-and-drop payload: %1 as an existing file (not a flag) is
+rem consumed as the recovery cpio and forwarded as --recovery-img
+rem (overrides export.txt RECOVERY_IMG for this run, no editing).
+rem Only %1 qualifies; flags and the rest pass through untouched.
+rem %* is NOT shift-aware, so the remaining args are rebuilt into
+rem ARGS (every token re-quoted) and used below instead of %*.
+set "DROP="
+set "ARGS="
+set "A1=%~1"
+if defined A1 if not "!A1:~0,1!"=="-" if exist "%~1" (
+  set "DROP=%~f1"
+  shift
+)
+:collect_args
+if "%~1"=="" goto collected_args
+set "ARGS=!ARGS! \"%~1\""
+shift
+goto collect_args
+:collected_args
+if defined DROP echo Payload ^(dropped file^): !DROP!
+
 rem Which export.txt this run uses (caller's --export wins, else the
 rem one next to this script).
 set "EXPORT_FILE=!ROOT!\export.txt"
 set "PREV="
-if not "%*"=="" (
-  for %%a in (%*) do (
+if defined ARGS (
+  for %%a in (!ARGS!) do (
     if "!PREV!"=="--export" (
-      set "EXPORT_FILE=%%a"
+      set "EXPORT_FILE=%%~a"
       set "PREV="
-    ) else if "%%a"=="--export" (
+    ) else if "%%~a"=="--export" (
       set "PREV=--export"
     ) else (
-      set "EX=%%a"
+      set "EX=%%~a"
       if "!EX:~0,9!"=="--export=" set "EXPORT_FILE=!EX:~9!"
     )
   )
@@ -87,24 +112,35 @@ if not "!EF:~1,1!"==":" if not "!EF:~0,1!"=="\" if not "!EF:~0,2!"=="\\" (
 )
 
 rem Menu runs are interactive; usage/help/--force/--file are not.
+rem (Matched against the rebuilt arg list so a dropped filename can
+rem never trip the heuristics.)
 set "INTERACTIVE=1"
-echo %* | findstr /i /c:"--force" /c:"-h" /c:"--help" /c:"--file" >nul 2>&1 && set "INTERACTIVE=0"
+echo !ARGS! | findstr /i /c:"--force" /c:"-h" /c:"--help" /c:"--file" >nul 2>&1 && set "INTERACTIVE=0"
 if "!INTERACTIVE!"=="1" (
   echo Arrow-key menus: Up/Down to move, Enter to choose, q/Esc to exit.
   echo.
 )
 
 rem Pin export.txt so the launcher works from any working directory.
-echo %* | findstr /c:"--export" >nul 2>&1
+echo !ARGS! | findstr /c:"--export" >nul 2>&1
 if errorlevel 1 (
   set PIN=--export "!EXPORT_FILE!"
 ) else (
   set "PIN="
 )
 
+rem Dropped payload rides as --recovery-img (quoted once here; the
+rem binary strips it). Empty when nothing was dropped.
+set "RIMG="
+set "RIMGV="
+if defined DROP (
+  set "RIMG=--recovery-img"
+  set "RIMGV="!DROP!""
+)
+
 rem UTF-8 console so the installer menus render correctly.
 chcp 65001 >nul
-"!BIN!" install !PIN! %*
+"!BIN!" install !PIN! !RIMG! !RIMGV! !ARGS!
 set "RC=%ERRORLEVEL%"
 goto finish
 
@@ -115,7 +151,7 @@ rem with the installer's code. %RC% stays percent-form on purpose:
 rem it expands before endlocal runs (RC is always numeric anyway).
 if not defined RC set "RC=1"
 set "PAUSEME=1"
-echo %* | findstr /i /c:"--force" /c:"-h" /c:"--help" >nul 2>&1 && set "PAUSEME=0"
+echo !ARGS! | findstr /i /c:"--force" /c:"-h" /c:"--help" >nul 2>&1 && set "PAUSEME=0"
 if "!PAUSEME!"=="1" (
   echo.
   set /p "DUMMY=Press Enter to exit... "
