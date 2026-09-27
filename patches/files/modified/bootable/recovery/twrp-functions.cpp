@@ -2190,15 +2190,23 @@ int TWFunc::Set_Brightness(std::string brightness_value)
           brightness_value = std::to_string(max_brightness);
         }
       }
-      // Fox: panel quirk — s6e3hc3 (gs101) blanks the screen at exactly
-      // 2048 (2^11), reproducible in Android too (Google kernel-module
-      // bug; field-proven by a 10→3200 loop test on raven that went dark
-      // at 2048 only). Step over it: 2048 → 2049 is visually identical
-      // and harmless on panels without the bug, so apply unconditionally
-      // (before the clamp below, which still caps any over-range result).
+      // Fox: panel quirk — s6e3hc3 (gs101) blanks the screen at 2048
+      // (2^11), reproducible in Android too (Google kernel-module bug).
+      // Step UNDER it with margin: 2048 → 2028. The first attempt
+      // (+1 → 2049) still blanked on tester hardware (raven flog:
+      // quirk fired, driver got 2049, screen stayed black at 65%),
+      // so threading the needle next to the poison point does not
+      // work — something around it (quantization/hysteresis/ramp
+      // transit through 2048, panel-revision variance) eats +1.
+      // -20 stays below the point (a ramp 2017→2028 never transits
+      // 2048; +20 would cross it), keeps monotonicity with the
+      // slider neighbors (2017 < 2028 < 2080), and is visually
+      // identical (0.7% of a 3152 range). Harmless on panels without
+      // the bug, so apply unconditionally (before the clamp below,
+      // which still caps any over-range result).
       if (brightness_value == "2048") {
-        LOGINFO("TWFunc::Set_Brightness: quirk 2048 -> 2049 (2^11 panel blank)\n");
-        brightness_value = "2049";
+        LOGINFO("TWFunc::Set_Brightness: quirk 2048 -> 2028 (2^11 panel blank)\n");
+        brightness_value = "2028";
       }
       LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n",
 	      brightness_value.c_str());
