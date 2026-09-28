@@ -229,3 +229,22 @@
  		f2fs_command += " && sload_f2fs -t /data " + Actual_Block_Device;
  	}
  
+@@ -2919,7 +3046,17 @@
+ 		}
+ 	}
+ 	tar.part_settings = part_settings;
+-	tar.backup_exclusions = &backup_exclusions;
++	// Fox: the running backup folder is archived when the destination
++	// lives inside the source tree (internal storage onto itself).
++	// Exclude exactly this folder from THIS tar walk so the output can
++	// never recurse into itself. Scoped copy: the partition's own list
++	// is untouched, so later backups (e.g. to USB-OTG) still see
++	// everything. Folders outside the source never match: zero change
++	// for all other backups.
++	TWExclude fox_backup_exclusions = backup_exclusions;
++	if (!part_settings->Backup_Folder.empty())
++		fox_backup_exclusions.add_absolute_dir(part_settings->Backup_Folder);
++	tar.backup_exclusions = &fox_backup_exclusions;
+ 	tar.setdir(Backup_Path);
+ 	tar.setfn(Full_FileName);
+ 	tar.setsize(Backup_Size);

@@ -1591,18 +1591,19 @@ int TWPartitionManager::Run_Backup(bool adbbackup) {
 		backup_path = Backup_List.substr(start_pos, end_pos - start_pos);
 		part_settings.Part = Find_Partition_By_Path(backup_path);
 		if (part_settings.Part != NULL) {
-// DJ9 20/08/2018 { - check for someone trying to back up internal storage onto internal storage
-      		if ((strstr(backup_path.c_str(), "/storage")) || (strstr(backup_path.c_str(), "/data/media/0")))
-        	{ 
-          	   if (strstr(part_settings.Backup_Folder.c_str(), "data/media/0"))
-             		{
-                	   gui_err("fox_internal_fatal_i1=OrangeFox: FATAL ERROR! You cannot backup Internal Storage onto itself!");
-                	   gui_err("fox_internal_fatal_i2=You MUST change the backup destination to MicroSD/USB-OTG.");
-                	   return false;
-             		} 
-             		   else gui_msg("fox_internal_q1=OrangeFox - Internal Storage - take care!");
-        	}
-// DJ9 20/08/2018 }
+// Fox: internal storage MAY be backed up onto itself — Backup_Tar
+// excludes the running backup folder from the tar walk, so the
+// output can never recurse into itself (replaces the 2018 hard
+// FATAL, which predates that guard).
+       		if ((strstr(backup_path.c_str(), "/storage")) || (strstr(backup_path.c_str(), "/data/media/0")))
+         	{
+           	   if (strstr(part_settings.Backup_Folder.c_str(), "data/media/0"))
+              		{
+                	   gui_msg("fox_internal_q1=OrangeFox - Internal Storage - take care!");
+                	   LOGINFO("Fox: internal-storage backup destination is inside the source; the running backup folder is excluded from the archive.\n");
+              		}
+              		   else gui_msg("fox_internal_q1=OrangeFox - Internal Storage - take care!");
+         	}
 			if (!Backup_Partition(&part_settings))
 				return false;
 		} else {
