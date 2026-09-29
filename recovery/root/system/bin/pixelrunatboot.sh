@@ -99,23 +99,54 @@ _siw_map() {
     return 1
 }
 
+# --- siw unmap <mapped-name> <partbase> ------------------------------------
+# One-shot teardown for _siw_map mappings: `siw disconnect` only drops
+# loop nodes from `connect`; dm nodes from `map` need `siw unmap`.
+# Also drops the slot-less alias when it dangles (live-proven:
+# /dev/block/mapper/vendor_dlkm -> vendor_dlkm_a kept tripping
+# Unmap_Super_Devices into E:Unable to unmap at format).
+# Best-effort: warnings only, never fails the caller.
+_siw_unmap() {
+    local _name="$1" _part="$2"
+    local _a
+    if [ -x "$SIW" ] && [ -n "$_name" ]; then
+        "$SIW" unmap "$_name" >>"$LOGF" 2>&1 \
+            || plog "siw-unmap" "unmap warning: $_name"
+    fi
+    if [ -n "$_part" ]; then
+        _a="/dev/block/mapper/$_part"
+        if [ -L "$_a" ] && [ ! -e "$_a" ]; then
+            if rm -f "$_a" 2>/dev/null; then
+                plog "siw-unmap" "removed dangling alias $_a"
+            else
+                plog "siw-unmap" "cannot remove dangling alias $_a"
+            fi
+        fi
+    fi
+}
+
 # --- map + mount + copy fallback ------------------------------------------
 # _siw_map_copy <partbase> <slotsuffix(_a)> <slotnum> <mangle> <outdir> <findname>
 # Copies matching files to outdir, prints staged paths. Returns 0 if >=1.
+# One-shot: a mapping created here is unmapped before return on every
+# path (copy ok, copy empty, mount failed) — no traces left behind.
 _siw_map_copy() {
     local _part="$1" _sfxname="$2" _slot="$3" _subdir="$4" _outdir="$5" _fname="$6"
-    local _node _mnt _n _f _base
+    local _node _mnt _n _f _base _mapped
     _node="/dev/block/mapper/${_part}${_sfxname}"
+    _mapped=0
     if [ ! -b "$_node" ]; then
         plog "map-copy" "$_node absent, mapping via siw"
         _siw_map "$_part" "${_sfxname#_}" "$_slot" \
             || { plog "map-copy" "map failed: ${_part}${_sfxname}"; return 1; }
+        _mapped=1
     fi
     _mnt="/dev/stage_mnt_$$"
     mkdir -p "$_mnt"
     if ! mount -r "$_node" "$_mnt" 2>>"$LOGF"; then
         plog "map-copy" "mount failed: $_node"
         rmdir "$_mnt" 2>/dev/null
+        [ "$_mapped" = 1 ] && _siw_unmap "${_part}${_sfxname}" "$_part"
         return 1
     fi
     mkdir -p "$_outdir" 2>/dev/null
@@ -131,6 +162,7 @@ _siw_map_copy() {
     done
     umount "$_mnt" 2>/dev/null
     rmdir "$_mnt" 2>/dev/null
+    [ "$_mapped" = 1 ] && _siw_unmap "${_part}${_sfxname}" "$_part"
     [ "$_n" -gt 0 ]
 }
 
@@ -249,9 +281,15 @@ case "$1" in
         mkdir -p /vendor/firmware 2>/dev/null
         _n=0
         _node="/dev/block/mapper/${_part}_${_sfx}"
+        _fw_mapped=0
         if [ ! -b "$_node" ]; then
-            _siw_map "$_part" "$_sfx" "$_slot" \
-                || plog "fw-fetch" "siw map failed: ${_part}_${_sfx}"
+            if _siw_map "$_part" "$_sfx" "$_slot"; then
+                # map may exit 0 without creating the node (seen live
+                # on vendor); only teardown what actually appeared.
+                [ -b "$_node" ] && _fw_mapped=1
+            else
+                plog "fw-fetch" "siw map failed: ${_part}_${_sfx}"
+            fi
         fi
         _mnt="/dev/stage_mnt_$$"
         mkdir -p "$_mnt"
@@ -263,6 +301,8 @@ case "$1" in
             umount "$_mnt" 2>/dev/null
         fi
         rmdir "$_mnt" 2>/dev/null
+        # One-shot: unmap what this run mapped, drop a dangling alias.
+        [ "$_fw_mapped" = 1 ] && _siw_unmap "${_part}_${_sfx}" "$_part"
         if [ "$_n" -gt 0 ]; then echo "$_n"; exit 0; fi
         plog "fw-fetch" "mount path empty, siw|iw stream fallback"
         _img="/dev/stage_${_part}_${_sfx}.img"
