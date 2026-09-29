@@ -18,13 +18,14 @@
 # 	Please maintain this if you use this script or any part of it
 #
 
-# vendorsetup.sh — OrangeFox build variables for Pixel (Tensor G3/G4) Pixel family.
+# vendorsetup.sh — OrangeFox build variables (AIO-only, all Tensor Pixels).
 # This script is sourced by the OrangeFox build system after `lunch twrp_pixels-eng`.
 # It exports all FOX_*, OF_*, TW_* environment variables that control the build.
 # LGZ binaries are prebuilt (Rust, static musl) in include/ — verified below.
 #
 # FDEVICE must match the lunch target suffix and directory name under device/google/.
-# Runtime device detection (shiba/husky/akita) is done in runatboot.sh via ro.hardware.
+# The exact model is detected at runtime (stub + recovery-pixel-boot via
+# ro.hardware); the build always produces the single universal aio payload.
 
 FDEVICE="pixels"
 
@@ -44,110 +45,42 @@ fi
 
 if [ "$1" = "$FDEVICE" -o "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
 
-# --- Platform selection (discovered from families/ + devices/) ---
-# New families appear here automatically: add families/<name>/ with
-# family.conf, and optional devices/<codename>/device.conf entries.
+# --- Platform: AIO-only (single universal payload) ---
+# New devices appear here automatically: add devices/<codename>/ with
+# device.conf; family specifics resolve at runtime, nothing is baked.
 PIXEL_TREE="$(gettop)/device/google/pixels"
 
-# Comma list of DEVICE names whose device.conf maps to the given family.
-_pixel_family_devices() {
-    local fam="$1" devs="" conf
-    for conf in "$PIXEL_TREE"/devices/*/device.conf; do
-        [ -f "$conf" ] || continue
-        local DEVICE="" FAMILY=""
-        . "$conf"
-        if [ "$FAMILY" = "$fam" ]; then
-            devs="${devs}${devs:+,}$DEVICE"
-        fi
-    done
-    printf '%s' "$devs"
-}
-
-if [ -n "${DEVICE_BUILD_FLAG:-}" ]; then
-    echo ""
-    echo "=============================================="
-    echo "  DEVICE_BUILD_FLAG already set: $DEVICE_BUILD_FLAG"
-    echo "  Skipping interactive menu."
-    echo "=============================================="
-else
-echo ""
+export DEVICE_BUILD_FLAG="aio"
 echo "=============================================="
-echo "  Select target platform:"
-_i=0
-for _fam in $(for d in "$PIXEL_TREE"/families/*/; do basename "$d"; done | sort); do
-    # families/common/ holds shared files, it is not a buildable family.
-    [ "$_fam" = "common" ] && continue
-    _i=$((_i + 1))
-    eval "_FAM_$_i=\"$_fam\""
-    echo "  $_i) $_fam ($(_pixel_family_devices "$_fam"))"
-done
-echo "=============================================="
-printf "  Choice [1-%s] (timeout 15s, default: zuma): " "$_i"
-if read -t 15 _platform_choice 2>/dev/null; then
-    eval "_sel=\${_FAM_$_platform_choice:-}"
-    if [ -n "$_sel" ] && [ -d "$PIXEL_TREE/families/$_sel" ]; then
-        export DEVICE_BUILD_FLAG="$_sel"
-    else
-        export DEVICE_BUILD_FLAG="zuma"
-    fi
-else
-    echo ""
-    export DEVICE_BUILD_FLAG="zuma"
-    echo "  Timeout — defaulting to zuma"
-fi
-fi
-echo "=============================================="
-echo "  Building for platform: $DEVICE_BUILD_FLAG"
+echo "  Building for platform: aio (universal)"
 echo "=============================================="
 
-# --- Device list for this family (discovered + legacy quirks) ---
+# --- Device list: every device in the tree (installer selects per target) ---
 # Computed once here; reused for TARGET_DEVICE_ALT and .build_platform.conf.
-# AIO covers every device in the tree (installer selects per target).
-if [ "$DEVICE_BUILD_FLAG" = "aio" ]; then
-    _ALL_DEVS="$(for conf in "$PIXEL_TREE"/devices/*/device.conf; do [ -f "$conf" ] || continue; _d=""; . "$conf"; printf '%s,' "$DEVICE"; done | sed 's/,$//')"
-else
-_FAM_DEVS="$(_pixel_family_devices "$DEVICE_BUILD_FLAG")"
-_FAM_EXTRA="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${ALT_EXTRA:-}")"
-_ALL_DEVS="$_FAM_DEVS${_FAM_EXTRA:+,$_FAM_EXTRA}"
-fi
+_ALL_DEVS="$(for conf in "$PIXEL_TREE"/devices/*/device.conf; do [ -f "$conf" ] || continue; _d=""; . "$conf"; printf '%s,' "$DEVICE"; done | sed 's/,$//')"
 
 # --- Generate .build_platform.conf for build scripts (fox_build_callback.sh etc.) ---
 # Environment variables don't survive make/ninja recipe shells reliably
 # (ninja passes only an allowlisted env, so LGZ_LEVEL exported by build.sh
 # would never arrive) — persist everything scripts need into this file.
-# Family facts (UFS/earlycon) come from families/<fam>/family.conf;
-# keymint HAL type (rust|cpp|both) comes from families/<fam>/family.json
-# (single source of truth, validated here).
 # AIO: nothing is baked — UFS/USBCTRL stay empty (installer domain),
 # KEYMINT=both (both HALs ship, wrong one exits harmlessly at runtime).
 # .build_platform.conf lives next to this file; gettop is valid here
 # (vendorsetup runs after envsetup sets TOP).
 _conf_file="$(gettop)/device/google/pixels/.build_platform.conf"
-if [ "$DEVICE_BUILD_FLAG" = "aio" ]; then
-    _FAM_UFS=""
-    _FAM_USBCTRL=""
-    _FAM_KEYMINT="both"
-else
-_FAM_UFS="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${UFS_ADDR:-}")"
-# DWC3 USB controller (11210000.dwc3 on older Tensors, a210000.dwc3 on
-# malibu). Empty = pre-USBCTRL family, keep the 11210000 default in the
-# recovery rc files untouched.
-_FAM_USBCTRL="$(. "$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")"
-_FAM_KEYMINT="$(python3 -c "import json,sys; print(json.load(open('$PIXEL_TREE/families/$DEVICE_BUILD_FLAG/family.json')).get('keymint',''))" 2>/dev/null)"
-fi
-case "$_FAM_KEYMINT" in
-    rust|cpp|both) ;;
-    *) echo "  ERROR: families/$DEVICE_BUILD_FLAG/family.json needs keymint 'rust', 'cpp' or 'both'"; return 1 ;;
-esac
-echo "  Keymint HAL: $_FAM_KEYMINT (from family.json)"
+_FAM_UFS=""
+_FAM_USBCTRL=""
+_FAM_KEYMINT="both"
+echo "  Keymint HAL: both (universal payload)"
 # LGZ cluster level from build.sh (-l/--level) or environment; validated 0-3.
 _LGZ_LEVEL="${LGZ_LEVEL:-0}"
 case "$_LGZ_LEVEL" in
     0|1|2|3) ;;
     *) echo "  WARNING: bad LGZ_LEVEL='$_LGZ_LEVEL', defaulting to 0"; _LGZ_LEVEL=0 ;;
 esac
-# Recovery-in-platform test layout (var2-AIO, build.sh --platform-recovery
-# refreshes this key at build time; lunch-time default is empty = split).
+# Recovery-in-platform layout (AIO-only, always on: build.sh exports
+# FOX_RECOVERY_IN_PLATFORM=1 before lunch; manual lunch without build.sh
+# falls back to empty = split, callback merge skipped).
 _RECOVERY_IN_PLATFORM="${FOX_RECOVERY_IN_PLATFORM:-}"
 # Reworked (wide-variant) theme, test-gated (build.sh --new-theme
 # refreshes this key at build time; lunch-time default is empty = stock).
@@ -157,8 +90,9 @@ _REWORK_THEME="${FOX_REWORK_THEME:-}"
 if [[ -n "$_REWORK_THEME" ]]; then
     export FOX_REWORK_THEME="$_REWORK_THEME"
 fi
-# First-stage kill-switch (build.sh -N refreshes this key at build time;
-# lunch-time default is empty = first-stage included).
+# First-stage kill-switch (AIO-only, always on: build.sh exports
+# FOX_NO_FIRST_STAGE=1 before lunch; manual lunch without build.sh falls
+# back to empty = first-stage included).
 _NO_FIRST_STAGE="${FOX_NO_FIRST_STAGE:-}"
 cat > "$_conf_file" <<_PLATFORM_EOF
 # Auto-generated by vendorsetup.sh — DO NOT EDIT
@@ -190,19 +124,12 @@ export USE_CCACHE="1"
 export TARGET_ARCH="arm64"
 export LC_ALL="C"
 
-# --- Device type ---
+# --- Device type (AIO-only: default partition path; the per-device path
+# resolves at runtime/on-device via by-name, the installer handles slots) ---
 export FOX_VIRTUAL_AB_DEVICE=1
 export FOX_AB_DEVICE=1
 export FOX_VENDOR_BOOT_RECOVERY=1
-if [ "$DEVICE_BUILD_FLAG" = "gs201" ] || [ "$DEVICE_BUILD_FLAG" = "gs101" ]; then
-    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/14700000.ufs/by-name/vendor_boot"
-elif [ "$DEVICE_BUILD_FLAG" = "malibu" ]; then
-    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/3c2d0000.ufs/by-name/vendor_boot"
-elif [ "$DEVICE_BUILD_FLAG" = "laguna" ]; then
-    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/3c400000.ufs/by-name/vendor_boot"
-else
-    export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/13200000.ufs/by-name/vendor_boot"
-fi
+export FOX_RECOVERY_VENDOR_BOOT_PARTITION="/dev/block/platform/13200000.ufs/by-name/vendor_boot"
 
 # --- Vanilla build (non-Xiaomi device, skip MIUI patches) ---
 export FOX_VANILLA_BUILD=1
@@ -216,15 +143,7 @@ export FOX_TARGET_DEVICES="$_ALL_DEVS"
 # Devices with different screen heights (e.g. husky=2244) override this at
 # runtime via the DOF_SCREEN_H property set in runatboot.sh → data.cpp reads it.
 export OF_SCREEN_H=2400
-if [ "$DEVICE_BUILD_FLAG" = "zumapro" ]; then
-    export OF_STATUS_H=150
-elif [ "$DEVICE_BUILD_FLAG" = "gs201" ]; then
-    export OF_STATUS_H=130
-elif [ "$DEVICE_BUILD_FLAG" = "gs101" ]; then
-    export OF_STATUS_H=130
-else
-    export OF_STATUS_H=130
-fi
+export OF_STATUS_H=130
 export OF_STATUS_INDENT_LEFT=80
 export OF_STATUS_INDENT_RIGHT=80
 export OF_HIDE_NOTCH=1
