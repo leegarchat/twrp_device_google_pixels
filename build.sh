@@ -1,63 +1,39 @@
 #!/bin/bash
 #
-# build.sh — OrangeFox Recovery build script for all Tensor Pixel devices.
+# build.sh — OrangeFox Recovery build script (AIO-only).
+#
+# Concept: single universal installer for all Tensor Pixels. The stock
+# kernel is always kept, only the recovery ramdisk cpio.lz4 payload is
+# delivered and packed into the universal installer zip.
 #
 # Usage:
-#   ./build.sh [--family DEV|FAMILY] [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
-#              [-k|--kernel VER] [--force] [--list] [--build-type TYPE]
-#              [-N|--no-first-stage] [-c|--cpio-only] [--platform-recovery] [--new-theme]
+#   ./build.sh [--notrm] [-j N] [--name TAG] [--patch N] [--level 0-3]
+#              [--list] [--build-type TYPE] [--new-theme]
+#              [--push GROUP] [-g] [-D] [--diff-from TAG] [-T TEXT]
 #   source ./build.sh [...]   # same, but runs in the current shell (env kept)
 #
 # Options:
-#   -f, --family TARGET Device codename (husky, shiba, ...) or SoC family
-#                     (gs201/zuma/zumapro/gs101). Families and devices are
-#                     discovered from families/ and devices/ — no hardcoded list.
-#                     If omitted, vendorsetup.sh interactive menu is used.
-#   -k, --kernel VER  Kernel profile version from families/*/family.json
-#                     `kernels` (e.g., 6.1, 6.12). Device pixel.json may
-#                     override the family profile wholesale. Devices sharing
-#                     the effective profile build ONE image (zuma.img);
-#                     diverged devices build their own (zuma_husky.img).
-#                     Without -k, an interactive version picker is shown.
-#   --force           Non-interactive mode: with -k builds silently;
-#                     WITHOUT -k aborts with the available version list
-#                     (no silent default in scripts/CI).
-#   --list            Print the family/device/kernel tree (families with
-#                     keymint, default + available kernels; devices with
-#                     effective kernels, "[override]" marks a device-level
-#                     `kernels` entry) and exit. Read-only, builds nothing.
+#   -f, --family aio
+#                     Accepted for backward compatibility only. The tree
+#                     builds a single universal (aio) payload; any other
+#                     value is rejected. May be omitted entirely.
+#   --list            Print the family/device tree (families with keymint;
+#                     devices with their family mapping) and exit.
+#                     Read-only, builds nothing.
 #   --build-type TYPE Build type string, default Stable. Only exact `Stable`
 #                     enables OF_ADVANCED_SECURITY downstream (adbd stopped
 #                     at boot, MTP autostart off); any other value builds a
 #                     non-Secure image. Exported for vendorsetup.sh/lunch.
 #   --notrm           Don't clean out/target/product/pixels before build.
-#                     (Between kernel-profile groups a clean is mandatory
-#                     and always performed, with a notice.)
-#   -n, --name TAG    Name tag for output files. Copies final .img/.zip to
-#                     builds/OrangeFox-<VERSION>-{TAG}-{family}.img/zip
+#   -n, --name TAG    Name tag for output files:
+#                     builds/OrangeFox-<VERSION>-{TAG}-aio.zip +
+#                     OrangeFox-<VERSION>-{TAG}-aio.ramdisk.lz4
 #   -p, --patch N     Set FOX_MAINTAINER_PATCH_VERSION (numbers only).
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
 #   -j N              Parallel build jobs (also as -jN). Default: nproc.
 #                     Exported as JOBS for the Soong/make invocation.
-#   --platform-recovery
-#                     Recovery-in-platform test layout (var2-AIO): merge
-#                     first-stage + recovery into one ramdisk
-#                     (BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT=false,
-#                     like gs101) and pack first_stage files into the payload
-#                     cpio. Exported as FOX_RECOVERY_IN_PLATFORM=1 for
-#                     BoardConfig.mk + .build_platform.conf (callback merge).
-#   -N, --no-first-stage
-#                     Skip first-stage (vendor_ramdisk) components: no
-#                     fstab.*.vendor_ramdisk, no linker/e2fs vendor_ramdisk
-#                     tools (see device.mk). Recovery ramdisk is unaffected.
-#                     Exported as FOX_NO_FIRST_STAGE=1 for device.mk.
-#   -c, --cpio-only   Deliver only the ramdisk cpio.lz4 (lz4_legacy):
-#                     gs101 → platform fragment (`fastboot flash vendor_boot:`),
-#                     other families → recovery fragment
-#                     (`fastboot flash vendor_boot:recovery`). The .img/.zip
-#                     are NOT copied to builds/ in this mode.
 #   --new-theme       Build the reworked wide-variant theme (twres_1280/
 #                     1344/1440/1600/1840/2076 XML overlays via
 #                     tools/theme_wide.py). Test-gated: default builds ship
@@ -91,6 +67,11 @@
 #                     md5 / full-changes-link lines
 #                     (e.g. -T "looks like OTG is fixed on P10").
 #   -h, --help        Show this help.
+#
+# Removed in the AIO-only tree (rejected with an error, or accepted as a
+# no-op for old command lines — see arg parsing below):
+#   -k/--kernel, --force (per-family kernel profiles: gone, stock kept),
+#   -c/--cpio-only, --platform-recovery, -N/--no-first-stage (now always on).
 # END HELP
 
 # NOTE: errexit/pipefail apply to direct execution. When this file is
@@ -114,8 +95,6 @@ SAFE_EXIT_CODE=0
 fox_safe_exit() {
     SAFE_EXIT_CODE="${1:-1}"
     SAFE_EXIT_REQUESTED=true
-    # A failure anywhere clears the success flag (multi-family loop: an
-    # earlier iteration's OK must not leak past a later failure).
     if [[ "$SAFE_EXIT_CODE" != 0 ]]; then
         FOX_BUILD_OK=0
     fi
@@ -184,49 +163,41 @@ fox_nproc() {
     echo 8
 }
 
-# --- Device/family/kernel inventory (build.sh --list) ---
+# --- Device/family inventory (build.sh --list) ---
 # Tree view over families/*/family.json + devices/*/device.conf:
-# per family keymint/default kernels, per device effective kernel versions
-# (family ∪ device overrides; "[override]" marks a devices/<dev>/pixel.json
-# `kernels` entry). Read-only: prints and returns, never builds.
+# per family keymint type, per device family mapping.
+# Read-only: prints and returns, never builds.
 fox_print_tree() {
-    local fam_json fam info dev_conf dev dfam klist over
+    local fam_json fam km dev_conf dev dfam
     echo "SoC families (families/*/family.json) and devices (devices/*/device.conf):"
     echo ""
+    echo "aio [universal payload: stock kernel kept, all devices in one cpio]"
     for fam_json in "$SCRIPT_DIR"/families/*/family.json; do
         fam=$(basename "$(dirname "$fam_json")")
-        info=$(python3 -c "import json,sys; f=json.load(open(sys.argv[1])); print('%s|%s|%s' % (f.get('keymint','?'), f.get('default_kernel','?'), ','.join(sorted((f.get('kernels') or {}).keys())) or '(none)'))" "$fam_json" 2>/dev/null) || {
-            echo "  $fam: ERROR: unreadable family.json"
-            continue
-        }
-        echo "$fam [keymint=$(echo "$info" | cut -d'|' -f1), default=$(echo "$info" | cut -d'|' -f2), kernels=$(echo "$info" | cut -d'|' -f3)]"
+        [ "$fam" = "common" ] && continue
+        [ "$fam" = "aio" ] && continue
+        km=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('keymint','?'))" "$fam_json" 2>/dev/null) || km="?"
+        echo "  $fam [keymint=$km]"
         local any_dev=false
         for dev_conf in "$SCRIPT_DIR"/devices/*/device.conf; do
             dev=$(basename "$(dirname "$dev_conf")")
             dfam=$(FAMILY=""; DEVICE=""; . "$dev_conf" 2>/dev/null; printf '%s' "$FAMILY")
             [ "$dfam" = "$fam" ] || continue
             any_dev=true
-            klist=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$fam" "$dev" 2>/dev/null) || klist="(error)"
-            over=""
-            python3 -c "import json,sys; sys.exit(0 if 'kernels' in json.load(open(sys.argv[1])) else 1)" "$SCRIPT_DIR/devices/$dev/pixel.json" 2>/dev/null && over=" [override]"
-            echo "  $dev [kernels=${klist}${over}]"
+            echo "    $dev"
         done
-        $any_dev || echo "  (no devices)"
+        $any_dev || echo "    (no devices)"
     done
 }
 
-# --- Parse arguments ---
-FAMILY=""
+# --- Parse arguments (AIO-only) ---
+FAMILY="aio"
 CLEAN=true
 JOBS="$(fox_nproc)"
 BUILD_NAME=""
 PATCH_VERSION=""
 LGZ_LEVEL="0"
-KERNEL_VER=""
-FOX_FORCE=false
 FOX_BUILD_TYPE="Stable"
-FOX_NO_FIRST_STAGE=""
-CPIO_ONLY=false
 FOX_GIT_TAG=""
 FOX_DIFF_TAG=""
 FOX_DIFF_FROM=""
@@ -236,27 +207,16 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
         -f|--family)
             shift
-            FAMILY="${1:-}"
-            if [[ -z "$FAMILY" ]]; then
-                echo "ERROR: --family requires an argument (device or family)"
+            _fam_arg="${1:-}"
+            if [[ -z "$_fam_arg" ]]; then
+                echo "ERROR: --family requires an argument (only 'aio' is supported)"
                 fox_safe_exit 1
+            elif [[ "$_fam_arg" != "aio" ]]; then
+                echo "ERROR: only '-f aio' is supported in this tree (got '$_fam_arg')."
+                echo "  Per-family images were removed: the universal AIO payload covers all devices."
+                fox_safe_exit 2
             fi
-            if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-                # families/common/ holds shared files, it is not buildable.
-                if [[ "$FAMILY" != "common" && -d "$SCRIPT_DIR/families/$FAMILY" ]]; then
-                    : # already a SoC family
-                elif [[ -f "$SCRIPT_DIR/devices/$FAMILY/device.conf" ]]; then
-                    _DEV="$FAMILY"
-                    # shellcheck disable=SC1090
-                    . "$SCRIPT_DIR/devices/$FAMILY/device.conf"  # sets FAMILY
-                    echo "[build] Resolved device $_DEV -> family $FAMILY"
-                else
-                    echo "ERROR: unknown family/device '$FAMILY'."
-                    echo "  Families: $(for d in "$SCRIPT_DIR"/families/*/; do b=$(basename "$d"); [ "$b" = "common" ] || printf '%s ' "$b"; done | sort | tr '\n' ' ')"
-                    echo "  Devices:  $(for d in "$SCRIPT_DIR"/devices/*/; do basename "$d"; done | sort | tr '\n' ' ')"
-                    fox_safe_exit 1
-                fi
-            fi
+            FAMILY="aio"
             shift
             ;;
         --notrm)
@@ -300,25 +260,12 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
             fi
             shift
             ;;
-        -k|--kernel)
-            shift
-            KERNEL_VER="${1:-}"
-            if [[ -z "$KERNEL_VER" ]]; then
-                echo "ERROR: --kernel requires a version argument (e.g., 6.1)"
-                fox_safe_exit 1
-            fi
-            shift
+        -k|--kernel|--force)
+            echo "ERROR: '$1' was removed in the AIO-only tree (stock kernel is always kept, no kernel profiles)."
+            fox_safe_exit 2
             ;;
-        --force)
-            FOX_FORCE=true
-            shift
-            ;;
-        -N|--no-first-stage)
-            FOX_NO_FIRST_STAGE=1
-            shift
-            ;;
-        --platform-recovery)
-            FOX_RECOVERY_IN_PLATFORM=1
+        -N|--no-first-stage|--platform-recovery|-c|--cpio-only)
+            echo "[build] NOTE: '$1' is always on in the AIO-only tree (ignored, kept for old command lines)."
             shift
             ;;
         --new-theme)
@@ -350,7 +297,8 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
                 fox_safe_exit 1
             fi
             shift
-            ;;        -T|--text)
+            ;;
+        -T|--text)
             shift
             FOX_PUSH_TEXT="${1:-}"
             if [[ -z "$FOX_PUSH_TEXT" ]]; then
@@ -366,10 +314,6 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
                 echo "ERROR: --build-type requires a value (e.g., Stable, Beta)"
                 fox_safe_exit 1
             fi
-            shift
-            ;;
-        -c|--cpio-only)
-            CPIO_ONLY=true
             shift
             ;;
         --list)
@@ -401,8 +345,8 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
 fi
 
 # --- Version tag (--git-tag): name + datetime, clean tree or no build ---
-# Runs before anything mutates the tree (.gen_kernel.mk, .build_platform.conf
-# are all generated later). Push stays manual; a failed build deletes the tag
+# Runs before anything mutates the tree (.build_platform.conf is generated
+# at lunch). Push stays manual; a failed build deletes the tag
 # (via fox_safe_exit + the EXIT trap below), so a tag always means "built OK".
 fox_tag_cleanup() {
     if [[ "${FOX_TAG_CREATED:-}" == 1 && "${FOX_BUILD_OK:-}" != 1 && -n "${FOX_TAG_NAME:-}" ]]; then
@@ -454,211 +398,20 @@ if [[ -n "$FOX_GIT_TAG" ]]; then
 fi
 export LGZ_LEVEL
 export FOX_BUILD_TYPE
-# First-stage kill-switch for device.mk (make imports env): set only when
-# -N/--no-first-stage was passed, so normal builds see an empty var.
-# Also persisted to .build_platform.conf: the callback must strip the
-# first_stage_ramdisk copy out of the recovery root even after the
-# RECOVERY_IN_PLATFORM merge below (that merge would otherwise resurrect
-# ~9MB of stock first_stage the installer preserves anyway).
-if [[ -n "$FOX_NO_FIRST_STAGE" ]]; then
-    export FOX_NO_FIRST_STAGE
-    echo "[build] First-stage components DISABLED (FOX_NO_FIRST_STAGE=1)"
-    _plat_conf="$SCRIPT_DIR/.build_platform.conf"
-    if [[ -f "$_plat_conf" ]]; then
-        if grep -q '^NO_FIRST_STAGE=' "$_plat_conf" 2>/dev/null; then
-            sed -i 's/^NO_FIRST_STAGE=.*/NO_FIRST_STAGE=1/' "$_plat_conf"
-        else
-            echo "NO_FIRST_STAGE=1" >> "$_plat_conf"
-        fi
-        echo "[build] .build_platform.conf updated: NO_FIRST_STAGE=1"
-    fi
-    unset _plat_conf
-fi
-# Recovery-in-platform test layout (var2-AIO): empty by default, so normal
-# builds see an empty var. Exported for BoardConfig.mk (make imports env);
-# .build_platform.conf (lunch-time file read by the callback in recipe
-# shells, where custom env is stripped) is updated below at build time.
-if [[ -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
-    export FOX_RECOVERY_IN_PLATFORM
-    echo "[build] Recovery-in-platform layout ENABLED (FOX_RECOVERY_IN_PLATFORM=1)"
-    _plat_conf="$SCRIPT_DIR/.build_platform.conf"
-    if [[ -f "$_plat_conf" ]]; then
-        if grep -q '^RECOVERY_IN_PLATFORM=' "$_plat_conf" 2>/dev/null; then
-            sed -i 's/^RECOVERY_IN_PLATFORM=.*/RECOVERY_IN_PLATFORM=1/' "$_plat_conf"
-        else
-            echo "RECOVERY_IN_PLATFORM=1" >> "$_plat_conf"
-        fi
-        echo "[build] .build_platform.conf updated: RECOVERY_IN_PLATFORM=1"
-    else
-        echo "[build] WARNING: $_plat_conf missing, callback merge will be skipped"
-    fi
-fi
-# Reworked (wide-variant) theme, test-gated: empty by default, so normal
-# builds ship the stock base theme only. Exported for BoardConfig.mk (make
-# re-exports it to Soong, which reads it via Getenv in
-# orangefox_defaults.go); .build_platform.conf (lunch-time file read by
-# the callback in recipe shells, where custom env is stripped) decides
-# whether theme_wide.py variants are generated and packed below.
-if [[ -n "${FOX_REWORK_THEME:-}" ]]; then
-    export FOX_REWORK_THEME
-    echo "[build] Reworked theme ENABLED (FOX_REWORK_THEME=1)"
-    _plat_conf="$SCRIPT_DIR/.build_platform.conf"
-    if [[ -f "$_plat_conf" ]]; then
-        if grep -q '^REWORK_THEME=' "$_plat_conf" 2>/dev/null; then
-            sed -i 's/^REWORK_THEME=.*/REWORK_THEME=1/' "$_plat_conf"
-        else
-            echo "REWORK_THEME=1" >> "$_plat_conf"
-        fi
-        echo "[build] .build_platform.conf updated: REWORK_THEME=1"
-    else
-        echo "[build] WARNING: $_plat_conf missing, theme variants will be skipped"
-    fi
-fi
-if [[ "$CPIO_ONLY" == true ]]; then
-    echo "[build] cpio-only delivery: .img/.zip will NOT be copied, only ramdisk cpio.lz4"
-fi
+# AIO-only fixed layout (previously -N/--no-first-stage/--platform-recovery/-c):
+# stock kernel is kept, only the recovery ramdisk cpio is delivered;
+# first-stage + recovery are merged into one payload cpio, stock first_stage
+# is preserved by the installer, so first-stage components are skipped and
+# the merged first_stage copy is stripped by the callback.
+export FOX_NO_FIRST_STAGE=1
+export FOX_RECOVERY_IN_PLATFORM=1
+echo "[build] AIO layout: cpio-only, recovery-in-platform, no first-stage (fixed)"
+FOX_KEYMINT_TYPE="both"
+export FOX_KEYMINT_TYPE
+FOX_KERNEL_VER="stock"
+export FOX_KERNEL_VER
+echo "[build] AIO mode: stock kernel kept, both KeyMint HALs ship"
 
-# --- Kernel profile resolution (families/*/family.json `kernels`) ---
-# Engages only with a known family context (-f). Without -f the legacy
-# path is kept (interactive vendorsetup owns device selection).
-# AIO (-f aio) skips this entirely: no kernel image is built, the stock
-# kernel (and its cmdline) is kept, so no profile is needed and -k is
-# rejected as meaningless.
-# Result: KERNEL_GROUPS entries "tag|gen_dev", KERNEL_MK path (or empty
-# for the legacy path), FOX_KERNEL_VER exported for the callback.
-KERNEL_GROUPS=()
-KERNEL_MK=""
-if [[ "$FAMILY" == "aio" ]]; then
-    if [[ -n "$KERNEL_VER" ]]; then
-        echo "ERROR: -f aio builds no kernel image; -k/--kernel is meaningless here."
-        fox_safe_exit 2
-    fi
-    echo "[build] AIO mode: stock kernel kept, kernel profiles skipped"
-    FOX_KERNEL_VER="stock"
-    export FOX_KERNEL_VER
-elif [[ -n "$FAMILY" ]]; then
-    KFAMILY="$FAMILY"
-    KDEV="${_DEV:-}"
-    if [[ -n "$KDEV" ]]; then
-        KLIST_RAW=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$KFAMILY" "$KDEV" 2>&1) || {
-            echo "ERROR: kernel profile list crashed for $KFAMILY/$KDEV (not 'no kernels' — the script itself failed):"
-            echo "$KLIST_RAW" >&2
-            fox_safe_exit 2
-        }
-    else
-        KLIST_RAW=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
-            echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
-            echo "$KLIST_RAW" >&2
-            fox_safe_exit 2
-        }
-    fi
-    if [[ -n "$KLIST_RAW" && "$KLIST_RAW" != "(none)"* ]]; then
-        KDEFAULT=$(echo "$KLIST_RAW" | sed -n 's/.*(default: \([^)]*\)).*/\1/p')
-        # shellcheck disable=SC2206
-        KVERSIONS=($(echo "$KLIST_RAW" | sed 's/ (default:.*//'))
-        if [[ -n "$KERNEL_VER" ]]; then
-            FOX_KERNEL_VER="$KERNEL_VER"
-        elif [[ "$FOX_FORCE" == true ]]; then
-            echo "ERROR: kernel version not specified (use -k VER)."
-            echo "  Available for $KFAMILY: $KLIST_RAW"
-            fox_safe_exit 2
-        elif [[ -t 0 ]]; then
-            echo "[build] Select kernel profile for $KFAMILY (default: ${KDEFAULT:-${KVERSIONS[0]}}):"
-            select FOX_KERNEL_VER in "${KVERSIONS[@]}"; do
-                if [[ -z "$FOX_KERNEL_VER" ]]; then
-                    FOX_KERNEL_VER="${KDEFAULT:-${KVERSIONS[0]}}"
-                fi
-                break
-            done < /dev/tty
-            echo "[build] Kernel profile: $FOX_KERNEL_VER"
-        else
-            echo "ERROR: kernel version not specified (use -k VER; no tty for picker)."
-            echo "  Available for $KFAMILY: $KLIST_RAW"
-            fox_safe_exit 2
-        fi
-        if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-            FP_JSON=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
-                echo "$FP_JSON" >&2
-                fox_safe_exit 2
-            }
-        fi
-        if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-            KERNEL_MK="$SCRIPT_DIR/families/$KFAMILY/.gen_kernel.mk"
-            if [[ "$FP_JSON" == "[]" ]]; then
-                # Family without pixel.json devices (e.g. gs101 WIP):
-                # single group straight from the family profile.
-                KERNEL_GROUPS=("$KFAMILY|-")
-            else
-            GROUP_LINES=$(FP_JSON="$FP_JSON" python3 -c '
-import json, os
-fps = json.loads(os.environ["FP_JSON"])
-byhash = {}
-for e in fps:
-    byhash.setdefault(e["hash"], []).append(e["device"])
-for h in sorted(byhash):
-    print(h + "|" + ",".join(sorted(byhash[h])))' 2>/dev/null) || GROUP_LINES=""
-            ALL_DEVS=$(FP_JSON="$FP_JSON" python3 -c '
-import json, os
-print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))' 2>/dev/null) || ALL_DEVS=""
-            while IFS='|' read -r _h _devs; do
-                [ -n "$_devs" ] || continue
-                if [[ -n "${KDEV:-}" ]]; then
-                    case ",$_devs," in
-                        *",$KDEV,"*) ;;
-                        *) continue ;;
-                    esac
-                fi
-                if [[ "$_devs" == "$ALL_DEVS" ]]; then
-                    _tag="$KFAMILY"
-                else
-                    _tag="${KFAMILY}_$(echo "$_devs" | tr ',' '-')"
-                fi
-                _gen="${_devs%%,*}"
-                KERNEL_GROUPS+=("$_tag|$_gen")
-            done <<< "$GROUP_LINES"
-            fi
-            if [[ ${#KERNEL_GROUPS[@]} -eq 0 ]]; then
-                echo "ERROR: no kernel group contains device '${KDEV:-?}'."
-                fox_safe_exit 2
-            fi
-            export FOX_KERNEL_VER
-            # Pre-generate for the FIRST group BEFORE lunch: dumpvars parses
-            # BoardConfig.mk during lunch and would hit the empty-cmdline
-            # guard otherwise. The per-group loop regenerates before each
-            # mka (make re-reads BoardConfig every invocation).
-            if [[ "$SAFE_EXIT_REQUESTED" == false && ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
-                _pre_gen="${KERNEL_GROUPS[0]#*|}"
-                python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate \
-                    "$KFAMILY" "${_pre_gen:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
-                    || fox_safe_exit 2
-            fi
-        fi
-    fi
-fi
-if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-    if [[ "$fox_sourced" == true ]]; then
-        return "$SAFE_EXIT_CODE"
-    else
-        exit "$SAFE_EXIT_CODE"
-    fi
-fi
-
-if [[ "$FAMILY" == "aio" ]]; then
-    # All-in-one: both KeyMint HALs ship in one cpio (see device.mk);
-    # the wrong one exits harmlessly at runtime.
-    FOX_KEYMINT_TYPE="both"
-    export FOX_KEYMINT_TYPE
-elif [[ -n "$FAMILY" ]]; then
-    # KeyMint HAL type for device.mk (config-parse env, like DEVICE_BUILD_FLAG):
-    # families/<fam>/family.json `keymint` (rust|cpp). Loud fail — without it
-    # device.mk falls back to the family-name mapping, which must never happen
-    # silently on a -f build.
-    FOX_KEYMINT_TYPE="$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/families/$FAMILY/family.json')).get('keymint',''))" 2>/dev/null)"
-    case "$FOX_KEYMINT_TYPE" in
-        rust|cpp) export FOX_KEYMINT_TYPE ;;
-        *) echo "ERROR: families/$FAMILY/family.json needs keymint 'rust' or 'cpp'"; fox_safe_exit 2 ;;
-    esac
-fi
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     if [[ "$fox_sourced" == true ]]; then
         return "$SAFE_EXIT_CODE"
@@ -668,24 +421,18 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
 fi
 
 echo "=============================================="
-echo "  OrangeFox Recovery Build Script"
+echo "  OrangeFox Recovery Build Script (AIO-only)"
 echo "=============================================="
 echo "  Source root:   $SOURCE_ROOT"
-echo "  Family:        ${FAMILY:-<interactive>}"
-echo "  Kernel:        ${FOX_KERNEL_VER:-<legacy default>}"
-if [[ -n "$FAMILY" ]]; then
-echo "  Keymint:       $FOX_KEYMINT_TYPE (from family.json)"
-fi
-if [[ ${#KERNEL_GROUPS[@]} -gt 0 ]]; then
-    echo "  Groups:        $(printf '%s ' "${KERNEL_GROUPS[@]%%|*}")"
-fi
+echo "  Family:        aio (universal)"
+echo "  Kernel:        stock (kept)"
+echo "  Keymint:       both (universal payload)"
 echo "  Name:          ${BUILD_NAME:-<auto>}"
 if [[ -n "${FOX_TAG_NAME:-}" ]]; then
 echo "  Git tag:       $FOX_TAG_NAME"
 fi
 echo "  Patch Version: ${FOX_MAINTAINER_PATCH_VERSION:-<not set>}"
-echo "  First-stage:   ${FOX_NO_FIRST_STAGE:+skipped (no-first-stage)}${FOX_NO_FIRST_STAGE:-included}"
-echo "  Artifacts:     $([[ "$CPIO_ONLY" == true ]] && echo "cpio.lz4 only" || echo ".img/.zip")"
+echo "  Artifacts:     cpio.lz4 payload + installer zip"
 echo "  Clean:         $CLEAN"
 echo "  Jobs:          $JOBS"
 echo "=============================================="
@@ -720,46 +467,8 @@ fi
 
 PRODUCT_OUT="out/target/product/pixels"
 
-if [[ -n "$FAMILY" ]]; then
-    export DEVICE_BUILD_FLAG="$FAMILY"
-    echo "[build] Pre-set DEVICE_BUILD_FLAG=$FAMILY"
-fi
-
-# Legacy path (no -f): the family is picked in the vendorsetup menu DURING
-# lunch, so KERNEL_MK is still empty here — but dumpvars parses BoardConfig.mk
-# during lunch and would hit the empty-cmdline guard for ANY family. Pre-generate
-# default profiles for every family now (cheap python, no build); the post-lunch
-# fallback below narrows to the selected family (honoring -k), and the end-of-build
-# cleanup removes all generated files so no stale override survives.
-if [[ -z "$KERNEL_MK" ]]; then
-    for _fam_json in "$SCRIPT_DIR"/families/*/family.json; do
-        _fam=$(basename "$(dirname "$_fam_json")")
-        [ "$_fam" = "common" ] && continue
-        _def=$(python3 -c "import json;print(json.load(open('$_fam_json')).get('default_kernel',''))" 2>/dev/null)
-        [ -n "$_def" ] || continue
-        python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate "$_fam" "-" "$_def" "$SCRIPT_DIR/families/$_fam/.gen_kernel.mk" >/dev/null 2>&1 || true
-    done
-    echo "[build] Pre-generated default kernel profiles for lunch (family selected interactively)"
-fi
-
-# Hard guarantee before lunch: dumpvars parses BoardConfig.mk during lunch
-# and aborts the whole build on empty VENDOR_CMDLINE — and a failed lunch
-# must never reach the destructive product-out clean below. Refuse early
-# with an actionable message instead of cryptic dumpvars spam.
-if [[ -n "${KERNEL_MK:-}" ]]; then
-    if [[ ! -s "$KERNEL_MK" ]] || ! grep -q '^VENDOR_CMDLINE := "[^"]' "$KERNEL_MK"; then
-        echo "ERROR: kernel profile missing/empty: $KERNEL_MK"
-        echo "  Regenerate: python3 $SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py --generate $KFAMILY ${KDEV:--} ${FOX_KERNEL_VER:-VER} $KERNEL_MK"
-        fox_safe_exit 2
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-        if [[ "$fox_sourced" == true ]]; then
-            return "$SAFE_EXIT_CODE"
-        else
-            exit "$SAFE_EXIT_CODE"
-        fi
-    fi
-fi
+export DEVICE_BUILD_FLAG="aio"
+echo "[build] DEVICE_BUILD_FLAG=aio (fixed)"
 
 echo "[build] Sourcing build/envsetup.sh ..."
 set +e
@@ -780,349 +489,165 @@ fi
 
 echo "[build] DEVICE_BUILD_FLAG=${DEVICE_BUILD_FLAG:-<not set>}"
 
-# Legacy fallback (no -f): the vendorsetup menu picked the family during lunch,
-# so KERNEL_MK is still empty. Resolve the kernel profile now: explicit -k wins
-# (validated, loud on unknown), otherwise the family default with a loud notice
-# (this is the interactive path; scripts/CI must pass -f/-k). Mirrors the -f
-# resolution above, minus the device filter and the tty picker.
-# AIO never enters here (stock kernel kept, no profiles exist).
-if [[ -z "$KERNEL_MK" && -n "${DEVICE_BUILD_FLAG:-}" && "${DEVICE_BUILD_FLAG:-}" != "aio" ]]; then
-    KFAMILY="$DEVICE_BUILD_FLAG"
-    KLIST_RAW=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --list "$KFAMILY" 2>&1) || {
-        echo "ERROR: kernel profile list crashed for $KFAMILY (not 'no kernels' — the script itself failed):"
-        echo "$KLIST_RAW" >&2
-        fox_safe_exit 2
-    }
-    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-        if [[ -z "$KLIST_RAW" || "$KLIST_RAW" == "(none)"* ]]; then
-            echo "ERROR: no kernel profiles for family '$KFAMILY' (WIP?)."
-            fox_safe_exit 2
-        fi
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-        KDEFAULT=$(echo "$KLIST_RAW" | sed -n 's/.*(default: \([^)]*\)).*/\1/p')
-        if [[ -n "$KERNEL_VER" ]]; then
-            FOX_KERNEL_VER="$KERNEL_VER"
-        elif [[ -n "$KDEFAULT" ]]; then
-            FOX_KERNEL_VER="$KDEFAULT"
-            echo "[build] No -f/-k: using default kernel profile $FOX_KERNEL_VER for $KFAMILY (override with -k VER)"
-        else
-            echo "ERROR: no default kernel for $KFAMILY and no -k given."
-            fox_safe_exit 2
-        fi
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-        FP_JSON=$(python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --fingerprint "$KFAMILY" "$FOX_KERNEL_VER" 2>&1) || {
-            echo "$FP_JSON" >&2
-            fox_safe_exit 2
-        }
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-        KERNEL_MK="$SCRIPT_DIR/families/$KFAMILY/.gen_kernel.mk"
-        if [[ "$FP_JSON" == "[]" ]]; then
-            # Family without pixel.json devices: single group from family profile.
-            KERNEL_GROUPS=("$KFAMILY|-")
-        else
-            GROUP_LINES=$(FP_JSON="$FP_JSON" python3 -c '
-import json, os
-fps = json.loads(os.environ["FP_JSON"])
-byhash = {}
-for e in fps:
-    byhash.setdefault(e["hash"], []).append(e["device"])
-for h in sorted(byhash):
-    print(h + "|" + ",".join(sorted(byhash[h])))' 2>/dev/null) || GROUP_LINES=""
-            ALL_DEVS=$(FP_JSON="$FP_JSON" python3 -c '
-import json, os
-print(",".join(sorted(e["device"] for e in json.loads(os.environ["FP_JSON"]))))' 2>/dev/null) || ALL_DEVS=""
-            while IFS='|' read -r _h _devs; do
-                [ -n "$_devs" ] || continue
-                if [[ "$_devs" == "$ALL_DEVS" ]]; then
-                    _tag="$KFAMILY"
-                else
-                    _tag="${KFAMILY}_$(echo "$_devs" | tr ',' '-')"
-                fi
-                _gen="${_devs%%,*}"
-                KERNEL_GROUPS+=("$_tag|$_gen")
-            done <<< "$GROUP_LINES"
-        fi
-        if [[ ${#KERNEL_GROUPS[@]} -eq 0 ]]; then
-            echo "ERROR: no kernel groups for family '$KFAMILY'."
-            fox_safe_exit 2
-        fi
-        export FOX_KERNEL_VER
-        _pre_gen="${KERNEL_GROUPS[0]#*|}"
-        python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate \
-            "$KFAMILY" "${_pre_gen:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
-            || fox_safe_exit 2
-        # KeyMint HAL type for device.mk (same contract as the -f path above).
-        FOX_KEYMINT_TYPE="$(python3 -c "import json; print(json.load(open('$SCRIPT_DIR/families/$KFAMILY/family.json')).get('keymint',''))" 2>/dev/null)"
-        case "$FOX_KEYMINT_TYPE" in
-            rust|cpp) export FOX_KEYMINT_TYPE ;;
-            *) echo "ERROR: families/$KFAMILY/family.json needs keymint 'rust' or 'cpp'"; fox_safe_exit 2 ;;
-        esac
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-        if [[ "$fox_sourced" == true ]]; then
-            return "$SAFE_EXIT_CODE"
-        else
-            exit "$SAFE_EXIT_CODE"
-        fi
-    fi
-fi
-
-BUILD_TARGETS="adbd vendorbootimage"
-
-# gs101 needs no special build-mode switch: family.mk already merges
-# first-stage + recovery into a single platform fragment (no dtb/dlkm
-# fragments, no modules inside). Post-processing below extracts that
-# fragment for `fastboot flash vendor_boot: <ramdisk>` (empty name =
-# platform; NOT :default, which would collapse the table and kill the
-# stock dlkm fragment) after the image is copied.
-
-# KeyMint HAL module must be built explicitly: vendorbootimage does not pull
+# KeyMint HAL modules must be built explicitly: vendorbootimage does not pull
 # vendor/bin/hw binaries on its own (ninja graph entries exist via
 # PRODUCT_PACKAGES but intermediates never compile, and the recovery callback
-# finds nothing to copy). FOX_KEYMINT_TYPE arrives from family.json (see
-# above); manual lunch without build.sh falls back to the family-name mapping
-# (same default as device.mk).
-case "${FOX_KEYMINT_TYPE:-}" in
-    both)
-        KEYMINT_MODULE="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty" ;;
-    cpp) KEYMINT_MODULE="android.hardware.security.keymint-service.trusty" ;;
-    rust) KEYMINT_MODULE="android.hardware.security.keymint-service.rust.trusty" ;;
-    *)
-        if [[ "${DEVICE_BUILD_FLAG:-}" == "gs201" || "${DEVICE_BUILD_FLAG:-}" == "gs101" ]]; then
-            KEYMINT_MODULE="android.hardware.security.keymint-service.trusty"
-        else
-            KEYMINT_MODULE="android.hardware.security.keymint-service.rust.trusty"
-        fi
-        ;;
-esac
-BUILD_TARGETS="$BUILD_TARGETS $KEYMINT_MODULE"
-echo "[build] Keymint module: $KEYMINT_MODULE"
+# finds nothing to copy). AIO always ships both HALs; the wrong one exits
+# harmlessly at runtime.
+KEYMINT_MODULE="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty"
+BUILD_TARGETS="adbd vendorbootimage $KEYMINT_MODULE"
+echo "[build] Keymint modules: $KEYMINT_MODULE"
 
 echo "=============================================="
 echo "  Build targets: $BUILD_TARGETS"
 echo "  Parallelism:   -j$JOBS"
 echo "=============================================="
 
-# --- Per-group build loop ---
-# Legacy path (no kernel profiles): exactly one iteration with an empty tag.
-# Kernel path: one iteration per config group; the product out is cleaned
-# between groups (mandatory — the generated .gen_kernel.mk changes), and
-# each group ships under its own tag (zuma.img / zuma_husky.img).
-if [[ ${#KERNEL_GROUPS[@]} -eq 0 ]]; then
-    KERNEL_GROUPS=("|")
+if [[ "$CLEAN" == "true" && -d "$PRODUCT_OUT" ]]; then
+    echo "[build] Cleaning $PRODUCT_OUT ..."
+    rm -rf "$PRODUCT_OUT"
+    echo "[build] Clean done."
 fi
-GROUP_FIRST=true
-for GROUP_ENTRY in "${KERNEL_GROUPS[@]}"; do
-    GROUP_TAG="${GROUP_ENTRY%%|*}"
-    GROUP_GEN="${GROUP_ENTRY#*|}"
-    if [[ -n "$KERNEL_MK" ]]; then
-        python3 "$SCRIPT_DIR/include/prebuilt/gen_kernel_mk.py" --generate \
-            "$KFAMILY" "${GROUP_GEN:-"-"}" "$FOX_KERNEL_VER" "$KERNEL_MK" \
-            || fox_safe_exit 2
-        if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-            break
-        fi
-    fi
-    if [[ "$GROUP_FIRST" == true ]]; then
-        GROUP_FIRST=false
-        if [[ "$CLEAN" == "true" && -d "$PRODUCT_OUT" ]]; then
-            echo "[build] Cleaning $PRODUCT_OUT ..."
-            rm -rf "$PRODUCT_OUT"
-            echo "[build] Clean done."
-        fi
+
+# Refresh OrangeFox env snapshot for the post-image hook (Fox_After_*).
+# The hook script (vendor/recovery/OrangeFox_A14.sh) reads OUT/FOX_BUILD_TYPE
+# from inherited env or /tmp/pixels/fox_env.sh, which lunch writes ONCE via
+# printconfig. If the file is gone (/tmp volatility, manual cleanup),
+# recipes run with empty OUT (artifacts at /...) and default Unofficial
+# type. Re-materialize it from the current (post-lunch, proven-good) env
+# before the build; fail fast if the shell itself lost the critical vars.
+if [[ -z "${OUT:-}" || -z "${FOX_BUILD_TYPE:-}" ]]; then
+    echo "ERROR: build env lost OUT/FOX_BUILD_TYPE before build — re-run lunch"
+    fox_safe_exit 2
+fi
+if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
+    _fox_dev=$(cut -d'_' -f2 <<<"${TARGET_PRODUCT:-twrp_pixels}")
+    mkdir -p "/tmp/$_fox_dev"
+    export > "/tmp/$_fox_dev/fox_env.sh"
+    echo "[build] Refreshed /tmp/$_fox_dev/fox_env.sh for post-image hook"
+fi
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
     else
-        echo "[build] Cleaning $PRODUCT_OUT between kernel groups (mandatory) ..."
-        rm -rf "$PRODUCT_OUT"
-        echo "[build] Clean done."
+        exit "$SAFE_EXIT_CODE"
     fi
-    if [[ -n "$GROUP_TAG" ]]; then
-        if [[ "$GROUP_TAG" == "$KFAMILY" ]]; then
-            echo "[build] === Group $GROUP_TAG (kernel $FOX_KERNEL_VER, shared family profile) ==="
-        else
-            echo "[build] === Group $GROUP_TAG (kernel $FOX_KERNEL_VER, profile of $GROUP_GEN) ==="
-        fi
-    fi
+fi
 
-    # Refresh OrangeFox env snapshot for the post-image hook (Fox_After_*).
-    # The hook script (vendor/recovery/OrangeFox_A14.sh) reads OUT/FOX_BUILD_TYPE
-    # from inherited env or /tmp/pixels/fox_env.sh, which lunch writes ONCE via
-    # printconfig. If the file is gone (/tmp volatility, manual cleanup), group
-    # 2+ recipes run with empty OUT (artifacts at /...) and default Unofficial
-    # type. Re-materialize it from the current (post-lunch, proven-good) env
-    # before every group; fail fast if the shell itself lost the critical vars.
-    if [[ -z "${OUT:-}" || -z "${FOX_BUILD_TYPE:-}" ]]; then
-        echo "ERROR: build env lost OUT/FOX_BUILD_TYPE before group build — re-run lunch"
-        fox_safe_exit 2
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == false ]]; then
-        _fox_dev=$(cut -d'_' -f2 <<<"${TARGET_PRODUCT:-twrp_pixels}")
-        mkdir -p "/tmp/$_fox_dev"
-        export > "/tmp/$_fox_dev/fox_env.sh"
-        echo "[build] Refreshed /tmp/$_fox_dev/fox_env.sh for post-image hook"
-    fi
-    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-        break
-    fi
-
-    # KeyMint HAL first, alone: the recovery callback copies the vendor output
-    # during vendorbootimage assembly and parallel ninja gives no ordering
-    # guarantee. The follow-up full mka reuses it (no-op) and builds the rest.
-    echo "[build] Building keymint HAL first ($KEYMINT_MODULE) ..."
-    mka "$KEYMINT_MODULE" -j"$JOBS" || fox_safe_exit $?
-    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-        break
-    fi
-    mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
-    if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-        break
-    fi
-    # Success marker for the push/admin gates below: set HERE, right after
-    # the build (a failed mka breaks out above before reaching this). It
-    # must precede the Telegram push block — the old position after it
-    # meant the gate never saw success and every push was skipped.
-    FOX_BUILD_OK=1
-
-    echo ""
-    echo "=============================================="
-    echo "  Build complete!"
-    echo "  Output: $SOURCE_ROOT/$PRODUCT_OUT/"
-    echo "=============================================="
-
-    # --- Dynamic Artifact Naming & Copying ---
-    BUILDS_DIR="$SOURCE_ROOT/builds"
-    mkdir -p "$BUILDS_DIR"
-
-    LATEST_IMG=$(find "$SOURCE_ROOT/$PRODUCT_OUT" -maxdepth 1 -name 'OrangeFox-*.img' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-    LATEST_ZIP=$(find "$SOURCE_ROOT/$PRODUCT_OUT" -maxdepth 1 -name 'OrangeFox-*.zip' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-
-    if [[ -n "$GROUP_TAG" ]]; then
-        FAMILY_TAG="$GROUP_TAG"
+# KeyMint HAL first, alone: the recovery callback copies the vendor output
+# during vendorbootimage assembly and parallel ninja gives no ordering
+# guarantee. The follow-up full mka reuses it (no-op) and builds the rest.
+echo "[build] Building keymint HALs first ($KEYMINT_MODULE) ..."
+mka "$KEYMINT_MODULE" -j"$JOBS" || fox_safe_exit $?
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
     else
-        FAMILY_TAG="${DEVICE_BUILD_FLAG:-unknown}"
+        exit "$SAFE_EXIT_CODE"
     fi
-
-    # Extract dynamic version prefix (e.g., "OrangeFox-R11.3" or "OrangeFox-R11.4_5")
-    if [[ -n "$LATEST_IMG" ]]; then
-        OFOX_PREFIX=$(basename "$LATEST_IMG" | cut -d'-' -f1,2)
-    elif [[ -n "$LATEST_ZIP" ]]; then
-        OFOX_PREFIX=$(basename "$LATEST_ZIP" | cut -d'-' -f1,2)
+fi
+mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
+if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
+    if [[ "$fox_sourced" == true ]]; then
+        return "$SAFE_EXIT_CODE"
     else
-        OFOX_PREFIX="OrangeFox-UnknownVersion"
+        exit "$SAFE_EXIT_CODE"
     fi
+fi
+# Success marker for the push/admin gates below: set HERE, right after
+# the build (a failed mka breaks out above before reaching this).
+FOX_BUILD_OK=1
 
-    # Construct final filenames
-    if [[ -n "$BUILD_NAME" ]]; then
-        IMG_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.img"
-        ZIP_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.zip"
+echo ""
+echo "=============================================="
+echo "  Build complete!"
+echo "  Output: $SOURCE_ROOT/$PRODUCT_OUT/"
+echo "=============================================="
+
+# --- Dynamic Artifact Naming & Copying (AIO-only: payload + installer) ---
+BUILDS_DIR="$SOURCE_ROOT/builds"
+mkdir -p "$BUILDS_DIR"
+
+LATEST_IMG=$(find "$SOURCE_ROOT/$PRODUCT_OUT" -maxdepth 1 -name 'OrangeFox-*.img' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+
+FAMILY_TAG="aio"
+
+# Extract dynamic version prefix (e.g., "OrangeFox-R11.3" or "OrangeFox-R11.4_5")
+if [[ -n "$LATEST_IMG" ]]; then
+    OFOX_PREFIX=$(basename "$LATEST_IMG" | cut -d'-' -f1,2)
+else
+    OFOX_PREFIX="OrangeFox-UnknownVersion"
+fi
+
+if [[ -z "$LATEST_IMG" ]]; then
+    echo "[build] WARNING: No OrangeFox image found in $PRODUCT_OUT (cpio extract skipped)"
+fi
+
+# --- Ramdisk cpio extract (AIO recovery-in-platform: platform fragment) ---
+# The payload merges first-stage + recovery into one cpio for the universal
+# installer. Host fastboot fetches the on-device vendor_boot, swaps the
+# platform entry and flashes back — testers need just the ramdisk in stock
+# lz4_legacy format, not the whole image.
+#   flash: fastboot flash vendor_boot: <payload>
+if [[ -n "$LATEST_IMG" ]]; then
+    FRAG_SRC="vendor_ramdisk/ramdisk.cpio"
+    FRAG_FLASH="fastboot flash vendor_boot:"
+    FRAG_ALT="vendor_ramdisk_recovery.cpio"
+    AIO_WORK="$SOURCE_ROOT/$PRODUCT_OUT/aio_ramdisk"
+    rm -rf "$AIO_WORK" && mkdir -p "$AIO_WORK"
+    MAGISKBOOT_BIN="$SOURCE_ROOT/vendor/recovery/tools/magiskboot"
+    if [[ ! -x "$MAGISKBOOT_BIN" ]]; then
+        echo "[build] WARNING: magiskboot missing, skipping ramdisk extract"
     else
-        IMG_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.img"
-        ZIP_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.zip"
-    fi
-
-    # --- Artifact delivery: full image vs cpio-only ---
-    # --cpio-only: .img/.zip are NOT copied to builds/; only the ramdisk
-    # cpio.lz4 (extracted below) is delivered for fragment flashing.
-    if [[ "$CPIO_ONLY" == true ]]; then
-        echo "[build] --cpio-only: skipping .img/.zip copy"
-    else
-        # Copy files
-        if [[ -n "$LATEST_IMG" ]]; then
-            cp "$LATEST_IMG" "$IMG_DEST"
-            echo "[build] Copied: $IMG_DEST"
+        "$MAGISKBOOT_BIN" unpack -h "$LATEST_IMG" | grep -E "VND_RAMDISK|DTB_SZ" || true
+        (cd "$AIO_WORK" && "$MAGISKBOOT_BIN" unpack "$LATEST_IMG" >/dev/null 2>&1)
+        # magiskboot versions disagree on the recovery fragment path.
+        if [[ ! -f "$AIO_WORK/$FRAG_SRC" && -f "$AIO_WORK/$FRAG_ALT" ]]; then
+            FRAG_SRC="$FRAG_ALT"
         fi
-        if [[ -n "$LATEST_ZIP" ]]; then
-            cp "$LATEST_ZIP" "$ZIP_DEST"
-            echo "[build] Copied: $ZIP_DEST"
-        fi
-
-        if [[ -z "$LATEST_IMG" && -z "$LATEST_ZIP" ]]; then
-            echo "[build] WARNING: No OrangeFox artifacts found in $PRODUCT_OUT"
-        fi
-    fi
-
-    # --- Ramdisk cpio extract (gs101 always; --platform-recovery always;
-    # other families on --cpio-only) ---
-    # Tensor G1 has no vendor_kernel_boot partition; the device keeps its own
-    # dtb + dlkm + bootloader, we replace only the platform fragment (empty
-    # name in the table). Other families replace only the recovery fragment.
-    # --platform-recovery (var2-AIO test layout) merges first-stage into the
-    # payload, so the payload cpio is needed for our universal installer
-    # even without --cpio-only (full .img/.zip are still copied above).
-    # Host fastboot fetches the on-device vendor_boot, swaps that one entry
-    # and flashes back — so testers need just the ramdisk in stock
-    # lz4_legacy format, not the whole image.
-    #   gs101 → vendor_ramdisk/ramdisk.cpio,  flash: fastboot flash vendor_boot:
-    #   other → vendor_ramdisk/recovery.cpio, flash: fastboot flash vendor_boot:recovery
-    if [[ -n "$LATEST_IMG" ]] && [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || "$CPIO_ONLY" == true || -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
-        if [[ "${DEVICE_BUILD_FLAG:-}" == "gs101" || -n "${FOX_RECOVERY_IN_PLATFORM:-}" ]]; then
-            FRAG_SRC="vendor_ramdisk/ramdisk.cpio"
-            FRAG_FLASH="fastboot flash vendor_boot:"
-        else
-            FRAG_SRC="vendor_ramdisk/recovery.cpio"
-            FRAG_FLASH="fastboot flash vendor_boot:recovery"
-        fi
-        FRAG_ALT="vendor_ramdisk_recovery.cpio"
-        GS101_WORK="$SOURCE_ROOT/$PRODUCT_OUT/gs101_ramdisk"
-        rm -rf "$GS101_WORK" && mkdir -p "$GS101_WORK"
-        MAGISKBOOT_BIN="$SOURCE_ROOT/vendor/recovery/tools/magiskboot"
-        if [[ ! -x "$MAGISKBOOT_BIN" ]]; then
-            echo "[build] WARNING: magiskboot missing, skipping ramdisk extract"
-        else
-            "$MAGISKBOOT_BIN" unpack -h "$LATEST_IMG" | grep -E "VND_RAMDISK|DTB_SZ" || true
-            (cd "$GS101_WORK" && "$MAGISKBOOT_BIN" unpack "$LATEST_IMG" >/dev/null 2>&1)
-            # magiskboot versions disagree on the recovery fragment path.
-            if [[ ! -f "$GS101_WORK/$FRAG_SRC" && -f "$GS101_WORK/$FRAG_ALT" ]]; then
-                FRAG_SRC="$FRAG_ALT"
-            fi
-            if [[ -f "$GS101_WORK/$FRAG_SRC" ]]; then
-                # magiskboot unpacks fragments decompressed; recompress to the
-                # stock lz4_legacy format for the fragment flash path.
-                lz4 -l -9 -f "$GS101_WORK/$FRAG_SRC" "$GS101_WORK/vendor_ramdisk.cpio.lz4"
-                RAMDISK_DEST="${IMG_DEST%.img}.ramdisk.lz4"
-                cp "$GS101_WORK/vendor_ramdisk.cpio.lz4" "$RAMDISK_DEST"
-                echo "[build] ramdisk cpio: $RAMDISK_DEST (flash: $FRAG_FLASH $RAMDISK_DEST)"
-                if [[ "$CPIO_ONLY" == true ]]; then
-                    md5sum "$RAMDISK_DEST"
-                else
-                    md5sum "$RAMDISK_DEST" "$IMG_DEST"
-                fi
+        if [[ -f "$AIO_WORK/$FRAG_SRC" ]]; then
+            # magiskboot unpacks fragments decompressed; recompress to the
+            # stock lz4_legacy format for the fragment flash path.
+            lz4 -l -9 -f "$AIO_WORK/$FRAG_SRC" "$AIO_WORK/vendor_ramdisk.cpio.lz4"
+            if [[ -n "$BUILD_NAME" ]]; then
+                RAMDISK_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.ramdisk.lz4"
             else
-                echo "[build] WARNING: no $FRAG_SRC in $LATEST_IMG, skipping ramdisk extract"
+                RAMDISK_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.ramdisk.lz4"
             fi
+            cp "$AIO_WORK/vendor_ramdisk.cpio.lz4" "$RAMDISK_DEST"
+            echo "[build] ramdisk cpio: $RAMDISK_DEST (flash: $FRAG_FLASH $RAMDISK_DEST)"
+            md5sum "$RAMDISK_DEST"
+        else
+            echo "[build] WARNING: no $FRAG_SRC in $LATEST_IMG, skipping ramdisk extract"
         fi
-        rm -rf "$GS101_WORK"
     fi
+    rm -rf "$AIO_WORK"
+fi
 
-    # --- Installer zip (AIO): pack the fresh payload via installer/ ---
-    # The universal installer bundles the just-built ramdisk payload;
-    # OFOX_PAYLOAD refreshes installer/ + export.txt RECOVERY_IMG so the
-    # tree tracks the latest payload. Tag/family mirror the ramdisk
-    # artifact naming above. Non-fatal: a pack failure must never fail
-    # the build (the payload itself is already delivered).
-    if [[ "$FAMILY_TAG" == "aio" && -n "${RAMDISK_DEST:-}" && -f "$RAMDISK_DEST" ]]; then
-        echo "[build] packing installer zip for $FAMILY_TAG ..."
-        OFOX_PAYLOAD="$RAMDISK_DEST" \
-        OFOX_NAME="OrangeFox" \
-        OFOX_TYPE="$(echo "$OFOX_PREFIX" | cut -d'-' -f2)" \
-        OFOX_TAG="${BUILD_NAME:-Beta}" \
-        OFOX_FAMILY="$FAMILY_TAG" \
-        OFOX_BUILDS_DIR="$BUILDS_DIR" \
-        bash "$SCRIPT_DIR/installer/pack-module-zip.sh" \
-        || echo "[build] WARNING: installer pack failed (payload is fine: $RAMDISK_DEST)"
-    fi
-done
+# --- Installer zip (AIO): pack the fresh payload via installer/ ---
+# The universal installer bundles the just-built ramdisk payload;
+# OFOX_PAYLOAD refreshes installer/ + export.txt RECOVERY_IMG so the
+# tree tracks the latest payload. Non-fatal: a pack failure must never fail
+# the build (the payload itself is already delivered).
+if [[ -n "${RAMDISK_DEST:-}" && -f "$RAMDISK_DEST" ]]; then
+    echo "[build] packing installer zip for $FAMILY_TAG ..."
+    OFOX_PAYLOAD="$RAMDISK_DEST" \
+    OFOX_NAME="OrangeFox" \
+    OFOX_TYPE="$(echo "$OFOX_PREFIX" | cut -d'-' -f2)" \
+    OFOX_TAG="${BUILD_NAME:-Beta}" \
+    OFOX_FAMILY="$FAMILY_TAG" \
+    OFOX_BUILDS_DIR="$BUILDS_DIR" \
+    bash "$SCRIPT_DIR/installer/pack-module-zip.sh" \
+    || echo "[build] WARNING: installer pack failed (payload is fine: $RAMDISK_DEST)"
+fi
 
 # --- Telegram push (AIO installer zip only, --push GROUP) ---
 # Non-fatal by design: network/API flakes must never fail a good build.
-# Guarded on the post-process vars: if the pack loop never ran (failed or
-# skipped build), there is no zip to push and no garbage path is built.
+# Guarded on the post-process vars: if the build never ran (failed or
+# skipped), there is no zip to push and no garbage path is built.
 # Hard gate on FOX_BUILD_OK (set only after successful artifacts): without
-# it a stale zip from a previous run would pass the -f check below and go
-# to testers as if it were fresh (seen live: ninja failed, tag removed,
-# yet the old test9 zip was pushed to all groups).
+# it a stale zip from a previous run would be pushed to testers as if it
+# were fresh.
 if [[ "${FOX_BUILD_OK:-}" != 1 ]]; then
     if [[ -n "${FOX_PUSH_GROUP:-}" ]]; then
         echo "[build] Push SKIPPED: build did not complete (no fresh zip; stale artifacts left untouched)"
@@ -1187,12 +712,13 @@ if [[ -n "${FOX_DIFF_TAG:-}${FOX_DIFF_FROM:-}${FOX_PUSH_TEXT:-}" && -z "${FOX_PU
     echo "[build] WARNING: --diff-tag/--diff-from/--text have no effect without --push"
 fi
 
-# Stale generated overrides would silently reconfigure later manual builds
-# (dumpvars parses BoardConfig.mk on every lunch). Remove everything this
-# script may have generated — the pre-lunch sweep covers all families.
-_removed=$(rm -fv "$SCRIPT_DIR"/families/*/.gen_kernel.mk 2>/dev/null)
-if [[ -n "$_removed" ]]; then
-    echo "[build] Removed generated kernel profiles (reproducible via build.sh -k $FOX_KERNEL_VER)"
+# Migration: drop stale per-family kernel overrides generated by the old
+# per-family flow (dumpvars parsed BoardConfig.mk on every lunch). The
+# AIO-only tree builds no kernel image, so these files must never exist.
+_stale_gen=$(rm -fv "$SCRIPT_DIR"/families/*/.gen_kernel.mk 2>/dev/null || true)
+if [[ -n "$_stale_gen" ]]; then
+    echo "[build] Removed stale per-family kernel profiles (AIO keeps stock kernel):"
+    echo "$_stale_gen" | sed 's/^/  /'
 fi
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     if [[ "$fox_sourced" == true ]]; then
@@ -1205,5 +731,5 @@ fi
 echo "=============================================="
 echo "  Artifacts in: $BUILDS_DIR/"
 echo "=============================================="
-# NOTE: FOX_BUILD_OK is set right after mka succeeds (line ~980), not
+# NOTE: FOX_BUILD_OK is set right after mka succeeds (above), not
 # here — the Telegram push/admin gates above must see it.
