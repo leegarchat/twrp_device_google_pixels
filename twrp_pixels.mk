@@ -5,10 +5,9 @@
 #
 
 # twrp_pixels.mk — Product definition for OrangeFox Recovery on all Tensor Pixels.
-# Builds a universal recovery image per SoC family (set DEVICE_BUILD_FLAG):
-#   gs201   (Tensor G2): panther (Pixel 7), cheetah (Pixel 7 Pro), lynx (Pixel 7a)
-#   (default/zuma, Tensor G3): shiba (Pixel 8), husky (Pixel 8 Pro), akita (Pixel 8a)
-#   zumapro (Tensor G4): tokay (Pixel 9), komodo (Pixel 9 Pro XL), caiman (Pixel 9 Pro), tegu (Pixel 9a)
+# Builds a single universal (AIO) payload: stock kernel is kept, only the
+# recovery ramdisk cpio is delivered and packed into the installer zip.
+# Family specifics resolve at runtime (stub + recovery-pixel-boot).
 #
 # PRODUCT_DEVICE must match the directory name under device/google/ (pixels)
 # so that the build system finds BoardConfig.mk and device.mk correctly.
