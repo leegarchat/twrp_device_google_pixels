@@ -25,6 +25,11 @@ PLATFORM_TOOLS_LINUX=bin/linux/platform-tools
 PLATFORM_TOOLS_WINDOWS=bin/windows/platform-tools
 FASTBOOT_BIN=fastboot
 ADB_BIN=adb
+# Opt-in PATH fallback for the tools: when the bundled platform-tools
+# binary is missing or will not run on this CPU (wrong architecture),
+# fall back to fastboot/adb from PATH (each tool independently).
+# Off by default — set 1 (or true/yes/on) to allow it.
+FALLBACK_PATH=1
 # Minimum free space (MiB) a flashed image must leave in the
 # partition. Enforced by the desktop installer (waivable with --force)
 # and by install-recovery.sh (strict, no bypass).
