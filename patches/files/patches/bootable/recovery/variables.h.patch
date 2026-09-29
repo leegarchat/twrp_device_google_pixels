@@ -1,0 +1,11 @@
+--- a/bootable/recovery/variables.h
++++ b/bootable/recovery/variables.h
+@@ -24,7 +24,7 @@
+ #define FOX_RECOVERY_NAME	"OrangeFox"
+ #define FOX_MAIN_VERSION_STR    FOX_INTERNAL_RELEASE // defined in orangefox.mk
+ #define FOX_BRANCH		"12"
+-#define TW_VERSION_STR 		FOX_MAIN_VERSION_STR
++#define TW_VERSION_STR 		FOX_BUILD // full build: R12.0[_<name>][_<patch>], see orangefox.mk
+ #define BUILD_TYPE_STR 		FOX_BUILD_TYPE
+ 
+ // OrangeFox - Values

@@ -1,0 +1,29 @@
+--- a/bootable/recovery/orangefox.mk
++++ b/bootable/recovery/orangefox.mk
+@@ -24,6 +24,13 @@
+ FOX_INTERNAL_RELEASE := R12.0
+ LOCAL_CFLAGS += -DFOX_INTERNAL_RELEASE='"$(FOX_INTERNAL_RELEASE)"'
+ 
++# Pixels AIO build name (device/google/pixels/build.sh -n/--name exports it
++# as FOX_BUILD_NAME): becomes part of the in-recovery version string,
++# R12.0_<name>[_<patch>]. Empty on manual lunch flows — plain R12.0[_<patch>].
++FOX_BUILD := $(FOX_INTERNAL_RELEASE)
++ifneq ($(FOX_BUILD_NAME),)
++    FOX_BUILD := $(FOX_BUILD)_$(FOX_BUILD_NAME)
++endif
+ ifneq ($(FOX_MAINTAINER_PATCH_VERSION),)
+     test_res := $(shell printf -- '%d' $(FOX_MAINTAINER_PATCH_VERSION) 2>/dev/null)
+     ifneq ($(FOX_MAINTAINER_PATCH_VERSION),$(test_res))
+@@ -31,10 +38,9 @@
+     endif
+     test_res :=
+     LOCAL_CFLAGS += -DFOX_MAINTAINER_PATCH_VERSION='"$(FOX_MAINTAINER_PATCH_VERSION)"'
+-    LOCAL_CFLAGS += -DFOX_BUILD='"$(FOX_INTERNAL_RELEASE)""_""$(FOX_MAINTAINER_PATCH_VERSION)"'
+-else
+-    LOCAL_CFLAGS += -DFOX_BUILD='"$(FOX_INTERNAL_RELEASE)"'
++    FOX_BUILD := $(FOX_BUILD)_$(FOX_MAINTAINER_PATCH_VERSION)
+ endif
++LOCAL_CFLAGS += -DFOX_BUILD='"$(FOX_BUILD)"'
+ 
+ ifneq ($(FOX_VERSION),)
+     $(error 'FOX_VERSION' is obsolete. Look at 'FOX_MAINTAINER_PATCH_VERSION' for maintainer versioning)

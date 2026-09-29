@@ -25,9 +25,11 @@
 #                     at boot, MTP autostart off); any other value builds a
 #                     non-Secure image. Exported for vendorsetup.sh/lunch.
 #   --notrm           Don't clean out/target/product/pixels before build.
-#   -n, --name TAG    Name tag for output files:
-#                     builds/OrangeFox-<VERSION>-{TAG}-aio.zip +
-#                     OrangeFox-<VERSION>-{TAG}-aio.ramdisk.lz4
+#   -n, --name TAG    Name tag: output files
+#                     (builds/OrangeFox-<VERSION>-{TAG}-aio.zip +
+#                     OrangeFox-<VERSION>-{TAG}-aio.ramdisk.lz4) and the
+#                     in-recovery version string (R12.0_<TAG>[_<patch>],
+#                     exported as FOX_BUILD_NAME for orangefox.mk).
 #   -p, --patch N     Set FOX_MAINTAINER_PATCH_VERSION (numbers only).
 #                     E.g., "--patch 5" will result in version R11.3_5.
 #   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
@@ -411,6 +413,15 @@ export FOX_KEYMINT_TYPE
 FOX_KERNEL_VER="stock"
 export FOX_KERNEL_VER
 echo "[build] AIO mode: stock kernel kept, both KeyMint HALs ship"
+# Build name for the in-recovery version string (orangefox.mk composes
+# FOX_BUILD as R12.0_<name>[_<patch>]). Empty without -n — plain
+# R12.0[_<patch>]. Keep it filename-safe (no spaces): it also names
+# the payload/installer artifacts below.
+if [[ -n "$BUILD_NAME" ]]; then
+    FOX_BUILD_NAME="$BUILD_NAME"
+    export FOX_BUILD_NAME
+    echo "[build] Build name in version: $FOX_BUILD_NAME"
+fi
 
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     if [[ "$fox_sourced" == true ]]; then

@@ -25,7 +25,8 @@ If you are an AI model working with this tree, follow these rules:
 | Flag | Meaning |
 |---|---|
 | `-f, --family aio` | Accepted for backward compatibility only (may be omitted). Any other value is rejected — there are no per-family builds |
-| `-n TAG` | Tag in the payload/installer name |
+| `-n TAG` | Tag in the payload/installer name; also lands in the in-recovery version string (`R12.0_<TAG>[_<patch>]`, via `FOX_BUILD_NAME`) |
+| `-p, --patch N` | Whole-number patch appended to the in-recovery version (`R12.0[_<name>]_N`, via `FOX_MAINTAINER_PATCH_VERSION`) |
 | `--list` | Show the family/device tree and exit (builds nothing) |
 | `--build-type TYPE` | Build type, default `Stable` (details below) |
 | `-j N` | Parallel build jobs (also `-jN`), default nproc |
