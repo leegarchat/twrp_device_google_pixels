@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# FOX_LOCAL_CALLBACK_SCRIPT for Zuma SoC Pixel devices (shiba/husky/akita)
+# FOX_LOCAL_CALLBACK_SCRIPT for the universal (AIO) Tensor Pixel payload.
 #
 # Called by OrangeFox_A14.sh:
 #   --first-call:  $1 = FOX_RAMDISK (after theme copy, before UPX/reduce_ramdisk_size)
@@ -44,11 +44,11 @@ case "$LGZ_LEVEL" in
     *) echo "    [CONFIG] WARNING: bad LGZ_LEVEL='$LGZ_LEVEL', using 0"; LGZ_LEVEL=0 ;;
 esac
 echo "    [CONFIG] LGZ_LEVEL=$LGZ_LEVEL"
-# Keymint HAL type arrives via .build_platform.conf (written by vendorsetup.sh
-# from families/<fam>/family.json `keymint`: rust|cpp|both). No prebuilt fallback:
-# an unknown type fails the build loudly — shipping recovery without a
-# working keymint means no decrypt. AIO ships both HALs (wrong one exits
-# harmlessly at runtime, or the installer pre-selects via ro.recovery.keymint).
+# Keymint HAL type arrives via .build_platform.conf (always `both` in the
+# AIO-only tree). No prebuilt fallback: an unknown type fails the build
+# loudly — shipping recovery without a working keymint means no decrypt.
+# Both HALs ship; the wrong one exits harmlessly at runtime (or the
+# installer pre-selects via ro.recovery.keymint).
 : "${KEYMINT:=}"
 case "$KEYMINT" in
     rust|cpp|both) ;;
@@ -228,36 +228,30 @@ fi
 # =========================================================================
 # Pixel device config merge (families/*/family.json + devices/*/pixel.json
 # -> /pixelrunatboot.json in the ramdisk root, always open).
-# The Rust engine reads its section by ro.hardware at runtime; per-device
-# vendor data (touch lists, partitions, haptics path, props) never lives
-# in code. Family props merge under device props (device wins).
+# AIO-only: every device ships in the universal payload; the installer
+# selects family files post-unpack (include/aio/aio_swap.sh) and the Rust
+# engine reads its section by ro.hardware at runtime. Per-device vendor
+# data (touch lists, partitions, haptics path, props) never lives in code.
+# Family props merge under device props (device wins).
 # Loud fail on invalid JSON — a half-merged config must never ship.
+# NOTE: no kernel image is built (stock kernel kept), so no kernel boot
+# strings ship here; reflash_twrp.sh stamps nothing — slots are rebuilt
+# from their own stock images (smart replace, header/cmdline/dtb kept).
 # =========================================================================
 merge_pixel_config() {
     local ramdisk_root="$1" platform="$2"
     python3 - "$TREE_ROOT" "$ramdisk_root/pixelrunatboot.json" "$platform" <<'PYEOF'
 import json, sys, pathlib
 tree, out, platform = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-# Kernel cmdline/bootconfig normalization is shared verbatim with
-# gen_kernel_mk.py (single source of truth: families/*/family.json
-# `kernels` + devices/*/pixel.json overrides). The flat strings emitted
-# here describe each device's kernel profile for non-AIO flows;
-# reflash_twrp.sh stamps nothing — slots are rebuilt from their own
-# stock images (smart replace, header/cmdline/dtb kept).
-sys.path.insert(0, str(pathlib.Path(tree) / 'include' / 'prebuilt'))
-from gen_kernel_mk import norm_cmdline, effective_profile
 merged = {}
-families = {}
 for famfile in sorted((tree / 'families').glob('*/family.json')):
     try:
         fam = json.loads(famfile.read_text())
     except Exception as e:
         print(f'    [PIXELCFG] ERROR: bad family JSON {famfile}: {e}')
         sys.exit(1)
-    families[fam['family']] = fam
     merged.setdefault('_families', {})[fam['family']] = fam
 n = 0
-bootcfg = {}
 for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     dev = pixfile.parent.name
     if dev in merged:
@@ -268,54 +262,14 @@ for pixfile in sorted((tree / 'devices').glob('*/pixel.json')):
     except Exception as e:
         print(f'    [PIXELCFG] ERROR: bad device JSON {pixfile}: {e}')
         sys.exit(1)
-    # Family-scoped image: only this platform's devices ship.
-    # AIO image: every device ships; the installer selects family files
-    # post-unpack (include/aio/aio_swap.sh) and the engine resolves its section
-    # by ro.hardware at runtime.
-    if platform != 'aio' and pj.get('family') != platform:
-        continue
     famprops = merged.get('_families', {}).get(pj['family'], {}).get('props', {})
     props = dict(famprops)
     props.update(pj.get('props', {}))
     pj['props'] = props
     merged[dev] = pj
-    # Flat per-device kernel boot strings (author order, like VENDOR_CMDLINE).
-    # AIO builds no kernel image (stock kernel kept): no boot strings ship.
-    if platform == 'aio':
-        n += 1
-        continue
-    fam = families.get(pj['family'], {})
-    # Single record: the kernel THIS image is built with. Version comes
-    # from families/<fam>/.gen_kernel.mk (FOX_KERNEL_VER, written by
-    # build.sh pre-lunch); env vars don't survive recipe shells.
-    # No runtime detection: when the record is absent the family
-    # default_kernel applies. (No nboot fallback exists anymore;
-    # reflash keeps each slot's own stock header.)
-    ver = ''
-    genmk = tree / 'families' / pj.get('family', '') / '.gen_kernel.mk'
-    try:
-        for line in genmk.read_text().splitlines():
-            if line.startswith('FOX_KERNEL_VER :='):
-                ver = line.split(':=', 1)[1].strip()
-                break
-    except OSError:
-        pass
-    if not ver:
-        ver = fam.get('default_kernel', '')
-        print(f"    [PIXELCFG] WARNING: no .gen_kernel.mk for {pj['family']}, using default_kernel={ver}")
-    prof, src = effective_profile(fam, pj, ver)
-    if prof is None:
-        print(f'    [PIXELCFG] ERROR: no kernels[{ver}] for {dev}')
-        sys.exit(1)
-    flags = norm_cmdline(prof.get('cmdline', {'type': 'arr', 'value': []}))
-    boot = list(prof.get('bootconfig_append', []) or [])
-    bootcfg[dev] = {'ver': ver, 'cmdline': ' '.join(flags),
-                    'bootconfig': '\n'.join(boot), 'source': src}
     n += 1
-merged['kernel_bootcfg'] = bootcfg
 out.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + '\n')
-print(f'    [PIXELCFG] merged {n} devices (family {platform}) -> /pixelrunatboot.json')
-print(f'    [PIXELCFG] kernel_bootcfg for {len(bootcfg)} devices')
+print(f'    [PIXELCFG] merged {n} devices (universal payload) -> /pixelrunatboot.json')
 # Flat device->family map for the stub-time AIO swap (aioswap.c reads it
 # pre-init, no JSON parser needed there): system/etc/aio/devices.txt,
 # "<device>:<family>" per line. Stays open (never packed).
@@ -748,16 +702,14 @@ case "$CALL_TYPE" in
         ;;
 
     --second-call)
-        echo "=== [zuma] fox_build_callback: --second-call ==="
+        echo "=== [aio] fox_build_callback: --second-call ==="
         echo "    Ramdisk: $TARGET_DIR (final, pre-cpio)"
 
-        # --- Per-family twrp.flags injection ---
-        # Every family ships its own families/<fam>/twrp.flags (UFS paths
-        # differ per SoC); the ramdisk default is replaced unconditionally.
-        # AIO: the aio placeholder (zuma) becomes the default, and every
-        # family's flags ship as /system/etc/twrp.flags.<fam> for the
-        # installer to select post-unpack (include/aio/aio_swap.sh).
-        platform="$PLATFORM"
+        # --- twrp.flags injection (universal payload) ---
+        # The aio placeholder becomes the live default, and every family's
+        # flags ship as /system/etc/twrp.flags.<fam> for the installer to
+        # select post-unpack (include/aio/aio_swap.sh).
+        platform="aio"
         # --- Recovery-in-platform merge (var2-AIO, RECOVERY_IN_PLATFORM=1) ---
         # Must run FIRST in --second-call: everything below (family kits,
         # keymint injection, INIT-STUB swap, manifest/file-list generation,
@@ -785,24 +737,22 @@ case "$CALL_TYPE" in
             rm -rf "$TARGET_DIR/first_stage_ramdisk"
             echo "    [PLATFORM]   - first_stage_ramdisk stripped (NO_FIRST_STAGE=1)"
         fi
-        fam_flags="$TREE_ROOT/families/$platform/twrp.flags"
+        fam_flags="$TREE_ROOT/families/aio/twrp.flags"
         default_flags="$TARGET_DIR/system/etc/twrp.flags"
         if [ -f "$fam_flags" ]; then
-            echo "    [PLATFORM] Injecting twrp.flags for $platform"
+            echo "    [PLATFORM] Injecting twrp.flags (aio placeholder)"
             cp -f "$fam_flags" "$default_flags"
         else
             echo "    [PLATFORM] ERROR: family flags missing: $fam_flags"
         fi
-        if [ "$platform" = "aio" ]; then
-                for _fam_dir in "$TREE_ROOT"/families/*/; do
-                _fam=$(basename "$_fam_dir")
-                case "$_fam" in common|aio) continue ;; esac
-                if [ -f "$_fam_dir/twrp.flags" ]; then
-                    cp -f "$_fam_dir/twrp.flags" "$TARGET_DIR/system/etc/twrp.flags.$_fam"
-                    echo "    [PLATFORM]   + swap kit: twrp.flags.$_fam"
-                fi
-            done
-        fi
+        for _fam_dir in "$TREE_ROOT"/families/*/; do
+            _fam=$(basename "$_fam_dir")
+            case "$_fam" in common|aio) continue ;; esac
+            if [ -f "$_fam_dir/twrp.flags" ]; then
+                cp -f "$_fam_dir/twrp.flags" "$TARGET_DIR/system/etc/twrp.flags.$_fam"
+                echo "    [PLATFORM]   + swap kit: twrp.flags.$_fam"
+            fi
+        done
 
         # --- Per-device twrp.flags overrides ---
         # A device may ship devices/<codename>/twrp.flags; the builder
@@ -815,7 +765,7 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM]   + device override: ${dev}.twrp.flags"
         done
 
-        # --- AIO swap-kit manifest (AIO only) ---
+        # --- Swap-kit manifest ---
         # /system/etc/aio/families.txt maps every family to its keymint type,
         # USB controller and USB bus parent dir so aio_swap.sh (and the
         # installer) can select family files post-unpack with no tree
@@ -824,37 +774,33 @@ case "$CALL_TYPE" in
         # (empty usbctrl = 11210000 default, empty/missing usbpath =
         # "<base>.usb" directly under /sys/devices/platform; laguna/malibu
         # live under simple_usb_bus and must name it explicitly)
-        if [ "$platform" = "aio" ]; then
-            mkdir -p "$TARGET_DIR/system/etc/aio"
-            : > "$TARGET_DIR/system/etc/aio/families.txt"
-                for _fam_dir in "$TREE_ROOT"/families/*/; do
-                _fam=$(basename "$_fam_dir")
-                case "$_fam" in common|aio) continue ;; esac
-                _km=$(python3 -c "import json;print(json.load(open('$_fam_dir/family.json')).get('keymint',''))" 2>/dev/null)
-                _usb=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")
-                _bus=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBBUS:-}")
-                printf '%s:keymint=%s:usbctrl=%s:usbpath=%s\n' "$_fam" "$_km" "$_usb" "$_bus" >> "$TARGET_DIR/system/etc/aio/families.txt"
-            done
-            echo "    [PLATFORM]   + swap kit manifest: system/etc/aio/families.txt"
-        fi
-        # --- Per-family recovery.fstab swap kit (AIO only) ---
+        mkdir -p "$TARGET_DIR/system/etc/aio"
+        : > "$TARGET_DIR/system/etc/aio/families.txt"
+        for _fam_dir in "$TREE_ROOT"/families/*/; do
+            _fam=$(basename "$_fam_dir")
+            case "$_fam" in common|aio) continue ;; esac
+            _km=$(python3 -c "import json;print(json.load(open('$_fam_dir/family.json')).get('keymint',''))" 2>/dev/null)
+            _usb=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBCTRL:-}")
+            _bus=$(. "$_fam_dir/family.conf" 2>/dev/null; printf '%s' "${USBBUS:-}")
+            printf '%s:keymint=%s:usbctrl=%s:usbpath=%s\n' "$_fam" "$_km" "$_usb" "$_bus" >> "$TARGET_DIR/system/etc/aio/families.txt"
+        done
+        echo "    [PLATFORM]   + swap kit manifest: system/etc/aio/families.txt"
+        # --- recovery.fstab swap kit ---
         # Root /etc is a symlink to /system/etc that may not exist yet at
         # this stage, so stage into system/etc directly. The live file is
-        # system/etc/recovery.fstab (aio placeholder = zuma); every
-        # family's file ships as system/etc/recovery.fstab.<fam> for the
-        # installer to select post-unpack (include/aio/aio_swap.sh).
-        if [ "$platform" = "aio" ]; then
-            mkdir -p "$TARGET_DIR/system/etc"
-                for _fam_dir in "$TREE_ROOT"/families/*/; do
-                _fam=$(basename "$_fam_dir")
-                case "$_fam" in common|aio) continue ;; esac
-                if [ -f "$_fam_dir/recovery.fstab" ]; then
-                    cp -f "$_fam_dir/recovery.fstab" "$TARGET_DIR/system/etc/recovery.fstab.$_fam" \
-                        && echo "    [PLATFORM]   + swap kit: recovery.fstab.$_fam" \
-                        || return 1
-                fi
-            done
-        fi
+        # the aio placeholder; every family's file ships as
+        # system/etc/recovery.fstab.<fam> for the installer to select
+        # post-unpack (include/aio/aio_swap.sh).
+        mkdir -p "$TARGET_DIR/system/etc"
+        for _fam_dir in "$TREE_ROOT"/families/*/; do
+            _fam=$(basename "$_fam_dir")
+            case "$_fam" in common|aio) continue ;; esac
+            if [ -f "$_fam_dir/recovery.fstab" ]; then
+                cp -f "$_fam_dir/recovery.fstab" "$TARGET_DIR/system/etc/recovery.fstab.$_fam" \
+                    && echo "    [PLATFORM]   + swap kit: recovery.fstab.$_fam" \
+                    || return 1
+            fi
+        done
         # --- Per-family keymint binary injection ---
         # Prebuilt static arm64 (small build: vboot + install only), same
         # binary the desktop/on-device installer uses. reflash_twrp.sh
@@ -874,44 +820,34 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM] ERROR: bootsmasher prebuilt missing: include/prebuilt/bootsmasher-install-arm64"
             return 1
         fi
-        # --- Per-family recovery.wipe swap kit (AIO only) ---
+        # --- recovery.wipe swap kit ---
         # Same layout as the fstab kit: the live system/etc/recovery.wipe
         # is the aio placeholder, every family's file ships as
         # system/etc/recovery.wipe.<fam> for the installer (aio_swap.sh).
-        if [ "$platform" = "aio" ]; then
-            mkdir -p "$TARGET_DIR/system/etc"
-                for _fam_dir in "$TREE_ROOT"/families/*/; do
-                _fam=$(basename "$_fam_dir")
-                case "$_fam" in common|aio) continue ;; esac
-                if [ -f "$_fam_dir/recovery.wipe" ]; then
-                    cp -f "$_fam_dir/recovery.wipe" "$TARGET_DIR/system/etc/recovery.wipe.$_fam" \
-                        && echo "    [PLATFORM]   + swap kit: recovery.wipe.$_fam" \
-                        || return 1
-                fi
-            done
-        fi
-        # Both HALs are built from source and selected by families/<fam>/
-        # family.json `keymint` (KEYMINT here): rust (system/core/trusty/keymint)
-        # or cpp (system/core/trusty/keymaster). Soong places the vendor output
-        # at $PRODUCT_OUT/vendor/bin/hw/; it is copied into the ramdisk and
-        # later packed into the LGZ cluster. No prebuilt blobs.
-        # AIO (both): both binaries ship; both services start at boot and
-        # the wrong one exits harmlessly (or the installer pre-selects via
-        # ro.recovery.keymint, see the gated triggers in pixel_common.rc).
-        # VINTF keymint fragments live in families/<platform>/etc/.
-        family_dir="$TREE_ROOT/families/$platform"
+        mkdir -p "$TARGET_DIR/system/etc"
+        for _fam_dir in "$TREE_ROOT"/families/*/; do
+            _fam=$(basename "$_fam_dir")
+            case "$_fam" in common|aio) continue ;; esac
+            if [ -f "$_fam_dir/recovery.wipe" ]; then
+                cp -f "$_fam_dir/recovery.wipe" "$TARGET_DIR/system/etc/recovery.wipe.$_fam" \
+                    && echo "    [PLATFORM]   + swap kit: recovery.wipe.$_fam" \
+                    || return 1
+            fi
+        done
+        # Both KeyMint HALs are built from source and always ship in the
+        # universal payload: rust (system/core/trusty/keymint) and cpp
+        # (system/core/trusty/keymaster). Soong places the vendor output at
+        # $PRODUCT_OUT/vendor/bin/hw/; it is copied into the ramdisk and
+        # later packed into the LGZ cluster. No prebuilt blobs. Both
+        # services start at boot and the wrong one exits harmlessly (or the
+        # installer pre-selects via ro.recovery.keymint, see the gated
+        # triggers in pixel_common.rc).
         PRODUCT_OUT="${TARGET_DIR%/recovery/root}"
 
-        echo "    [PLATFORM] Injecting keymint for: $platform (type $KEYMINT)"
+        echo "    [PLATFORM] Injecting both keymint HALs (universal payload)"
 
-        # --- Keymint binary ---
-        if [ "$KEYMINT" = "both" ]; then
-            km_bin_names="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty"
-        elif [ "$KEYMINT" = "cpp" ]; then
-            km_bin_names="android.hardware.security.keymint-service.trusty"
-        else
-            km_bin_names="android.hardware.security.keymint-service.rust.trusty"
-        fi
+        # --- Keymint binaries (both, always) ---
+        km_bin_names="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty"
         for km_bin_name in $km_bin_names; do
         src_bin="$PRODUCT_OUT/vendor/bin/hw/$km_bin_name"
         if [ -f "$src_bin" ]; then
@@ -926,64 +862,35 @@ case "$CALL_TYPE" in
         fi
         done
 
-        # --- VINTF keymint fragment (per family) ---
-        # AIO: every family's fragment ships renamed (keymint.<fam>.xml);
-        # the installer keeps the target one post-unpack (include/aio/aio_swap.sh).
-        if [ "$platform" = "aio" ]; then
-                for _fam_dir in "$TREE_ROOT"/families/*/; do
-                _fam=$(basename "$_fam_dir")
-                case "$_fam" in common|aio) continue ;; esac
-                if [ -f "$_fam_dir/etc/vintf/manifest/keymint.xml" ]; then
-                    mkdir -p "$TARGET_DIR/vendor/etc/vintf/manifest"
-                    cp -f "$_fam_dir/etc/vintf/manifest/keymint.xml" \
-                        "$TARGET_DIR/vendor/etc/vintf/manifest/keymint.$_fam.xml"
-                    echo "    [PLATFORM]   + VINTF fragment: keymint.$_fam.xml"
-                fi
-            done
-        elif [ -d "$family_dir/etc" ]; then
-            cp -af "$family_dir/etc" "$TARGET_DIR/vendor/"
-            echo "    [PLATFORM]   + VINTF keymint fragment"
-        fi
+        # --- VINTF keymint fragments ---
+        # Every family's fragment ships renamed (keymint.<fam>.xml); the
+        # installer keeps the target one post-unpack (include/aio/aio_swap.sh).
+        for _fam_dir in "$TREE_ROOT"/families/*/; do
+            _fam=$(basename "$_fam_dir")
+            case "$_fam" in common|aio) continue ;; esac
+            if [ -f "$_fam_dir/etc/vintf/manifest/keymint.xml" ]; then
+                mkdir -p "$TARGET_DIR/vendor/etc/vintf/manifest"
+                cp -f "$_fam_dir/etc/vintf/manifest/keymint.xml" \
+                    "$TARGET_DIR/vendor/etc/vintf/manifest/keymint.$_fam.xml"
+                echo "    [PLATFORM]   + VINTF fragment: keymint.$_fam.xml"
+            fi
+        done
 
-        # --- Per-family USB controller address (DWC3) ---
-        # The recovery rc files bake in 11210000 (shared by gs201/zuma/zumapro);
-        # families with a different controller (malibu: a210000.dwc3) substitute
-        # both the .usb platform dir and the .dwc3 controller name.
-        # AIO instead blanks the default to UNKNOWN markers: the stub swap
+        # --- USB controller address (DWC3) ---
+        # The recovery rc files bake in 11210000; the universal payload
+        # blanks the default to UNKNOWN markers instead: the stub swap
         # fills in the detected family BEFORE init parses these files. No
-        # zuma defaults on purpose — an unswapped boot fails visibly (dead
-        # USB) instead of silently pretending to be zuma.
-        if [ "$platform" = "aio" ]; then
-            for usb_rc in "$TARGET_DIR/init.recovery.pixel_common.rc" "$TARGET_DIR/init.recovery.usb.rc"; do
-                [ -f "$usb_rc" ] || continue
-                sed -i "s/11210000\.usb/00000000.usb/g; s/11210000\.dwc3/UNKNOWN.dwc3/g" "$usb_rc"
-                echo "    [PLATFORM]   + USB default blanked to UNKNOWN ($(basename "$usb_rc"))"
-            done
-        elif [ -n "$USBCTRL" ] && [ "$USBCTRL" != "11210000.dwc3" ]; then
-            usb_base="${USBCTRL%.dwc3}"
-            for usb_rc in "$TARGET_DIR/init.recovery.pixel_common.rc" "$TARGET_DIR/init.recovery.usb.rc"; do
-                [ -f "$usb_rc" ] || continue
-                sed -i "s/11210000\.usb/${usb_base}.usb/g; s/11210000\.dwc3/${USBCTRL}/g" "$usb_rc"
-                echo "    [PLATFORM]   + USB controller -> $USBCTRL ($(basename "$usb_rc"))"
-            done
-        fi
+        # family defaults on purpose — an unswapped boot fails visibly
+        # (dead USB) instead of silently pretending to be one family.
+        for usb_rc in "$TARGET_DIR/init.recovery.pixel_common.rc" "$TARGET_DIR/init.recovery.usb.rc"; do
+            [ -f "$usb_rc" ] || continue
+            sed -i "s/11210000\.usb/00000000.usb/g; s/11210000\.dwc3/UNKNOWN.dwc3/g" "$usb_rc"
+            echo "    [PLATFORM]   + USB default blanked to UNKNOWN ($(basename "$usb_rc"))"
+        done
 
-        # --- Disable the keymint service that doesn't match this family ---
-        # AIO (both): both starts stay enabled; the HAL whose Trusty TA is
+        # Both keymint services stay enabled; the HAL whose Trusty TA is
         # absent exits harmlessly (or the installer pre-selects one via
         # ro.recovery.keymint + the gated triggers in pixel_common.rc).
-        rc_file="$TARGET_DIR/init.recovery.pixel_common.rc"
-        if [ -f "$rc_file" ] && [ "$KEYMINT" != "both" ]; then
-            if [ "$KEYMINT" = "cpp" ]; then
-                # C++ family: disable Rust keymint start (no Rust binary)
-                sed -i 's/^\(    start vendor\.keymint\.rust-trusty\)/#\1  # disabled ('"$KEYMINT"' family)/' "$rc_file"
-                echo "    [PLATFORM]   + disabled Rust keymint start"
-            else
-                # Rust family: disable C++ keymint start (no C++ binary)
-                sed -i 's/^\(    start vendor\.keymint-trusty\)/#\1  # disabled ('"$KEYMINT"' family)/' "$rc_file"
-                echo "    [PLATFORM]   + disabled C++ keymint start"
-            fi
-        fi
 
         # --- Recovery core rc rename: hw/init.rc -> recovery-core.rc ---
         # LoadBootScripts parses /system/etc/init/hw/init.rc by exact path
