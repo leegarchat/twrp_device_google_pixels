@@ -4,9 +4,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-# device.mk — Package list, crypto config, and build props for Tensor-based Pixels.
-# Covers gs201 (Tensor G2), zuma (Tensor G3), zumapro (Tensor G4).
-# Custom recovery modules are built from include/ (Rust).
+# device.mk — Package list, crypto config, and build props (AIO-only).
+# One universal payload for all Tensor Pixels; family specifics resolve at
+# runtime. Custom recovery modules are built from include/ (Rust).
 
 LOCAL_PATH := device/google/pixels
 
@@ -20,30 +20,15 @@ PRODUCT_TARGET_VNDK_VERSION := 34
 # Dynamic Partitions
 PRODUCT_USE_DYNAMIC_PARTITIONS := true
 
-# Recovery ramdisk overlays: the common root/ FIRST, then per-device
-# overlays SCOPED TO THE CURRENT FAMILY (a zuma build must not ship
-# akita/tokay rc files). Per-device init stubs live in
-# devices/<codename>/recovery/root/; family comes from each
-# devices/<codename>/device.conf, so adding a device needs no mk edit.
-# Family stubs live in families/<fam>/recovery/root/; build.sh exports
-# DEVICE_BUILD_FLAG, so append exactly one family overlay.
+# Recovery ramdisk overlays: the common root/ FIRST, then every device +
+# every family overlay in one universal cpio. The installer selects family
+# files post-unpack (include/aio/aio_swap.sh); the rest resolves at runtime
+# via ro.hardware (recovery-pixel-boot).
 # NOTE: keep $(LOCAL_PATH) first: build/make uses TARGET_RECOVERY_DEVICE_DIRS
 # *instead of* (not in addition to) TARGET_DEVICE_DIR/recovery/root.
-_pixel_dev_family = $(shell . $(LOCAL_PATH)/devices/$(1)/device.conf 2>/dev/null; printf '%s' "$$FAMILY")
 TARGET_RECOVERY_DEVICE_DIRS := $(LOCAL_PATH)
-ifeq ($(DEVICE_BUILD_FLAG),aio)
-# All-in-one: every device + every family overlay ships in one cpio.
-# The installer selects family files post-unpack (include/aio/aio_swap.sh); the rest
-# resolves at runtime via ro.hardware (recovery-pixel-boot).
 TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/devices/*)
 TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/families/*)
-else ifeq ($(DEVICE_BUILD_FLAG),)
-$(warning pixels: DEVICE_BUILD_FLAG empty, family scoping off - all device overlays included)
-TARGET_RECOVERY_DEVICE_DIRS += $(wildcard $(LOCAL_PATH)/devices/*)
-else
-TARGET_RECOVERY_DEVICE_DIRS += $(foreach d,$(notdir $(wildcard $(LOCAL_PATH)/devices/*)),$(if $(filter $(DEVICE_BUILD_FLAG),$(call _pixel_dev_family,$(d))),$(LOCAL_PATH)/devices/$(d)))
-TARGET_RECOVERY_DEVICE_DIRS += $(LOCAL_PATH)/families/$(DEVICE_BUILD_FLAG)
-endif
 
 # Boot control HAL (Pixel-specific implementation)
 PRODUCT_PACKAGES += \
@@ -118,96 +103,17 @@ PRODUCT_PACKAGES += \
     recovery-tensor-daemon \
     recovery-pixel-boot
 
-# KeyMint HAL from source, per-family type from families/*/family.json
-# `keymint` (rust|cpp|both), delivered as FOX_KEYMINT_TYPE by build.sh.
-# Rust (zuma/zumapro, system/core/trusty/keymint) talks KeyMint AIDL to the
-# Trusty TA; C++ (gs201/gs101, system/core/trusty/keymaster) auto-negotiates
-# via GetVersion fallback for Keymaster 4.0 TAs. No prebuilt blobs.
-# AIO (both): both HALs ship; both services start, the wrong one exits
-# harmlessly (or the installer pre-selects via ro.recovery.keymint).
-ifeq ($(FOX_KEYMINT_TYPE),both)
+# KeyMint HALs from source (AIO-only: both always ship in the universal
+# payload). Rust (system/core/trusty/keymint) talks KeyMint AIDL to the
+# Trusty TA; C++ (system/core/trusty/keymaster) auto-negotiates via
+# GetVersion fallback for Keymaster 4.0 TAs. No prebuilt blobs.
+# Both services start at boot; the wrong one exits harmlessly (or the
+# installer pre-selects via ro.recovery.keymint).
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
 PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
-else ifeq ($(FOX_KEYMINT_TYPE),cpp)
-PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
-else ifeq ($(FOX_KEYMINT_TYPE),rust)
-PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
-else
-# FOX_KEYMINT_TYPE empty/unknown (manual lunch without build.sh): fall back
-# to the family-name mapping.
-ifneq (,$(filter gs201 gs101,$(DEVICE_BUILD_FLAG)))
-PRODUCT_PACKAGES += android.hardware.security.keymint-service.trusty
-else
-PRODUCT_PACKAGES += android.hardware.security.keymint-service.rust.trusty
-endif
-endif
 
 
-# Firstage ramdisk packages — static plain fstabs, no templates, no codegen.
-# Every family owns its fstab/ as prebuilt_etc (ext4+erofs twins, no AVB).
-# Skipped entirely with build.sh -N/--no-first-stage (FOX_NO_FIRST_STAGE=1
-# in env, imported by make): no fstab, no linker/e2fs vendor_ramdisk tools.
-# Fallback to .build_platform.conf (build.sh persists the key there;
-# recipe shells may strip custom env, the conf survives).
-ifeq ($(FOX_NO_FIRST_STAGE),)
-FOX_NO_FIRST_STAGE := $(shell grep '^NO_FIRST_STAGE=' $(LOCAL_PATH)/.build_platform.conf 2>/dev/null | cut -d= -f2)
-endif
-# Recovery ramdisk (TARGET_RECOVERY_FSTAB, recovery/root) is unaffected.
-# families/zuma/fstab/    → fstab.zuma*                             (Tensor G3, UFS 13200000)
-# families/zumapro/fstab/ → fstab.zumapro* + f2fs-flavored fstab.zuma* (Tensor G4, UFS 13200000)
-# families/gs201/fstab/   → fstab.gs201*                            (Tensor G2, UFS 14700000)
-# families/gs101/fstab/   → fstab.gs101*                            (Tensor G1, UFS 14700000 — stock-based, no /system_dlkm, USB 11110000)
-# families/malibu/fstab/  → fstab.malibu*                           (Tensor G6, UFS 3c2d0000)
-# families/laguna/fstab/  → fstab.laguna*                           (Tensor G5, UFS 3c400000)
-ifneq ($(FOX_NO_FIRST_STAGE),1)
-ifeq ($(DEVICE_BUILD_FLAG),zumapro)
-PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zuma.f2fs.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zuma-fips.f2fs.vendor_ramdisk
-else ifeq ($(DEVICE_BUILD_FLAG),gs201)
-PRODUCT_PACKAGES += fstab.gs201.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk
-else ifeq ($(DEVICE_BUILD_FLAG),gs101)
-PRODUCT_PACKAGES += fstab.gs101.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs101-fips.vendor_ramdisk
-else ifeq ($(DEVICE_BUILD_FLAG),malibu)
-PRODUCT_PACKAGES += fstab.malibu.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.malibu-fips.vendor_ramdisk
-else ifeq ($(DEVICE_BUILD_FLAG),laguna)
-PRODUCT_PACKAGES += fstab.laguna.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.laguna-fips.vendor_ramdisk
-else ifeq ($(DEVICE_BUILD_FLAG),aio)
-# AIO ships every family's fstab: first-stage init picks fstab.<hardware>
-# per device, and malibu/laguna must not fall back to the zuma file
-# (wrong UFS/EROFS layout breaks vendor mount, which in turn runs the
-# wrong KeyMint HAL and kills decrypt). Small files, always installed.
-PRODUCT_PACKAGES += fstab.zuma.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zuma-fips.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zumapro.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zumapro-fips.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs201.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs201-fips.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs101.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.gs101-fips.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.malibu.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.malibu-fips.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.laguna.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.laguna-fips.vendor_ramdisk
-else
-PRODUCT_PACKAGES += fstab.zuma.vendor_ramdisk
-PRODUCT_PACKAGES += fstab.zuma-fips.vendor_ramdisk
-endif
-
-# service \
-# 	strace \
-
-PRODUCT_PACKAGES += \
-    linker.vendor_ramdisk \
-    resize2fs.vendor_ramdisk \
-    resize.f2fs.vendor_ramdisk \
-    dump.f2fs.vendor_ramdisk \
-    fsck.vendor_ramdisk \
-    tune2fs.vendor_ramdisk \
-    e2fsck.vendor_ramdisk
-endif # FOX_NO_FIRST_STAGE != 1
+# AIO-only: first-stage (vendor_ramdisk) components are always skipped
+# (build.sh exports FOX_NO_FIRST_STAGE=1; stock first_stage is preserved by
+# the installer). No fstab.*.vendor_ramdisk, no linker/e2fs vendor_ramdisk
+# tools. The recovery ramdisk is unaffected.
