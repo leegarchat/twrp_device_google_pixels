@@ -26,6 +26,8 @@ named "admin" cannot be addressed (rename it).
 
 --text appends a postscript to the zip message after the md5 line
 (after the full-changes link line when a change list was sent).
+Total caption must fit the 1024-char media cap — overlong captions
+fail fast per chat with the exact length; keep --text short.
 
 --diff collects `git log PREV..CUR` (commit subjects + bodies) from the
 repo and sends it before the zip, per group: as a text message when it
@@ -323,6 +325,11 @@ async def run_push(token, chat_ids, zip_path, zip_name, size_mb, digest,
 
             link = message_link(chat_id, changes_mid) if changes_mid else None
             caption = zip_caption(zip_name, size_mb, digest, push_text, link, base, cur)
+            if len(caption) > 1024:  # Bot API media-caption cap
+                print(f"ERROR: caption is {len(caption)} chars (cap is 1024), "
+                      f"zip not sent to '{group}' — shorten --text", file=sys.stderr)
+                failed += 1
+                continue
             print(f"[tg-push] sending {os.path.basename(zip_path)} to '{group}' ...")
             try:
                 msg = await bot.send_document(
