@@ -623,6 +623,50 @@ fn siw_disconnect(base: &str, slot: &str) {
     }
 }
 
+/// Mapped-node name for [`siw_unmap`]: `siw unmap` takes the name `siw
+/// map` created, i.e. base+slot verbatim (`vendor_dlkm` + `_b`).
+/// Pure (testable).
+fn unmap_name(base: &str, slot: &str) -> String {
+    format!("{base}{slot}")
+}
+
+/// Release a dm-mapper node created by [`siw_map`] plus siw's slot-less
+/// alias when it dangles (best-effort). `siw disconnect` only drops loop
+/// nodes from `connect`; dm nodes from `map` need `siw unmap`, and the
+/// leftover alias (field-proven: /dev/block/mapper/vendor_dlkm symlinking
+/// a destroyed node) tripped Unmap_Super_Devices at format time.
+/// One-shot: every dm map in [`stage_aoc`] is paired with this before
+/// return, so no mapper traces survive a staging round.
+fn siw_unmap(base: &str, slot: &str) {
+    match slot {
+        "_a" | "_b" => {}
+        _ => return,
+    }
+    let name = unmap_name(base, slot);
+    let node = mapper_node(base, slot);
+    if Path::new(&node).exists() {
+        match std::process::Command::new("/system/bin/siw")
+            .args(["unmap", &name])
+            .output()
+        {
+            Ok(out) if out.status.success() => info(&format!("siw unmap: {name} released")),
+            Ok(out) => info(&format!("siw unmap {name} warning: status={}", out.status)),
+            Err(e) => info(&format!("siw unmap: cannot run siw: {e}")),
+        }
+    }
+    // Slot-less alias siw leaves behind — drop only when provably dangling
+    // (symlink whose target is gone); live nodes and real devices are
+    // never touched.
+    let alias = format!("/dev/block/mapper/{base}");
+    let dangling = std::fs::symlink_metadata(&alias)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+        && std::fs::metadata(&alias).is_err();
+    if dangling && std::fs::remove_file(&alias).is_ok() {
+        info(&format!("siw unmap: removed dangling alias {alias}"));
+    }
+}
+
 /// First `$name` file under `root` (recursive, shell `find $MD -name …
 /// | head -1` equivalent). Pure filesystem walk.
 fn find_file_under(root: &Path, name: &str) -> Option<PathBuf> {
@@ -730,6 +774,10 @@ fn stage_aoc() -> bool {
             let _ = std::fs::set_permissions(AOCD_BIN, perm);
         }
     }
+    // One-shot: drop any dm mapping this round created — including the
+    // map-ok/mount-failed path (the leak that broke Unmap_Super_Devices
+    // at format time). No-op when nothing is mapped.
+    siw_unmap("vendor", &slot);
     // KO from the vendor_dlkm image: dm-mapper mount first (proven for
     // dlkm — touch maps it daily), siw loop device as fallback.
     if !Path::new(AOC_KO).is_file() {
@@ -756,6 +804,8 @@ fn stage_aoc() -> bool {
                 siw_disconnect("vendor_dlkm", &slot);
             }
         }
+        // One-shot: drop any dm mapping this round created (see vendor).
+        siw_unmap("vendor_dlkm", &slot);
     }
     Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file()
 }
@@ -1107,11 +1157,22 @@ pub fn run_otg_auto() -> ! {
     // per-tick spam).
     let mut last_state = (String::new(), String::new(), String::new());
     let mut was_verified = false;
+    // Staging backoff: vendor may be unmountable on some trees (mustang
+    // 6.6 flog: by-name/loop/dm all EINVAL forever). Hammering it every
+    // 3s only spams the log — after a few fast rounds, poll slowly.
+    // Partitions never appear at runtime, so nothing is lost.
+    let mut stage_fails = 0u32;
     loop {
-        if !(Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file())
-            && stage_aoc()
-        {
-            info("staged aocd + libs + module into RAM");
+        if !(Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file()) {
+            if stage_aoc() {
+                info("staged aocd + libs + module into RAM");
+                stage_fails = 0;
+            } else {
+                stage_fails = stage_fails.saturating_add(1);
+                if stage_fails == 5 {
+                    info("AoC staging still failing, backing off to 60s polls");
+                }
+            }
         }
         if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
             // Second-stage bring-up (sleeps inside — never oneshot-fast).
@@ -1137,8 +1198,9 @@ pub fn run_otg_auto() -> ! {
             }
             was_verified = now_verified;
             ensure_otg_symlink();
+            stage_fails = 0;
         }
-        sleep(Duration::from_secs(3));
+        sleep(Duration::from_secs(if stage_fails >= 5 { 60 } else { 3 }));
     }
 }
 
@@ -1185,6 +1247,15 @@ mod tests {
         // DTB `dwc3@c400000` (reg 0xc400000) — never zuma's 11210000.
         assert!(UDC_FALLBACK.contains("c400000"));
         assert!(!UDC_FALLBACK.contains("11210000"));
+    }
+
+    #[test]
+    fn unmap_name_matches_map_node() {
+        // `siw unmap` takes the mapped name `siw map` created: the
+        // basename of mapper_node, i.e. base+slot verbatim.
+        assert_eq!(unmap_name("vendor_dlkm", "_b"), "vendor_dlkm_b");
+        assert_eq!(unmap_name("vendor", "_a"), "vendor_a");
+        assert!(mapper_node("vendor_dlkm", "_b").ends_with(&unmap_name("vendor_dlkm", "_b")));
     }
 
     #[test]

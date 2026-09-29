@@ -248,7 +248,9 @@ case "$1" in
         _out="/dev/ko_stage/${_part}_${_sfx}"
         rm -rf "$_out"; mkdir -p "$_out"
         _img="/dev/stage_${_part}_${_sfx}.img"
-        if _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
+        # No iw binary on device (ramdisk ships none): skip the stream,
+        # its parse step cannot succeed — straight to map+mount.
+        if [ -x "$IW" ] && _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
             if _iw_extract "$_img" '.ko' "$_out"; then
                 rm -f "$_img"
                 exit 0
@@ -306,7 +308,9 @@ case "$1" in
         if [ "$_n" -gt 0 ]; then echo "$_n"; exit 0; fi
         plog "fw-fetch" "mount path empty, siw|iw stream fallback"
         _img="/dev/stage_${_part}_${_sfx}.img"
-        if _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
+        # No iw binary on device (ramdisk ships none): skip the stream,
+        # its parse step cannot succeed — straight to by-name fallback.
+        if [ -x "$IW" ] && _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
             for _staged in $(_iw_extract "$_img" '/firmware/' /dev/fw_stage 2>/dev/null); do
                 # Top-level firmware/* only (mirror the mount+glob semantics):
                 # deeper hits are payload stores from elsewhere in the image.
