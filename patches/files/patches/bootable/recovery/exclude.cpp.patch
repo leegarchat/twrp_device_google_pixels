@@ -1,0 +1,38 @@
+--- a/bootable/recovery/exclude.cpp
++++ b/bootable/recovery/exclude.cpp
+@@ -72,6 +72,7 @@
+ 	}
+ 
+ 	static uint64_t i = 0;
++	static bool fox_warned = false;
+ 	while ((de = readdir(d)) != NULL) {
+ 		FullPath = Path + "/";
+ 		FullPath += de->d_name;
+@@ -86,15 +87,26 @@
+ 			   LOGINFO("Real error: Unable to stat '%s'\n", FullPath.c_str());
+ 			}
+ 
+-			if (i == 7) // ok, the errors continue - so, inform the user
++			// Fox: the streak breaks on success (see below), so reaching
++			// 7 means 7 CONSECUTIVE failures. Isolated bad names (field-
++			// proven: U+200C ZWNJ in restored WhatsApp filenames that
++			// FUSE lists via readdir but refuses via lookup) no longer
++			// accumulate into a false decryption-failure verdict, while
++			// a truly locked tree still trips it on the first entries.
++			if (i == 7 && !fox_warned) {
++			   fox_warned = true;
+ 			#ifdef OF_MASK_GET_FOLDER_SIZE_READ_ERRORS
+ 			   LOGINFO("** Persistent read errors! **\nDecryption has probably failed!\n\n");
+ 			#else
+ 			   LOGERR("** Persistent read errors! **\nDecryption has probably failed!\n\n");
+ 			#endif
++			}
+ 
+ 			continue;
+ 		}
++		// Fox: any successful stat proves the tree is readable here:
++		// reset the streak so only truly consecutive failures count.
++		i = 0;
+ 		if (!check_skip_dirs(FullPath)) {
+ 			if ((st.st_mode & S_IFDIR) && de->d_type != DT_SOCK) {
+ 				dusize += Get_Folder_Size(FullPath);
