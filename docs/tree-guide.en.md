@@ -9,10 +9,9 @@ Paths are relative to `device/google/pixels/`.
 
 | File | Purpose | Read by |
 |---|---|---|
-| `build.sh` | Single build entry point. Resolves `-f` (family or device), `-k` (kernel profile), image grouping, lunch, `mka`, callback invocation. AI models must not run it (see `build-system.en.md`). | developer |
-| `vendorsetup.sh` | Lunch hook: selection menu, `TARGET_DEVICE_ALT`/`FOX_TARGET_DEVICES`, all `FOX_*`/`OF_*`/`TW_*` flags, `OF_FL_PATH1`, writes `.build_platform.conf` | build system, `build.sh` |
-| `include/prebuilt/fox_build_callback.sh` | `--second-call` post-processing of the finished ramdisk: config merge, rc surgery, LGZ packing, manifests for reflash | `build.sh` |
-| `include/prebuilt/gen_kernel_mk.py` | Resolves kernel profiles from JSON into `.gen_kernel.mk` (`--list/--fingerprint/--generate`) | `build.sh`, developer |
+| `build.sh` | Single build entry point (AIO-only): fixed `aio` target, lunch, `mka`, cpio extract, installer pack. AI models must not run it (see `build-system.en.md`). | developer |
+| `vendorsetup.sh` | Lunch hook: `TARGET_DEVICE_ALT`/`FOX_TARGET_DEVICES` (all devices), all `FOX_*`/`OF_*`/`TW_*` flags, `OF_FL_PATH1`, writes `.build_platform.conf` | build system, `build.sh` |
+| `include/prebuilt/fox_build_callback.sh` | `--second-call` post-processing of the finished ramdisk: config merge, swap-kit assembly, rc surgery, LGZ packing, manifests for reflash | `build.sh` |
 | `sync_tree.py` | Smart `repo sync` preserving local edits + snapshot/patch manager (`-s/-d/-c/-f`) | developer |
 | `patches/apply_patches.py` | Applies `patches/files/*.patch` to the source tree (`--check` / `--apply`) | `build.sh` |
 | `include/prebuilt/check_keymint.sh` | Manual keymint check on the device (HAL md5, service status) | developer |
@@ -22,20 +21,19 @@ Paths are relative to `device/google/pixels/`.
 | File | Purpose |
 |---|---|
 | `twrp_pixels.mk` | Product definition (`twrp_pixels`, universal target for all Tensor) |
-| `device.mk` | Packages, ramdisk overlays (`TARGET_RECOVERY_DEVICE_DIRS`), per-family filters |
-| `BoardConfig.mk` | Architecture, partitions, TWRP/OF flags (`TW_FRAMERATE := 120`, brightness, exclusions), `-include .gen_kernel.mk` |
+| `device.mk` | Packages, universal ramdisk overlays (`TARGET_RECOVERY_DEVICE_DIRS` = all devices + families), both KeyMint HALs, no first-stage |
+| `BoardConfig.mk` | Architecture, partitions, TWRP/OF flags (`TW_FRAMERATE := 120`, brightness, exclusions), fixed `aio` platform, dummy cmdline (stock kernel kept) |
 | `Android.mk` / `Android.bp` / `AndroidProducts.mk` | Build inclusion, Soong modules, product list |
-| `custom_bootimg.mk` | `vendor_boot` build (legacy gs101 stock-patch mode superseded, see `families-devices.en.md`) |
 | `board-info.txt` | Canonical list of 22 devices for the build fence |
 
 ## Data: families and devices
 
 | Path | Purpose |
 |---|---|
-| `families/<fam>/family.conf` | Shell SoC facts for scripts: `FAMILY`, `UFS_ADDR`, `EARLYCON_ADDR`, `USBCTRL` |
-| `families/<fam>/family.json` | Same + `keymint` (rust\|cpp), common `props`, `default_kernel`, `kernels` cmdline profiles |
-| `families/<fam>/family.mk` | SoC build fragment (no cmdline — it comes from `.gen_kernel.mk`) |
-| `families/<fam>/fstab/` + `recovery.fstab` | Pre-rendered fstabs for vendor_ramdisk and recovery fstab. RO partitions go as ext4+erofs twins (first-stage walks same-mountpoint duplicates; order: ext4, erofs); no AVB flags (`avb=`, `avb_keys=`) in first-stage by design — recovery mounts without verity; `recovery.fstab` stays ext4-only — TWRP detects erofs itself via blkid |
+| `families/aio/family.mk` | The only build fragment (block size for the intermediate image; stock kernel kept) |
+| `families/<fam>/family.conf` | Shell SoC facts for the swap kit: `FAMILY`, `UFS_ADDR`, `USBCTRL`/`USBBUS` |
+| `families/<fam>/family.json` | Same + `keymint` (rust\|cpp\|both), common `props` |
+| `families/<fam>/recovery.fstab` | Per-family recovery fstab; ships as `recovery.fstab.<fam>` swap kit (live file is the aio placeholder). Stays ext4-only — TWRP detects erofs itself via blkid |
 | `families/<fam>/recovery/` | Family ramdisk overlay (rc stubs) |
 | `families/<fam>/twrp.flags` | Family `twrp.flags` (UFS paths etc.) on top of the default |
 | `families/<fam>/etc/` | VINTF fragments (keymint manifests schema 2.0) |

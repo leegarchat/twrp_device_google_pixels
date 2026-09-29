@@ -12,10 +12,11 @@ needed only as a reference (fstab, cmdline, partition map).
 | `gs201`, `gs101` | `cpp` | C++ HAL against the old Trusty TA |
 | `zuma`, `zumapro`, `laguna`, `malibu` | `rust` | Rust HAL against the new TA |
 
-- The type is set by the `keymint` field in `family.json` → `FOX_KEYMINT_TYPE`
-  (read by `build.sh`, `device.mk`, the callback via `.build_platform.conf`).
-- The callback injects the required service into rc and disables the foreign one; the keymint module
-  is built with a separate `mka` **first** (order matters).
+- The type is set by the `keymint` field in `family.json`; the universal
+  payload always ships both HALs (the wrong one exits harmlessly, or the
+  installer pre-selects via `ro.recovery.keymint`).
+- Both keymint modules are built with a separate `mka` **first** (order
+  matters).
 - C++ on zuma was tested and rejected (restart loop, TA mismatch);
   Rust-from-source is green (md5 out==device, `User 0 Decrypted`).
 - Keymint VINTF manifests — schema 2.0 only (recovery carries libvintf
@@ -48,8 +49,10 @@ alias set. Our patches:
   basename (`zoned_device`), metadata timeout 30→120.
 - `partitionmanager.cpp`: `FscryptMountMetadataEncryptedWithTimeout(…, 120)`
   + gate on keymint service state (no service — skip instead of hanging).
-- fstabs: pre-rendered for vendor_ramdisk in `families/<fam>/fstab/`,
-  recovery fstab is `recovery.fstab`.
+- fstabs: first-stage `vendor_ramdisk` components are not built
+  (`FOX_NO_FIRST_STAGE=1`, stock first_stage preserved by the installer);
+  the per-family `recovery.fstab` files ship as the `recovery.fstab.<fam>`
+  swap kit (live file is the aio placeholder).
 
 ## KDF playground (`include/fbe_kdf/`)
 

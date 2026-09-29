@@ -16,66 +16,54 @@ via wildcards (`TARGET_RECOVERY_DEVICE_DIRS`, config merge).
 4. Optionally `devices/<codename>/twrp.flags` — on top of the family file
    (the builder places it as `<device>.twrp.flags`, the runtime swaps it in after
    device resolution).
-5. `build.sh -f <codename>` → in the log `[PIXELCFG] merged N devices`,
-   `Entries packed`. Flash both slots → checks from
+5. `build.sh -n <tag>` → in the log `[PIXELCFG] merged N devices`,
+   `Entries packed`. Flash both slots via the installer → checks from
    `diagnostics.en.md`.
 
 ## New SoC (family `families/<fam>/`)
 
 | File | Contents |
 |---|---|
-| `family.conf` | `FAMILY`, `UFS_ADDR`, `EARLYCON_ADDR`, `USBCTRL` (if not `11210000.dwc3`) |
-| `family.json` | Same + `keymint` (rust\|cpp), shared `props`, `default_kernel`, `kernels` profiles (see `kernel-profiles.en.md`) |
-| `family.mk` | SoC build fragment (no cmdline!) |
-| `fstab/` + `recovery.fstab` | Pre-rendered fstabs |
+| `family.conf` | `FAMILY`, `UFS_ADDR`, `USBCTRL` (if not `11210000.dwc3`), `USBBUS` (if the controller lives under `simple_usb_bus`) |
+| `family.json` | Same + `keymint` (rust\|cpp), shared `props` |
+| `recovery.fstab` + `recovery.wipe` + `twrp.flags` | Swap-kit files: ship as `*.<fam>`, the installer selects post-unpack |
 | `recovery/` | Family ramdisk overlay (rc stubs) |
-| `twrp.flags` | Family flags (UFS paths, etc.) |
 | `etc/` | VINTF fragments (keymint manifest schema 2.0) |
 
-Next: stock `vendor_boot` of the device → capture the cmdline byte-for-byte →
-profile in `kernels` → `board-info.txt` → test per `tester-guide.en.md`.
+Next: stock `vendor_boot` of the device → verify the UFS/USB addresses
+against `twrp.flags` → `board-info.txt` → test per `tester-guide.en.md`.
+No kernel profiles (stock kernel is kept — see `kernel-profiles.en.md`),
+no `family.mk` (only `families/aio` carries a build fragment).
 
 ## Family matrix (facts for configs)
 
-| Family | UFS | DWC3 USB | KeyMint | Kernels |
-|---|---|---|---|---|
-| gs201 | `14700000` | `11210000.dwc3` | cpp | 6.1, 6.12 |
-| zuma | `13200000` | `11210000.dwc3` | rust | 6.1, 6.12 |
-| zumapro | `13200000` | `11210000.dwc3` | rust | 6.1, 6.12 |
-| laguna | `3c400000` | `c400000.dwc3` | rust | 6.12 |
-| malibu | `3c2d0000` | `a210000.dwc3` | rust | 6.12 |
-| gs101 | `14700000` | `11110000.dwc3` | cpp | 6.1 |
+| Family | UFS | DWC3 USB | KeyMint |
+|---|---|---|---|
+| gs201 | `14700000` | `11210000.dwc3` | cpp |
+| zuma | `13200000` | `11210000.dwc3` | rust |
+| zumapro | `13200000` | `11210000.dwc3` | rust |
+| laguna | `3c400000` | `c400000.dwc3` | rust |
+| malibu | `3c2d0000` | `a210000.dwc3` | rust |
+| gs101 | `14700000` | `11110000.dwc3` | cpp |
 
-Devices are grouped into a single image per family (`kernels` overrides
-disabled via `_kernels_disabled`; to restore — rename the key).
+Every device ships in the single universal payload; family files are
+selected at install/boot time (swap kit + stub + engine).
 
-## gs101 (Tensor G1, Pixel 6 series) — special build
+## gs101 (Tensor G1, Pixel 6 series) — hardware notes
 
 gs101 has no `vendor_kernel_boot` partition: stock `vendor_boot` carries
-platform + dlkm + dtb fragments. Our image builds as a **single**
-platform fragment (first-stage + recovery merged: `BoardConfig.mk`
-disables `BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT` for gs101 while
-`BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT` stays on — build/make
-merges `TARGET_RECOVERY_ROOT_OUT` into the platform itself), with no dtb
-and no dlkm fragment.
-
-Stock first-stage modules stay untouched: flashing is fragment surgery
-— `fastboot flash vendor_boot: <ramdisk>` (empty name = the platform
+platform + dlkm + dtb fragments. The universal payload is a platform
+fragment (first-stage + recovery merged), flashed as fragment surgery —
+`fastboot flash vendor_boot: <ramdisk>` (empty name = the platform
 fragment; NOT `:default` — that collapses the whole section into one
-entry and kills the stock dlkm). Host fastboot fetches the on-device
+entry and kills the stock dlkm). The installer fetches the on-device
 `vendor_boot` itself, swaps only the platform entry and flashes it
-back: stock dlkm+dtb survive, first-stage keeps autoloading all 204
-stock modules from dlkm.
+back: stock dlkm+dtb survive, first-stage keeps autoloading the stock
+modules from dlkm.
 
-Testers flash **not the image** but the platform ramdisk: after the
-build, `build.sh` unpacks `OrangeFox-*-gs101.img` (magiskboot) and drops
-`OrangeFox-*-gs101.ramdisk.lz4` next to it (stock `lz4_legacy` format,
-byte-verified against our known-booting images). Flashing:
+Manual flashing (what the installer automates):
 
 ```bash
-fastboot flash vendor_boot: OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
+fastboot flash vendor_boot: OrangeFox-R12.0-test_x-aio.ramdisk.lz4
 fastboot reboot recovery
 ```
-
-`reflash_twrp.sh` and the ramdisk snapshot are not yet
-updated for this scheme — only after boot is confirmed.

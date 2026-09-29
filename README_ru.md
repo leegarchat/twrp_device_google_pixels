@@ -14,13 +14,14 @@
 без вендорских пребилдов, стоковое ядро сохраняется.
 
 ```bash
-./build.sh -f aio --platform-recovery -n test8 -c --build-type Beta
+./build.sh -n test8 --build-type Beta
 ```
 
 На выходе — `builds/OrangeFox-R12.0-test8-aio.zip`: один пакет, который
 ставит рабочее рекавери на любой поддерживаемый Pixel (оба слота, с
-бекапом userdata). Сборки по семействам (`-f <семья> -k <версия>`) ещё
-существуют, но это уже дев-фолбэк: тестеры видят только AIO-сборки.
+бекапом userdata), плюс `*.ramdisk.lz4`-пейлоад, из которого он упакован.
+Стоковое ядро сохраняется всегда; собирается только универсальный
+рамдиск-пейлоад. Сборок по семействам нет.
 
 | Семейство | SoC | Устройства |
 |---|---|---|
@@ -43,8 +44,8 @@
 | Документ | Вопрос |
 |---|---|
 | [`docs/tree-guide_ru.md`](docs/tree-guide_ru.md) | Что за файл, зачем нужен, кто его читает |
-| [`docs/build-system_ru.md`](docs/build-system_ru.md) | Как собирается образ: `build.sh`, AIO и семейные образы, флаги |
-| [`docs/kernel-profiles_ru.md`](docs/kernel-profiles_ru.md) | Откуда берётся cmdline ядра: `family.json` → `.gen_kernel.mk` |
+| [`docs/build-system_ru.md`](docs/build-system_ru.md) | Как собирается пейлоад: `build.sh`, cpio + installer zip, флаги |
+| [`docs/kernel-profiles_ru.md`](docs/kernel-profiles_ru.md) | Почему kernel-профилей нет: стоковое ядро сохраняется |
 | [`docs/device-config_ru.md`](docs/device-config_ru.md) | `pixel.json`: тач, пути, пропсы, фолды и letterbox |
 | [`docs/recovery-engine_ru.md`](docs/recovery-engine_ru.md) | Rust-движок `recovery-pixel-boot`: init, модули, OTG, фонарик |
 | [`docs/boot-chain_ru.md`](docs/boot-chain_ru.md) | Цепочка загрузки и init-стаб |
@@ -72,10 +73,8 @@
 ## Быстрый старт
 
 ```bash
-./build.sh --list                  # дерево семейств, девайсов и ядер
-./build.sh -f aio --platform-recovery -n test8 -c --build-type Beta   # AIO (основной маршрут)
-./build.sh -f zuma -k 6.12         # фолбэк по семейству (только для разработчиков)
-./gen_kernel_mk.py --fingerprint zuma 6.12   # кто с кем делит образ
+./build.sh --list                  # дерево семейств и девайсов
+./build.sh -n test8 --build-type Beta   # универсальный пейлоад + installer zip
 ```
 
 > Если вы AI-модель и исследуете проект, следуйте правилам:

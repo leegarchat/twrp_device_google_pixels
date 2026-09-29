@@ -72,7 +72,7 @@
 | `FOX_AB_DEVICE` | `1`; `orangefox.mk:93,156-176` | Режим A/B: линковка bootctl, пути OTA/update-engine | `=1` (:158; также форсится `BoardConfig.mk:35` `AB_OTA_UPDATER`) |
 | `FOX_VIRTUAL_AB_DEVICE` | `1`; `orangefox.mk:87-95` | Virtual-A/B: тянет `FOX_AB_DEVICE=1` + `FOX_VANILLA_BUILD=1`; гейтит KernelSU, VAB ORS wipe-format | `=1` (:157) |
 | `FOX_VENDOR_BOOT_RECOVERY` | `1` (экспериментально, с варнингом); `orangefox.mk:179-195` | Recovery в vendor_boot: форсит AB + `OF_NO_SPLASH_CHANGE` + vanilla; раскладка repacker/ramdisk под vendor_boot | `=1` (:159; соответствует `BoardConfig.mk:236-237`) |
-| `FOX_RECOVERY_VENDOR_BOOT_PARTITION` | путь к блочнику; `OrangeFox_A14.sh:664-666` (только shell-постобработка) | Переписывает `VENDOR_BOOT_PARTITION=` на реальный узел `vendor_boot` | по семьям (:161-167): gs201/gs101→`14700000.ufs`, malibu→`3c2d0000.ufs`, laguna→`3c400000.ufs`, иначе `13200000.ufs` |
+| `FOX_RECOVERY_VENDOR_BOOT_PARTITION` | путь к блочнику; `OrangeFox_A14.sh:664-666` (только shell-постобработка) | Переписывает `VENDOR_BOOT_PARTITION=` на реальный узел `vendor_boot` | фиксированный дефолт (`13200000.ufs`); per-device путь резолвится в рантайме/на девайсе через by-name |
 | `FOX_TARGET_DEVICES` / `TARGET_DEVICE_ALT` | списки через запятую; `orangefox.mk:310-317` | Assert/allow-лист (`ro.twrp.target.devices`, проверки OTA) | оба `="$_ALL_DEVS"` (:175-176, discovery, не хардкод) |
 
 ### 3.2 Vanilla / MIUI (tree: vanilla включён)
@@ -148,8 +148,8 @@
 `USE_CCACHE=1` (:152), `TARGET_ARCH=arm64` (:153, `BoardConfig.mk:65`
 всё равно перебивает env), `FOX_REPLACE_TOOLBOX_GETPROP=1` (:226),
 `FOX_BASH_TO_SYSTEM_BIN=1` (:228), `FOX_LOCAL_CALLBACK_SCRIPT` (:265),
-`FOX_KERNEL_VER` / `FOX_KEYMINT_TYPE` / `DEVICE_BUILD_FLAG` / `LGZ_LEVEL`
-(через `build.sh`), `VENDOR_BOOT_PATCH_STOCK` (путь gs101).
+`FOX_KEYMINT_TYPE` (=`both`, фикс) / `DEVICE_BUILD_FLAG` (=`aio`, фикс) /
+`FOX_KERNEL_VER` (=`stock`, фикс) / `LGZ_LEVEL` (через `build.sh`).
 Закомментировано (сознательно выкл): `FOX_ASH_IS_BASH`,
 `FOX_USE_TAR_BINARY`, `FOX_USE_SED_BINARY`, `FOX_USE_XZ_UTILS`,
 `FOX_USE_UPDATED_MAGISKBOOT`, `FOX_USE_LZ4_BINARY` (`:229-235`).
@@ -178,8 +178,7 @@
   `OF_UNBIND_SDCARD_F2FS`, `FOX_ENABLE_KERNELSU*`,
   `FOX_RECOVERY_VENDOR_BOOT_PARTITION`, `USE_CCACHE`, `TARGET_ARCH`,
   `DEVICE_BUILD_FLAG`) плюс экспорты `build.sh`
-  (`FOX_MAINTAINER_PATCH_VERSION`, `FOX_KERNEL_VER`, `FOX_KEYMINT_TYPE`,
-  `LGZ_LEVEL`, `VENDOR_BOOT_PATCH_STOCK`).
+  (`FOX_MAINTAINER_PATCH_VERSION`, `LGZ_LEVEL`, `FOX_REWORK_THEME`).
 - **Обязаны лежать в mk-файлах** (Soong/mkbootimg/наследование продукта
   читают их там; env перебивается): `TARGET_ARCH` (`BoardConfig.mk:65` `:=`),
   все `BOARD_*` (версия хедера, LZ4, размеры разделов, metadata, vendor-boot

@@ -11,10 +11,11 @@
 | `gs201`, `gs101` | `cpp` | C++ HAL против старого Trusty TA |
 | `zuma`, `zumapro`, `laguna`, `malibu` | `rust` | Rust HAL против нового TA |
 
-- Тип задаётся полем `keymint` в `family.json` → `FOX_KEYMINT_TYPE`
-  (читают `build.sh`, `device.mk`, колбэк через `.build_platform.conf`).
-- Колбэк инжектит нужный сервис в rc и гасит чужой; keymint-модуль
-  собирается отдельным `mka` **первым** (порядок важен).
+- Тип задаётся полем `keymint` в `family.json`; универсальный пейлоад
+  всегда везёт оба HAL (чужой тихо выходит, либо установщик
+  предвыбирает через `ro.recovery.keymint`).
+- Оба keymint-модуля собираются отдельным `mka` **первыми** (порядок
+  важен).
 - C++ на zuma проверен и отвергнут (restart loop, TA mismatch);
   Rust-from-source зелёный (md5 out==device, `User 0 Decrypted`).
 - VINTF-манифесты keymint — только schema 2.0 (recovery везёт libvintf
@@ -47,8 +48,10 @@ alias-набор. Наши патчи:
   basename (`zoned_device`), таймаут метадаты 30→120.
 - `partitionmanager.cpp`: `FscryptMountMetadataEncryptedWithTimeout(…, 120)`
   + гейт по состоянию keymint-сервиса (нет сервиса — скип вместо виса).
-- fstab'ы: пре-рендеренные под vendor_ramdisk в `families/<fam>/fstab/`,
-  рекавери-fstab — `recovery.fstab`.
+- fstab'ы: first-stage-компоненты `vendor_ramdisk` не собираются
+  (`FOX_NO_FIRST_STAGE=1`, стоковый first_stage сохраняет установщик);
+  per-family `recovery.fstab` едут как swap-kit `recovery.fstab.<fam>`
+  (живой файл — aio-плейсхолдер).
 
 ## KDF-плейграунд (`include/fbe_kdf/`)
 

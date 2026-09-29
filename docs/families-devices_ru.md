@@ -16,64 +16,56 @@
 4. Опционально `devices/<codename>/twrp.flags` — поверх family-файла
    (сборщик положит как `<device>.twrp.flags`, рантайм подменит после
    резолва девайса).
-5. `build.sh -f <codename>` → в логе `[PIXELCFG] merged N devices`,
-   `Entries packed`. Прошивка обоих слотов → проверки из
-   `diagnostics_ru.md`.
+5. `build.sh -n <tag>` → в логе `[PIXELCFG] merged N devices`,
+   `Entries packed`. Прошивка обоих слотов через установщик → проверки
+   из `diagnostics_ru.md`.
 
 ## Новый SoC (семья `families/<fam>/`)
 
 | Файл | Содержимое |
 |---|---|
-| `family.conf` | `FAMILY`, `UFS_ADDR`, `EARLYCON_ADDR`, `USBCTRL` (если не `11210000.dwc3`) |
-| `family.json` | То же + `keymint` (rust\|cpp), общие `props`, `default_kernel`, `kernels`-профили (см. `kernel-profiles_ru.md`) |
-| `family.mk` | SoC-фрагмент сборки (без cmdline!) |
-| `fstab/` + `recovery.fstab` | Пре-рендеренные fstab'ы |
+| `family.conf` | `FAMILY`, `UFS_ADDR`, `USBCTRL` (если не `11210000.dwc3`), `USBBUS` (если контроллер под `simple_usb_bus`) |
+| `family.json` | То же + `keymint` (rust\|cpp), общие `props` |
+| `recovery.fstab` + `recovery.wipe` + `twrp.flags` | Swap-kit файлы: едут как `*.<fam>`, установщик выбирает после распаковки |
 | `recovery/` | Family-оверлей рамдиска (rc-стабы) |
-| `twrp.flags` | Флаги семьи (UFS-пути и т.д.) |
 | `etc/` | VINTF-фрагменты (keymint-манифест schema 2.0) |
 
-Дальше: стоковый `vendor_boot` девайса → снять cmdline побайтово →
-профиль в `kernels` → `board-info.txt` → тест по `tester-guide.ru.md`.
+Дальше: стоковый `vendor_boot` девайса → сверить UFS/USB-адреса с
+`twrp.flags` → `board-info.txt` → тест по `tester-guide.ru.md`.
+Kernel-профилей нет (стоковое ядро сохраняется — см.
+`kernel-profiles_ru.md`), `family.mk` нет (фрагмент сборки только у
+`families/aio`).
 
 ## Матрица семейств (факты для конфигов)
 
-| Семья | UFS | DWC3 USB | KeyMint | Ядра |
+| Семья | UFS | DWC3 USB | KeyMint |
 |---|---|---|---|---|
-| gs201 | `14700000` | `11210000.dwc3` | cpp | 6.1, 6.12 |
-| zuma | `13200000` | `11210000.dwc3` | rust | 6.1, 6.12 |
-| zumapro | `13200000` | `11210000.dwc3` | rust | 6.1, 6.12 |
-| laguna | `3c400000` | `c400000.dwc3` | rust | 6.12 |
-| malibu | `3c2d0000` | `a210000.dwc3` | rust | 6.12 |
-| gs101 | `14700000` | `11110000.dwc3` | cpp | 6.1 |
+| gs201 | `14700000` | `11210000.dwc3` | cpp |
+| zuma | `13200000` | `11210000.dwc3` | rust |
+| zumapro | `13200000` | `11210000.dwc3` | rust |
+| laguna | `3c400000` | `c400000.dwc3` | rust |
+| malibu | `3c2d0000` | `a210000.dwc3` | rust |
+| gs101 | `14700000` | `11110000.dwc3` | cpp |
 
-Девайсы сгруппированы в один образ на семью (оверрайды `kernels`
-отключены через `_kernels_disabled`; возврат — переименовать ключ).
+Все девайсы едут в едином универсальном пейлоаде; семейные файлы
+выбираются при установке/загрузке (swap-kit + стаб + движок).
 
-## gs101 (Tensor G1, Pixel 6 series) — особая сборка
+## gs101 (Tensor G1, Pixel 6 series) — заметки по железу
 
 У gs101 нет раздела `vendor_kernel_boot`: стоковый `vendor_boot` несёт
-фрагменты platform + dlkm + dtb. Наш образ собирается как **один**
-platform-фрагмент (first-stage + recovery слиты: в `BoardConfig.mk`
-для gs101 выключен `BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT`,
-`BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT` остаётся включённым —
-build/make сам подмешивает `TARGET_RECOVERY_ROOT_OUT` в platform),
-без dtb и без dlkm-фрагмента.
-
-Стоковые модули first-stage трогать не надо: прошивка идёт хирургией
-фрагментов — `fastboot flash vendor_boot: <ramdisk>` (пустое имя =
-platform-фрагмент; НЕ `:default` — тот схлопывает всю секцию в одну
-запись и убивает стоковый dlkm). Хостовый fastboot сам стянет текущий
+фрагменты platform + dlkm + dtb. Универсальный пейлоад — это
+platform-фрагмент (first-stage + recovery слиты), прошивка идёт
+хирургией фрагментов — `fastboot flash vendor_boot: <ramdisk>` (пустое
+имя = platform-фрагмент; НЕ `:default` — тот схлопывает всю секцию в
+одну запись и убивает стоковый dlkm). Установщик сам стянет текущий
 `vendor_boot` с девайса, заменит только platform-запись и зашьёт
-назад: стоковые dlkm+dtb выживают, first-stage продолжает грузить все
-204 стоковых модуля из dlkm автоматом.
+назад: стоковые dlkm+dtb выживают, first-stage продолжает грузить
+стоковые модули из dlkm автоматом.
 
-Тестеры шьют **не образ**, а platform-рамдиск: `build.sh` после сборки
-распаковывает `OrangeFox-*-gs101.img` (magiskboot) и кладёт рядом
-`OrangeFox-*-gs101.ramdisk.lz4` (стоковый формат `lz4_legacy`,
-проверен побайтово против наших грузящихся образов). Прошивка:
+Ручная прошивка (то, что автоматизирует установщик):
 
 ```bash
-fastboot flash vendor_boot: OrangeFox-R12.0-test_x-gs101.ramdisk.lz4
+fastboot flash vendor_boot: OrangeFox-R12.0-test_x-aio.ramdisk.lz4
 fastboot reboot recovery
 ```
 

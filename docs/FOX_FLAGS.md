@@ -72,7 +72,7 @@ Legend: **tree** = set by `pixels/` (vendorsetup.sh unless noted).
 | `FOX_AB_DEVICE` | `1`; `orangefox.mk:93,156-176` | A/B mode: bootctl links, OTA/update-engine paths | `=1` (:158; also forced by `BoardConfig.mk:35` `AB_OTA_UPDATER`) |
 | `FOX_VIRTUAL_AB_DEVICE` | `1`; `orangefox.mk:87-95` | Virtual-A/B: implies `FOX_AB_DEVICE=1` + `FOX_VANILLA_BUILD=1`; gates KernelSU, VAB ORS wipe-format | `=1` (:157) |
 | `FOX_VENDOR_BOOT_RECOVERY` | `1` (experimental, warns); `orangefox.mk:179-195` | Vendor-boot recovery: forces AB + `OF_NO_SPLASH_CHANGE` + vanilla; repacker/ramdisk layout for vendor_boot | `=1` (:159; matches `BoardConfig.mk:236-237`) |
-| `FOX_RECOVERY_VENDOR_BOOT_PARTITION` | block path; `OrangeFox_A14.sh:664-666` (shell post-processing only) | Rewrites `VENDOR_BOOT_PARTITION=` to the real `vendor_boot` node | per-family (:161-167): gs201/gs101→`14700000.ufs`, malibu→`3c2d0000.ufs`, laguna→`3c400000.ufs`, else `13200000.ufs` |
+| `FOX_RECOVERY_VENDOR_BOOT_PARTITION` | block path; `OrangeFox_A14.sh:664-666` (shell post-processing only) | Rewrites `VENDOR_BOOT_PARTITION=` to the real `vendor_boot` node | fixed default (`13200000.ufs`); per-device path resolves at runtime/on-device via by-name |
 | `FOX_TARGET_DEVICES` / `TARGET_DEVICE_ALT` | comma lists; `orangefox.mk:310-317` | Assert/allow-list (`ro.twrp.target.devices`, OTA checks) | both `="$_ALL_DEVS"` (:175-176, discovered, not hardcoded) |
 
 ### 3.2 Vanilla / MIUI (tree: vanilla on)
@@ -148,8 +148,8 @@ explicitly unset (`vendorsetup.sh:220`).
 `USE_CCACHE=1` (:152), `TARGET_ARCH=arm64` (:153, `BoardConfig.mk:65`
 overrides env anyway), `FOX_REPLACE_TOOLBOX_GETPROP=1` (:226),
 `FOX_BASH_TO_SYSTEM_BIN=1` (:228), `FOX_LOCAL_CALLBACK_SCRIPT` (:265),
-`FOX_KERNEL_VER` / `FOX_KEYMINT_TYPE` / `DEVICE_BUILD_FLAG` / `LGZ_LEVEL`
-(via `build.sh`), `VENDOR_BOOT_PATCH_STOCK` (gs101 path).
+`FOX_KEYMINT_TYPE` (=`both`, fixed) / `DEVICE_BUILD_FLAG` (=`aio`, fixed) /
+`FOX_KERNEL_VER` (=`stock`, fixed) / `LGZ_LEVEL` (via `build.sh`).
 Commented-out (deliberately off): `FOX_ASH_IS_BASH`, `FOX_USE_TAR_BINARY`,
 `FOX_USE_SED_BINARY`, `FOX_USE_XZ_UTILS`, `FOX_USE_UPDATED_MAGISKBOOT`,
 `FOX_USE_LZ4_BINARY` (`:229-235`).
@@ -176,8 +176,7 @@ Commented-out (deliberately off): `FOX_ASH_IS_BASH`, `FOX_USE_TAR_BINARY`,
   `FOX_ENABLE_APP_MANAGER`, `FOX_DELETE_*`, `OF_QUICK_BACKUP_LIST`,
   `OF_UNBIND_SDCARD_F2FS`, `FOX_ENABLE_KERNELSU*`, `FOX_RECOVERY_VENDOR_BOOT_PARTITION`,
   `USE_CCACHE`, `TARGET_ARCH`, `DEVICE_BUILD_FLAG`) plus `build.sh` exports
-  (`FOX_MAINTAINER_PATCH_VERSION`, `FOX_KERNEL_VER`, `FOX_KEYMINT_TYPE`,
-  `LGZ_LEVEL`, `VENDOR_BOOT_PATCH_STOCK`).
+  (`FOX_MAINTAINER_PATCH_VERSION`, `LGZ_LEVEL`, `FOX_REWORK_THEME`).
 - **Must be in mk files** (Soong/mkbootimg/product inheritance read them
   there; env gets overridden): `TARGET_ARCH` (`BoardConfig.mk:65` `:=`),
   all `BOARD_*` (header version, LZ4, partition sizes, metadata, vendor-boot

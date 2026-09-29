@@ -7,12 +7,12 @@
 Если вы AI-модель и работаете с этим деревом, соблюдайте:
 
 - **Не запускайте `build.sh`.** Сборка — прерогатива человека: она долгая,
-  чистит `out/` между группами, упирается в лимит `/tmp` (16 ГБ tmpfs) и
-  требует решений (профиль ядра, слоты, теги). Ваш запуск может уничтожить
-  чужие артефакты или зависнуть на интерактиве.
+  чистит `out/`, упирается в лимит `/tmp` (16 ГБ tmpfs) и требует решений
+  (слоты, теги). Ваш запуск может уничтожить чужие артефакты или зависнуть
+  на интерактиве.
 - **Ваша зона:** готовить дерево, писать код/патчи/доки и проверять
   результат без сборки — `apply_patches.py --check`, `patch --dry-run`,
-  `bash -n`, `gen_kernel_mk.py --fingerprint`, побайтовые сверки.
+  `bash -n`, `build.sh --list`, побайтовые сверки.
 - Не чистите `/tmp/pixels/` и `out/`, пока идёт чужая сборка.
 - `test*` — в `.gitignore` (тестовые скрипты не коммитить); `docs/` —
   коммитить.
@@ -20,21 +20,16 @@
 ## Флаги
 
 ```bash
-./build.sh -f shiba -k 6.12 -n test_3 --build-type Beta --force
+./build.sh -n test_3 --build-type Beta
 ```
 
 | Флаг | Смысл |
 |---|---|
-| `-f, --family TARGET` | Коденейм (`shiba`) или семья (`zuma`). Без флага — интерактивное меню из `vendorsetup.sh` |
-| `-k, --kernel VER` | Профиль ядра (`6.1`, `6.12`) из `family.json`. Без флага — интерактивный выбор |
-| `--force` | Неинтерактивный режим. Без `-k` — аборт со списком версий (молчаливого дефолта нет) |
-| `-n TAG` | Тег в имя образа |
-| `--list` | Показать дерево семейств/девайсов/ядер и выйти (ничего не собирает; `[override]` — девайсный `kernels`) |
+| `-f, --family aio` | Принимается ради совместимости (можно не указывать). Любое другое значение отвергается — сборок по семействам нет |
+| `-n TAG` | Тег в имя пейлоада/установщика |
+| `--list` | Показать дерево семейств/девайсов и выйти (ничего не собирает) |
 | `--build-type TYPE` | Тип сборки, дефолт `Stable` (подробности ниже) |
-| `-N, --no-first-stage` | Не собирать first-stage (vendor_ramdisk): ни `fstab.*`, ни linker/e2fs-утилит. Рекавери-рамдиск не задет. Едет в `device.mk` как `FOX_NO_FIRST_STAGE=1` |
-| `-c, --cpio-only` | На выход — только рамдиск `cpio.lz4` (`lz4_legacy`), без `.img/.zip`: gs101 → platform-фрагмент (шьётся `fastboot flash vendor_boot:`), остальные семьи → recovery-фрагмент (`fastboot flash vendor_boot:recovery`) |
 | `-j N` | Параллельные задачи сборки (можно `-jN`), по умолчанию nproc |
-| `--platform-recovery` | Раскладка recovery-in-platform (var2-AIO): first-stage + recovery в одном рамдиске |
 | `--new-theme` | Собрать переработанную wide-тему (`FOX_REWORK_THEME=1`); по умолчанию стоковая базовая тема |
 | `--push GROUP` | Пуш готового AIO-zip в Telegram-чат(ы) (`admin` = лички админов); не фаталит, ошибка только варнинг |
 | `-g, --git-tag` | Тег сборки в git (значение `-n` + дата-время); на грязном дереве отказывается |
@@ -42,65 +37,54 @@
 | `--diff-from TAG` | С `--push`: принудительный чейнджлог `TAG..HEAD` (перебивает `-D`) |
 | `-T, --text TEXT` | С `--push`: постскриптум к сообщению с zip |
 
-Устаревших упоминаний `-l` (уровень LGZ) в шапке скрипта не использовать —
-актуальный набор флагов этот.
+Удалены: `-k/--kernel` и `--force` (нет kernel-профилей — стоковое ядро
+сохраняется); `-c/--cpio-only`, `--platform-recovery`, `-N/--no-first-stage`
+(всегда включены: на выход — только platform-фрагмент `cpio.lz4`,
+first-stage + recovery слиты, стоковый first_stage сохраняет установщик).
+Старые командные строки с ними по-прежнему парсятся (приняты как no-op).
 
 ## Что происходит (5 этапов)
 
-1. **Резолв цели.** `families/<X>` существует → семья. Иначе читается
-   `devices/<X>/device.conf` (`DEVICE`/`FAMILY`) → `DEVICE_BUILD_FLAG=<семья>`.
-   Списки строятся из каталогов — хардкода семейств в скрипте нет.
-2. **Kernel-профили.** `gen_kernel_mk.py --fingerprint` считает эффективные
-   профили и разбивает девайсы на группы с одинаковым хешем. Генерируется
-   `families/<fam>/.gen_kernel.mk` (gitignore): `VENDOR_CMDLINE`,
-   `BOARD_BOOTCONFIG`, `FOX_KERNEL_VER`. Генерация — **до lunch**, потому
-   что `dumpvars` парсит BoardConfig во время lunch. Пустой
-   `VENDOR_CMDLINE` = громкий `$(error)`.
+1. **Цель.** Фиксирована: `DEVICE_BUILD_FLAG=aio` (не-`aio` значение `-f`
+   отвергается). Список девайсов — все `devices/*/device.conf`.
+2. **Стоковое ядро.** Образ ядра не собирается, cmdline не компонуется:
+   в `BoardConfig.mk` — только dummy `VENDOR_CMDLINE` для промежуточного
+   `vendor_boot` (он отдаёт platform-фрагмент). Почему профилей больше
+   нет — в `kernel-profiles_ru.md`.
 3. **Env-файл.** `vendorsetup.sh` (lunch) пишет `.build_platform.conf`
-   (семья, UFS-адрес, keymint-тип, LGZ-политика): env не переживает
-   ninja recipe-shell'ы, параметры едут файлом. Перед каждой группой
+   (aio-платформа, оба KeyMint HAL, уровень LGZ, ключи раскладки): env не
+   переживает ninja recipe-shell'ы, параметры едут файлом. Перед сборкой
    снапшот `/tmp/pixels/fox_env.sh` обновляется — пост-имидж хук
    вызывается сборкой с вычищенным окружением, и без файла терялись
    `FOX_BUILD_TYPE`/`OUT` (образы `*-Unofficial-*.img` в корне).
 4. **Soong.** Собираются `recovery_init_stub`, `recovery-tensor-daemon`,
-   `recovery-pixel-boot`, fstabs, KeyMint HAL **из исходников** (тип —
-   поле `keymint` в `family.json` → `FOX_KEYMINT_TYPE`). Оверлеи:
-   `TARGET_RECOVERY_DEVICE_DIRS` = корень + `devices/*` + своя семья.
-   Чужих rc и секций в образе нет.
+   `recovery-pixel-boot` и оба KeyMint HAL **из исходников**. Оверлеи:
+   `TARGET_RECOVERY_DEVICE_DIRS` = корень + все `devices/*` + все
+   `families/*` — один универсальный cpio.
 5. **Колбэк (`--second-call`).** `fox_build_callback.sh` на готовом
-   рамдиске (`$TARGET_DIR`): инжект keymint/VINTF по семье, family
-   `twrp.flags`, мердж `pixelrunatboot.json` (`[PIXELCFG]`), хирургия rc
-   (USB-адрес, отключение чужого keymint), `post_remove_ramdisk`,
-   LGZ-пакование (`[LGZ]`), снапшот-манифест и списки для reflash.
-   Между группами — обязательная чистка `PRODUCT_OUT`.
+   рамдиске (`$TARGET_DIR`): оба keymint HAL + VINTF-фрагменты всех семей,
+   `twrp.flags`-плейсхолдер + swap-kit
+   (`twrp.flags.<fam>`/`recovery.fstab.<fam>`/`recovery.wipe.<fam>`/`families.txt`),
+   мердж `pixelrunatboot.json` (`[PIXELCFG]`), USB-бланкинг в UNKNOWN,
+   `post_remove_ramdisk`, LGZ-пакование (`[LGZ]`), снапшот-манифест и
+   списки для reflash.
 
-## Группировка образов
+## Что выдаёт сборка
 
-Девайсы с одинаковым эффективным профилем (пофлаговое сравнение,
-порядок не важен) делят **один** образ (`zuma.img`); разошедшийся —
-свой (`zuma_husky.img`, подгруппа — `zuma_husky-akita.img`).
-Per-device оверрайды сейчас отключены (`_kernels_disabled` в
-`pixel.json`) — каждая семья собирается в один общий образ; возврат —
-переименовать ключ обратно в `kernels`.
-
-## AIO-сборки (основной маршрут)
-
-`-f aio` собирает **один установщик на все поддерживаемые устройства**
-вместо образов по семействам:
+Один универсальный пейлоад вместо образов по семействам:
 
 ```bash
-./build.sh -f aio --platform-recovery -n test8 -c --build-type Beta
+./build.sh -n test8 --build-type Beta
 ```
 
-Что меняется в AIO-режиме: стоковое ядро сохраняется (образ ядра не
-собирается, `-k/--kernel` бессмысленен и отвергается), конкретный девайс
+Стоковое ядро сохраняется (образ ядра не собирается), конкретный девайс
 определяется в рантайме, а семейные файлы (`recovery.fstab`,
 `twrp.flags`, USB-контроллер, keymint) подменяются init-стабом и
 boot-движком. На выходе — `builds/OrangeFox-R12.0-test8-aio.zip`:
 самодостаточный установщик (оба слота, бекап userdata) плюс
-`*.ramdisk.lz4`-пейлоад. Тестеры видят только AIO-сборки;
-`-f <семья> -k <версия>` остаётся дев-фолбэком. Флаги пуша и тестов
-(`--push`, `-g`, `-D`, `-T`) на обоих маршрутах работают одинаково.
+`*.ramdisk.lz4`-пейлоад (platform-фрагмент,
+`fastboot flash vendor_boot:`). Флаги пуша и тестов (`--push`, `-g`,
+`-D`, `-T`) работают на этом единственном маршруте.
 
 ## Типы сборок: Stable vs Beta
 
