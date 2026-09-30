@@ -45,8 +45,16 @@ Stage protocol: argv + stdout (result) + `/tmp/recovery.log`
 | `magiskboot-unpack <zip>` | `unzip`, `busybox` | boot/busybox into `/system/bin` |
 | `meta-fix` | `mount` | Cleanup of `/metadata/ota` (waiting for the block node) |
 
-`siw`/`iw` are static arm64 utilities (1.1M/1.4M): streaming
-partition reads without mounting (`siw read`) plus DM mapping
-(`siw map`, replacing `lptools_new --map`: `/dev/block/mapper/<name>`
-via DM ioctl). Stock `runatboot.sh` is an empty OFox hook (invoked by
+`siw`/`iw`/`lptools_new` are static arm64 utilities: streaming
+partition reads without mounting (`siw read` → `iw read`) plus DM
+mapping (`siw map` with settle-wait and siw-UUID ownership, `lptools_new
+--map` via the system fs_mgr stack). Laguna AoC staging is mapper-only:
+a block counts as existing only as a live `/dev/block/mapper/` node
+cross-checked to a dm device (`/dev/block/by-name/*` is never used —
+static, may dangle); order is mount-present → `siw map` → `lptools_new
+map` → `iw` direct read (once per boot, last resort). Only devices
+mapped by the current call are ever unmapped — foreign (first-stage /
+TWRP / lptools) mappings are used read-only. The `otg-patch` oneshot
+only mounts existing nodes: it creates nothing, removes nothing.
+Stock `runatboot.sh` is an empty OFox hook (invoked by
 `twrp.cpp`); an extension point for addons.

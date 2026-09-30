@@ -24,6 +24,7 @@
 | `runatboot.sh` | Пустой хук OFox |
 | `reflash_twrp.sh` | Перепрошивка изнутри рекавери (ниже) |
 | `siw`, `iw` | Чтение разделов без монтирования + DM-маппинг, LP-инструменты |
+| `lptools_new` | DM-маппинг через системный fs_mgr-стек (`--map`/`--unmap`), фолбэк стейджинга |
 | `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Пейлоады для установки из GUI |
 
 ## `system/etc/` и `vendor/etc/`

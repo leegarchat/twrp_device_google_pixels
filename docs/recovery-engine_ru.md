@@ -44,8 +44,17 @@
 | `magiskboot-unpack <zip>` | `unzip`, `busybox` | boot/busybox в `/system/bin` |
 | `meta-fix` | `mount` | Чистка `/metadata/ota` (с ожиданием блочной ноды) |
 
-`siw`/`iw` — статические arm64-утилиты (1.1M/1.4M): потоковое чтение
-разделов без монтирования (`siw read`) и DM-маппинг (`siw map`,
-замена `lptools_new --map`: `/dev/block/mapper/<имя>` через DM ioctl).
+`siw`/`iw`/`lptools_new` — статические arm64-утилиты: потоковое чтение
+разделов без монтирования (`siw read` → `iw read`) и DM-маппинг
+(`siw map` с settle-ожиданием и siw-UUID владением, `lptools_new
+--map` через системный fs_mgr-стек). Laguna AoC-стейджинг только
+по mapper: блок считается существующим лишь как живая нода
+`/dev/block/mapper/` со сверкой на dm-девайс (`/dev/block/by-name/*`
+не используется никогда — статика, может висеть); порядок:
+mount готового → `siw map` → `lptools_new map` → прямое чтение `iw`
+(раз за загрузку, последний шанс). Анмапятся только маппинги,
+созданные текущим вызовом — чужие (first-stage/TWRP/lptools)
+используются read-only. Oneshot `otg-patch` лишь монтирует готовые
+ноды: ничего не создаёт, ничего не удаляет.
 Стоковый `runatboot.sh` — пустой хук OFox (дёргает `twrp.cpp`); точка
 для аддонов.

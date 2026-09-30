@@ -25,6 +25,7 @@ Only overlays of **its own family** go into the image (`device.mk` filters
 | `runatboot.sh` | Empty OFox hook |
 | `reflash_twrp.sh` | Reflash from inside recovery (below) |
 | `siw`, `iw` | Partition reads without mounting + DM mapping, LP tools |
+| `lptools_new` | DM mapping via the system fs_mgr stack (`--map`/`--unmap`), staging fallback |
 | `FIXBACKUPKSU.zip`, `EXPANDPARTITIONS.zip` | Payloads for installation from the GUI |
 
 ## `system/etc/` and `vendor/etc/`

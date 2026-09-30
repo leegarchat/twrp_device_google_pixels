@@ -79,6 +79,16 @@
 //! poll → flaky-startup `aocd` relaunch) plus the `/dev/block/otg-usb`
 //! symlink maintenance, and parks (never exits) — an exiting non-oneshot
 //! service would respawn-loop.
+//!
+//! Staging doctrine (mapper-only): a block counts as existing only as a
+//! live /dev/block/mapper/<base>_<slot> node cross-checked to a dm
+//! device; /dev/block/by-name/* is never consulted (static TWRP symlink,
+//! may dangle at a removed dm node). Order: mount present node ->
+//! siw map -> lptools_new map -> iw direct read (once per boot, last
+//! resort). Pre-existing (foreign) dm devices are used read-only and
+//! never unmapped — only devices mapped by the current call are
+//! released. The oneshot (`otg-patch`) only mounts existing nodes:
+//! it creates nothing, removes nothing, streams nothing.
 
 use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{
@@ -137,12 +147,20 @@ const AOC_LIBS: &[&str] = &[
 /// already-mounted `/vendor` (recovery often has it) wins; mapper nodes
 /// mirror the shell script (`/dev/block/mapper/vendor$slot`,
 /// `/dev/block/mapper/vendor_dlkm$slot`, `otg_yogi.sh:20,28,36`).
-const VENDOR_AOCD: &str = "/vendor/bin/aocd";
-const VENDOR_LIBDIR: &str = "/vendor/lib64";
-const VENDOR_DLKM_KO: &str = "/vendor_dlkm/lib/modules/aoc_usb_driver.ko";
 const FIRSTSTAGE_KO: &str = "/lib/modules/aoc_usb_driver.ko";
 const OTG_MNT_VENDOR: &str = "/dev/otg_mnt/vendor";
-const OTG_MNT_VDLKM: &str = "/dev/otg_mnt/vdlkm";
+/// Staging tools (static prebuilts in the ramdisk).
+const SIW_BIN: &str = "/system/bin/siw";
+const LPTOOLS_BIN: &str = "/system/bin/lptools_new";
+const IW_BIN: &str = "/system/bin/iw";
+/// Super block device for map/read streaming.
+const SUPER_DEV: &str = "/dev/block/by-name/super";
+/// Mapper dir: the ONLY source of truth for usable vendor nodes.
+/// /dev/block/by-name/vendor is a static TWRP symlink (may dangle at a
+/// removed dm-0) and is never used here.
+const MAPPER_DIR: &str = "/dev/block/mapper";
+/// Scratch image for the last-resort iw direct read (vendor is ~1.1G).
+const AOC_IMG_TMP: &str = "/tmp/aoc_vendor.img";
 /// Stock USB chain in dep order for manual insmod (strict flags: stock
 /// modules match the running kernel by construction — local vermagic
 /// `6.6.118-...-ab15298874-4k` / `6.12.81-...-ab16299125-4k`).
@@ -460,313 +478,409 @@ fn mapper_node(base: &str, slot: &str) -> String {
     format!("/dev/block/mapper/{base}_{}", slot.trim_start_matches('_'))
 }
 
-/// Create a dm-mapper node ourselves via the `siw` tool (same call the
-/// shell `pixelrunatboot.sh:_siw_map` uses for touch .ko staging:
-/// `siw map /dev/block/by-name/super -p <part> --suffix <a|b> -s <0|1>`
-/// creates `/dev/block/mapper/<part>[_suffix]`, e.g. `-p vendor_dlkm
-/// --suffix b` -> `/dev/block/mapper/vendor_dlkm_b`, field-proven in the
-/// mustang flog).
-/// Field lesson (mustang 6.6 flog): nothing maps `/vendor` in recovery —
-/// the touch system only maps `vendor_dlkm` on demand — so waiting for
-/// `/dev/block/mapper/vendor$slot` to appear is waiting forever. Returns
-/// true when the node exists afterwards (pre-existing or just created).
-fn siw_map(base: &str, slot: &str) -> bool {
-    let node = mapper_node(base, slot);
-    if Path::new(&node).exists() {
-        return true;
+/// Slot letter/number pair for tool CLIs, or None on unknown slot.
+fn slot_ids(slot: &str) -> Option<(&'static str, &'static str)> {
+    match slot {
+        "_a" => Some(("a", "0")),
+        "_b" => Some(("b", "1")),
+        _ => None,
     }
-    let num = match slot {
-        "_a" => "0",
-        "_b" => "1",
-        _ => {
-            info(&format!("siw map: unknown slot suffix {slot:?}, trying both"));
-            return siw_map(base, "_a") || siw_map(base, "_b");
-        }
-    };
+}
+
+/// A path is a usable block node when metadata says block device.
+fn is_live_block(p: &str) -> bool {
+    std::fs::metadata(p)
+        .map(|m| std::os::unix::fs::FileTypeExt::is_block_device(&m.file_type()))
+        .unwrap_or(false)
+}
+
+/// Usable mapper node for `base`+`slot` (e.g. vendor_b): the
+/// /dev/block/mapper/<base>_<sfx> entry must exist AND resolve to a
+/// live dm block device (cross-checked, not just a dangling symlink).
+/// Never touches /dev/block/by-name/*: that symlink is static (TWRP
+/// fstab formation, e.g. by-name/vendor -> dm-0) and may dangle at a
+/// removed node. Pure over the filesystem.
+fn resolve_mapper_node(base: &str, slot: &str) -> Option<String> {
     let sfx = slot.trim_start_matches('_');
-    info(&format!("siw map: creating {node}"));
-    match std::process::Command::new("/system/bin/siw")
-        .args([
-            "map",
-            "/dev/block/by-name/super",
-            "-p",
-            base,
-            "--suffix",
-            sfx,
-            "-s",
-            num,
-        ])
-        .output()
-    {
-        Ok(out) if out.status.success() && Path::new(&node).exists() => {
-            info(&format!("siw map: {node} created"));
-            true
-        }
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            let answer = String::from_utf8_lossy(&out.stdout);
-            info(
-                format!("siw map {node} FAILED: status={} err={err} out={answer}", out.status)
-                    .trim(),
-            );
-            Path::new(&node).exists()
-        }
-        Err(e) => {
-            info(&format!("siw map: cannot run /system/bin/siw: {e}"));
-            false
-        }
+    if sfx != "a" && sfx != "b" {
+        return None;
+    }
+    let link = mapper_node(base, slot);
+    if !is_live_block(&link) {
+        return None;
+    }
+    let canon = std::fs::canonicalize(&link).ok()?;
+    let canon_s = canon.to_string_lossy().into_owned();
+    if !canon_s.starts_with("/dev/block/dm-") {
+        return None;
+    }
+    if is_live_block(&canon_s) {
+        Some(canon_s)
+    } else {
+        None
     }
 }
 
-/// argv builder for `siw connect` (pure, testable): loop-device mapping
-/// that bypasses device-mapper entirely. Used when `siw map` yields no
-/// usable node. Unknown slot reads as None (caller skips: unbounded
-/// both-slot recursion could leak loop devices across daemon ticks).
-fn siw_connect_args(base: &str, slot: &str) -> Option<Vec<String>> {
-    let num = match slot {
-        "_a" => "0",
-        "_b" => "1",
-        _ => return None,
-    };
-    Some(vec![
-        "connect".to_string(),
-        "/dev/block/by-name/super".to_string(),
-        "-p".to_string(),
-        base.to_string(),
-        "--suffix".to_string(),
-        slot.trim_start_matches('_').to_string(),
-        "-s".to_string(),
-        num.to_string(),
-    ])
+/// Last non-empty output line, capped (keeps failure logs one-liners).
+fn last_line(s: &str) -> String {
+    let line = s.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let t = line.trim();
+    if t.len() > 160 {
+        format!("{}...", &t[..160])
+    } else {
+        t.to_string()
+    }
 }
 
-/// Loop node (`/dev/loopN`) from `siw connect` output (pure, testable).
-/// The tool prints human text around the node; scan whitespace tokens.
-fn parse_loop_node(output: &str) -> Option<String> {
-    output.split_whitespace().find_map(|tok| {
-        let t = tok.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/');
-        let t = t.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
-        let rest = t.strip_prefix("/dev/loop")?;
-        (!rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())).then(|| t.to_string())
-    })
-}
-
-/// Loop-device mapping fallback (`siw connect`) for when dm mapping yields
-/// no usable node (seen live: `siw map` exits 0 but creates nothing for
-/// vendor). Returns the /dev/loopN node — caller mounts ro, copies,
-/// umounts, then MUST call [`siw_disconnect`]. Best-effort + loud.
-fn siw_connect_node(base: &str, slot: &str) -> Option<String> {
-    let args = match siw_connect_args(base, slot) {
-        Some(a) => a,
-        None => {
-            info(&format!("siw connect: unknown slot suffix {slot:?}, skipped"));
-            return None;
-        }
-    };
-    info(&format!("siw connect: mapping {base} (slot {slot}) via loop device"));
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    match std::process::Command::new("/system/bin/siw")
-        .args(&arg_refs)
-        .output()
-    {
-        Ok(out) => {
-            let combined = format!(
+/// Run a tool, return (success, combined stdout+stderr).
+fn run_tool(bin: &str, args: &[&str]) -> (bool, String) {
+    match std::process::Command::new(bin).args(args).output() {
+        Ok(out) => (
+            out.status.success(),
+            format!(
                 "{}\n{}",
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
-            );
-            match parse_loop_node(&combined) {
-                Some(node) if Path::new(&node).exists() => {
-                    info(&format!("siw connect: {node} for {base}"));
-                    Some(node)
-                }
-                Some(node) => {
-                    info(&format!("siw connect: parsed {node} but node absent"));
-                    None
-                }
-                None => {
-                    info(&format!("siw connect {base} FAILED: status={}", out.status));
-                    None
-                }
-            }
+            ),
+        ),
+        Err(e) => (false, format!("cannot run {bin}: {e}")),
+    }
+}
+
+/// siw map with creation tracking. Returns (usable node, created_here).
+/// `created_here` is false when the node pre-existed (foreign:
+/// first-stage/TWRP/lptools) — such nodes are used read-only and never
+/// unmapped by us. siw >= 0.2.2 settles internally and reports the owner
+/// UUID on collision, so "already mapped right after unmap" cases are
+/// attributable instead of looking like an siw bug.
+fn siw_map_tracked(base: &str, slot: &str) -> Option<(String, bool)> {
+    let (sfx, num) = slot_ids(slot)?;
+    if let Some(node) = resolve_mapper_node(base, slot) {
+        return Some((node, false));
+    }
+    let (ok, out) = run_tool(SIW_BIN, &["map", SUPER_DEV, "-p", base, "--suffix", sfx, "-s", num]);
+    if !ok {
+        info(&format!("siw map {base}{slot} FAILED: {}", last_line(&out)));
+        return None;
+    }
+    // Prefer siw's printed canonical path, fall back to resolve.
+    let node = out
+        .split_whitespace()
+        .find(|t| t.starts_with("/dev/block/mapper/") || t.starts_with("/dev/block/dm-"))
+        .map(str::to_string)
+        .filter(|p| is_live_block(p))
+        .or_else(|| resolve_mapper_node(base, slot));
+    match node {
+        Some(n) => {
+            info(&format!("siw map: {n} (created here)"));
+            Some((n, true))
         }
-        Err(e) => {
-            info(&format!("siw connect: cannot run /system/bin/siw: {e}"));
+        None => {
+            info(&format!("siw map {base}{slot}: node unusable after success"));
             None
         }
     }
 }
 
-/// Release a loop device created by [`siw_connect_node`] (best-effort).
-fn siw_disconnect(base: &str, slot: &str) {
-    let (num, sfx) = match slot {
-        "_a" => ("0", "a"),
-        "_b" => ("1", "b"),
-        _ => return,
-    };
-    match std::process::Command::new("/system/bin/siw")
-        .args([
-            "disconnect",
-            "/dev/block/by-name/super",
-            "-p",
-            base,
-            "--suffix",
-            sfx,
-            "-s",
-            num,
-        ])
-        .output()
-    {
-        Ok(out) if out.status.success() => info(&format!("siw disconnect: {base} released")),
-        Ok(out) => info(&format!("siw disconnect {base} warning: status={}", out.status)),
-        Err(e) => info(&format!("siw disconnect: cannot run siw: {e}")),
+/// Trailing /dev/block/dm-N token from lptools output
+/// ("... at /dev/block/dm-0"). Pure (testable).
+fn parse_lptools_dm_path(output: &str) -> Option<String> {
+    output.split_whitespace().rev().find_map(|tok| {
+        let t = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/');
+        let rest = t.strip_prefix("/dev/block/dm-")?;
+        (!rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())).then(|| t.to_string())
+    })
+}
+
+/// lptools_new map: `lptools_new --map <base>{slot} -s <0|1>` (system
+/// fs_mgr stack: uevent settle + mapper symlink handled inside).
+/// Same (node, created_here) contract as [`siw_map_tracked`].
+fn lptools_map_tracked(base: &str, slot: &str) -> Option<(String, bool)> {
+    let (_, num) = slot_ids(slot)?;
+    let name = format!("{base}{slot}");
+    if !Path::new(LPTOOLS_BIN).is_file() {
+        info("lptools_new missing, skipping");
+        return None;
+    }
+    if let Some(node) = resolve_mapper_node(base, slot) {
+        return Some((node, false));
+    }
+    let (ok, out) = run_tool(LPTOOLS_BIN, &["--map", &name, "-s", num]);
+    if !ok {
+        info(&format!("lptools map {name} FAILED: {}", last_line(&out)));
+        return None;
+    }
+    let node = parse_lptools_dm_path(&out)
+        .filter(|p| is_live_block(p))
+        .or_else(|| resolve_mapper_node(base, slot));
+    match node {
+        Some(n) => {
+            info(&format!("lptools map: {n} (created here)"));
+            Some((n, true))
+        }
+        None => {
+            info(&format!("lptools map {name}: node unusable after success"));
+            None
+        }
     }
 }
 
-/// Mapped-node name for [`siw_unmap`]: `siw unmap` takes the name `siw
-/// map` created, i.e. base+slot verbatim (`vendor_dlkm` + `_b`).
-/// Pure (testable).
+/// Unmap ONLY what this staging round created (tracked flag).
+/// Pre-existing (foreign) devices are never touched — removing one
+/// breaks every static by-name symlink pointing at it (field-proven
+/// vendor_b kill). siw >= 0.2.2 additionally refuses foreign UUIDs.
+fn unmap_ours(tool: &str, name: &str, created_here: bool) {
+    if !created_here {
+        return;
+    }
+    let (bin, args): (&str, &[&str]) = match tool {
+        "siw" => (SIW_BIN, &["unmap", name]),
+        "lptools" => (LPTOOLS_BIN, &["--unmap", name]),
+        _ => return,
+    };
+    let (ok, out) = run_tool(bin, args);
+    if ok {
+        info(&format!("{tool} unmap: {name} released (ours)"));
+    } else {
+        info(&format!("{tool} unmap {name} warning: {}", last_line(&out)));
+    }
+}
+
+/// Mapped-node name for [`unmap_ours`]: both `siw unmap` and
+/// `lptools_new --unmap` take the name the map created, i.e. base+slot
+/// verbatim (`vendor` + `_b` = `vendor_b`). Pure (testable).
 fn unmap_name(base: &str, slot: &str) -> String {
     format!("{base}{slot}")
 }
 
-/// Release a dm-mapper node created by [`siw_map`] plus siw's slot-less
-/// alias when it dangles (best-effort). `siw disconnect` only drops loop
-/// nodes from `connect`; dm nodes from `map` need `siw unmap`, and the
-/// leftover alias (field-proven: /dev/block/mapper/vendor_dlkm symlinking
-/// a destroyed node) tripped Unmap_Super_Devices at format time.
-/// One-shot: every dm map in [`stage_aoc`] is paired with this before
-/// return, so no mapper traces survive a staging round.
-fn siw_unmap(base: &str, slot: &str) {
-    match slot {
-        "_a" | "_b" => {}
-        _ => return,
-    }
-    let name = unmap_name(base, slot);
-    let node = mapper_node(base, slot);
-    if Path::new(&node).exists() {
-        match std::process::Command::new("/system/bin/siw")
-            .args(["unmap", &name])
-            .output()
-        {
-            Ok(out) if out.status.success() => info(&format!("siw unmap: {name} released")),
-            Ok(out) => info(&format!("siw unmap {name} warning: status={}", out.status)),
-            Err(e) => info(&format!("siw unmap: cannot run siw: {e}")),
-        }
-    }
-    // Slot-less alias siw leaves behind — drop only when provably dangling
-    // (symlink whose target is gone); live nodes and real devices are
-    // never touched.
-    let alias = format!("/dev/block/mapper/{base}");
+/// Drop the slot-less mapper alias only when provably dangling
+/// (symlink whose target is gone). Protects Format Data's
+/// Unmap_Super_Devices from tripping on leftovers; live nodes and
+/// real devices are never touched.
+fn drop_dangling_mapper_alias(base: &str) {
+    let alias = format!("{MAPPER_DIR}/{base}");
     let dangling = std::fs::symlink_metadata(&alias)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
         && std::fs::metadata(&alias).is_err();
     if dangling && std::fs::remove_file(&alias).is_ok() {
-        info(&format!("siw unmap: removed dangling alias {alias}"));
+        info(&format!("mapper alias dropped (dangling): {alias}"));
     }
 }
 
-/// First `$name` file under `root` (recursive, shell `find $MD -name …
-/// | head -1` equivalent). Pure filesystem walk.
-fn find_file_under(root: &Path, name: &str) -> Option<PathBuf> {
-    let mut stack: Vec<PathBuf> = std::fs::read_dir(root)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .collect();
-    while let Some(p) = stack.pop() {
-        if p.is_dir() {
-            if let Ok(inner) = std::fs::read_dir(&p) {
-                stack.extend(inner.flatten().map(|e| e.path()));
-            }
-        } else if p.file_name().map(|n| n == name).unwrap_or(false) {
-            return Some(p);
-        }
+/// KO pickup without any mount: ko_stage (filled by boot ko-fetch,
+/// mount-free streaming) and the first-stage ramdisk. Live /vendor*
+/// trees are never consulted (not mounted in this recovery).
+fn pickup_ko() {
+    if Path::new(AOC_KO).is_file() {
+        return;
     }
-    None
-}
-
-/// Stage the AoC runtime into tmpfs so a later vendor unmount cannot pull
-/// it out from under the running daemon (P11 `otg_yogi.sh:10-13`).
-/// Tries already-mounted `/vendor` (+ `/vendor_dlkm`, `/lib/modules`)
-/// first, then dm-mapper mounts with the live slot suffix. Returns true
-/// when both `aocd` and the KO are staged.
-fn stage_aoc() -> bool {
-    let _ = std::fs::create_dir_all(AOC_RAM);
-    let _ = std::fs::create_dir_all(AOC_LIB);
-    // Fast path: vendor already mounted (common in recovery).
-    copy_if_src(AOCD_BIN, VENDOR_AOCD);
-    for lib in AOC_LIBS {
-        let dst = format!("{AOC_LIB}/{lib}.so");
-        let src = format!("{VENDOR_LIBDIR}/{lib}.so");
-        copy_if_src(&dst, &src);
-    }
-    copy_if_src(AOC_KO, VENDOR_DLKM_KO);
-    copy_if_src(AOC_KO, FIRSTSTAGE_KO);
-    // The touch system siw-streams every vendor_dlkm .ko into ko_stage
-    // (runs before our later attempts) — pick the KO up from there when
-    // the mapper dance is unnecessary. Both slots: ko-fetch tries live
-    // first, then the opposite one.
     for sfx in ["_a", "_b"] {
         copy_if_src(
             AOC_KO,
             &format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko"),
         );
+        if Path::new(AOC_KO).is_file() {
+            info("staged module from ko_stage");
+            return;
+        }
     }
-    // NOTE: no image streaming here — `usb_modules` from pixel.json are
-    // loaded by the boot process (sequential, race-free) before any daemon
-    // starts; concurrent ko-fetch streams would clobber the shared
-    // /dev/ko_stage + /dev/stage_*.img paths. This function only picks up
-    // staged files and read-only mounts from here on.
-    if Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file() {
+    if copy_if_src(AOC_KO, FIRSTSTAGE_KO) && Path::new(AOC_KO).is_file() {
+        info("staged module from first-stage ramdisk");
+    }
+}
+
+/// All userspace libs staged alongside the daemon.
+fn libs_present() -> bool {
+    AOC_LIBS
+        .iter()
+        .all(|lib| Path::new(&format!("{AOC_LIB}/{lib}.so")).is_file())
+}
+
+/// Staged iff the daemon binary, all libs and the module copy are in RAM.
+/// Libs are required too (an aocd without libs starts and dies silently).
+fn staged() -> bool {
+    Path::new(AOCD_BIN).is_file() && libs_present() && Path::new(AOC_KO).is_file()
+}
+
+/// Copy aocd+libs from an already-mounted vendor tree into tmpfs.
+fn copy_aoc_from_mnt(mnt: &str) {
+    copy_if_src(AOCD_BIN, &format!("{mnt}/bin/aocd"));
+    for lib in AOC_LIBS {
+        copy_if_src(&format!("{AOC_LIB}/{lib}.so"), &format!("{mnt}/lib64/{lib}.so"));
+    }
+    copy_aoc_chmod();
+}
+
+/// Mount `node` ro, copy aocd+libs, umount. Non-destructive.
+fn mount_copy_umount(node: &str) {
+    if mount_ro(node, OTG_MNT_VENDOR) {
+        copy_aoc_from_mnt(OTG_MNT_VENDOR);
+        umount(OTG_MNT_VENDOR);
+    }
+}
+
+/// Stage the AoC runtime into tmpfs (daemon path).
+/// Order: mount an already-present mapper node -> siw map+mount ->
+/// lptools_new map+mount -> iw direct read (once per boot, last resort).
+/// Only /dev/block/mapper/* presence (cross-checked to dm nodes) counts
+/// as "block exists"; /dev/block/by-name/* is never consulted (static,
+/// may dangle). Pre-existing (foreign) dm devices are used read-only
+/// and never unmapped — only devices mapped by the current call are
+/// released afterwards.
+fn stage_aoc() -> bool {
+    let _ = std::fs::create_dir_all(AOC_RAM);
+    let _ = std::fs::create_dir_all(AOC_LIB);
+    pickup_ko();
+    if staged() {
         return true;
     }
-    // Slow path: mount the vendor image. `/dev/block/by-name/vendor`
-    // (unsuffixed = current slot, first-stage pre-mapped to dm-0,
-    // field-proven on mustang) wins — no slot logic, no siw involved.
-    // The siw-created mapper mount is the fallback for trees where
-    // first-stage did not map it.
     let slot = slot_suffix();
-    let mapped_vendor = format!("/dev/block/mapper/vendor{slot}");
-    let mapped_dlkm = format!("/dev/block/mapper/vendor_dlkm{slot}");
-    let mut vendor_mnt: Option<&str> = None;
-    let mut vendor_loop: Option<String> = None;
-    if !Path::new(AOCD_BIN).is_file() {
-        if mount_ro("/dev/block/by-name/vendor", OTG_MNT_VENDOR) {
-            info("vendor via by-name (first-stage mapped)");
-            vendor_mnt = Some(OTG_MNT_VENDOR);
-        } else if let Some(loopnode) = siw_connect_node("vendor", &slot) {
-            // Loop device before dm-mapper: fully independent of dm state
-            // (live-proven on shiba: /dev/block/loop0 + dm-0 mounted side
-            // by side), while `siw map` on vendor is known-flaky
-            // (exit 0, no node).
-            if mount_ro(&loopnode, OTG_MNT_VENDOR) {
-                info("vendor via siw loop device");
-                vendor_mnt = Some(OTG_MNT_VENDOR);
-                vendor_loop = Some(loopnode);
-            } else {
-                siw_disconnect("vendor", &slot);
-            }
-        }
-        if vendor_mnt.is_none()
-            && siw_map("vendor", &slot)
-            && mount_ro(&mapped_vendor, OTG_MNT_VENDOR)
-        {
-            vendor_mnt = Some(OTG_MNT_VENDOR);
+    let mut mounted_node: Option<String> = None;
+    // 1. Mount an already-present mapper node.
+    if let Some(node) = resolve_mapper_node("vendor", &slot) {
+        info(&format!("staging via present mapper node {node}"));
+        mount_copy_umount(&node);
+        mounted_node = Some(node);
+        if staged() {
+            return true;
         }
     }
-    if let Some(mnt) = vendor_mnt {
-        copy_if_src(AOCD_BIN, &format!("{mnt}/bin/aocd"));
-        for lib in AOC_LIBS {
-            let dst = format!("{AOC_LIB}/{lib}.so");
-            let src = format!("{mnt}/lib64/{lib}.so");
-            copy_if_src(&dst, &src);
+    // 2. siw map -> mount -> copy -> release-ours.
+    if let Some((node, ours)) = siw_map_tracked("vendor", &slot) {
+        if mounted_node.as_deref() != Some(node.as_str()) {
+            mount_copy_umount(&node);
+            mounted_node = Some(node);
         }
-        umount(mnt);
-        if vendor_loop.is_some() {
-            siw_disconnect("vendor", &slot);
+        unmap_ours("siw", &unmap_name("vendor", &slot), ours);
+        drop_dangling_mapper_alias("vendor");
+        if staged() {
+            return true;
         }
+    }
+    // 3. lptools_new map (system fs_mgr stack) -> mount -> copy -> release-ours.
+    if let Some((node, ours)) = lptools_map_tracked("vendor", &slot) {
+        if mounted_node.as_deref() != Some(node.as_str()) {
+            mount_copy_umount(&node);
+        }
+        unmap_ours("lptools", &unmap_name("vendor", &slot), ours);
+        drop_dangling_mapper_alias("vendor");
+        if staged() {
+            return true;
+        }
+    }
+    // 4. Heavy direct read, once per boot, last resort.
+    if iw_fetch_once(&slot) {
+        return true;
+    }
+    info("staging failed on all paths (mapper/siw/lptools/iw)");
+    false
+}
+
+/// Oneshot-safe staging: mount EXISTING mapper nodes only. Creates
+/// nothing, removes nothing, streams nothing (fast, boot-safe).
+/// The block is never destroyed on this path by construction: no
+/// map/unmap/connect/disconnect/remove call exists below.
+fn stage_aoc_mount_only() -> bool {
+    let _ = std::fs::create_dir_all(AOC_RAM);
+    let _ = std::fs::create_dir_all(AOC_LIB);
+    pickup_ko();
+    if staged() {
+        return true;
+    }
+    let slot = slot_suffix();
+    if let Some(node) = resolve_mapper_node("vendor", &slot) {
+        mount_copy_umount(&node);
+    }
+    staged()
+}
+/// Extract one file from an image via `iw read <img> -c <path>`.
+fn iw_extract(img: &str, path: &str, dst: &str) -> bool {
+    if Path::new(dst).is_file() {
+        return true;
+    }
+    if let Some(parent) = Path::new(dst).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let f = match std::fs::File::create(dst) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    match std::process::Command::new(IW_BIN)
+        .args(["read", img, "-c", path])
+        .stdout(std::process::Stdio::from(f))
+        .status()
+    {
+        Ok(s) if s.success() => std::fs::metadata(dst).map(|m| m.len() > 0).unwrap_or(false),
+        _ => {
+            let _ = std::fs::remove_file(dst);
+            false
+        }
+    }
+}
+
+/// LAST resort: stream the whole vendor image (~1.1G, slow) and extract
+/// aocd+libs with iw. Read-only, no dm/topology changes. Runs only when
+/// no mapper node was mountable.
+fn iw_fetch_aoc(slot: &str) -> bool {
+    if staged() {
+        return true;
+    }
+    for bin in [SIW_BIN, IW_BIN] {
+        if !Path::new(bin).is_file() {
+            info(&format!("iw-fetch: tool missing: {bin}"));
+            return false;
+        }
+    }
+    let (sfx, num) = match slot_ids(slot) {
+        Some(v) => v,
+        None => return false,
+    };
+    // NOTE: read takes long-only --slot/--suffix (-s there is --size).
+    let _ = std::fs::remove_file(AOC_IMG_TMP);
+    info("iw-fetch: streaming vendor image (slow, last resort)...");
+    let out_file = match std::fs::File::create(AOC_IMG_TMP) {
+        Ok(f) => f,
+        Err(e) => {
+            info(&format!("iw-fetch: cannot stage image: {e}"));
+            return false;
+        }
+    };
+    let streamed = std::process::Command::new(SIW_BIN)
+        .args(["read", SUPER_DEV, "-p", "vendor", "--suffix", sfx, "--slot", num])
+        .stdout(std::process::Stdio::from(out_file))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !streamed || std::fs::metadata(AOC_IMG_TMP).map(|m| m.len()).unwrap_or(0) == 0 {
+        info("iw-fetch: siw read FAILED/empty");
+        let _ = std::fs::remove_file(AOC_IMG_TMP);
+        return false;
+    }
+    let (_, listing) = run_tool(IW_BIN, &["read", AOC_IMG_TMP, "-f"]);
+    let mut wanted: Vec<(String, String)> =
+        vec![("bin/aocd".to_string(), AOCD_BIN.to_string())];
+    for lib in AOC_LIBS {
+        wanted.push((format!("lib64/{lib}.so"), format!("{AOC_LIB}/{lib}.so")));
+    }
+    let mut got = 0;
+    for line in listing.lines() {
+        let t = line.trim().trim_start_matches('/');
+        for (w, dst) in &wanted {
+            if t == w.as_str() && iw_extract(AOC_IMG_TMP, line.trim(), dst) {
+                got += 1;
+            }
+        }
+    }
+    let _ = std::fs::remove_file(AOC_IMG_TMP);
+    copy_aoc_chmod();
+    info(&format!("iw-fetch: extracted {got} files"));
+    staged()
+}
+
+/// chmod 755 on the staged aocd (plain-file copies lose the exec bit).
+fn copy_aoc_chmod() {
+    if Path::new(AOCD_BIN).is_file() {
         use std::os::unix::fs::PermissionsExt;
         if let Ok(md) = std::fs::metadata(AOCD_BIN) {
             let mut perm = md.permissions();
@@ -774,40 +888,17 @@ fn stage_aoc() -> bool {
             let _ = std::fs::set_permissions(AOCD_BIN, perm);
         }
     }
-    // One-shot: drop any dm mapping this round created — including the
-    // map-ok/mount-failed path (the leak that broke Unmap_Super_Devices
-    // at format time). No-op when nothing is mapped.
-    siw_unmap("vendor", &slot);
-    // KO from the vendor_dlkm image: dm-mapper mount first (proven for
-    // dlkm — touch maps it daily), siw loop device as fallback.
-    if !Path::new(AOC_KO).is_file() {
-        let mut dlkm_mnt: Option<&str> = None;
-        let mut dlkm_loop: Option<String> = None;
-        if siw_map("vendor_dlkm", &slot) && mount_ro(&mapped_dlkm, OTG_MNT_VDLKM) {
-            dlkm_mnt = Some(OTG_MNT_VDLKM);
-        } else if let Some(loopnode) = siw_connect_node("vendor_dlkm", &slot) {
-            if mount_ro(&loopnode, OTG_MNT_VDLKM) {
-                info("vendor_dlkm via siw loop device");
-                dlkm_mnt = Some(OTG_MNT_VDLKM);
-                dlkm_loop = Some(loopnode);
-            } else {
-                siw_disconnect("vendor_dlkm", &slot);
-            }
-        }
-        if let Some(mnt) = dlkm_mnt {
-            // `find $MD -name aoc_usb_driver.ko | head -1` in shell.
-            if let Some(ko) = find_file_under(Path::new(mnt), "aoc_usb_driver.ko") {
-                copy_if_src(AOC_KO, &ko.to_string_lossy());
-            }
-            umount(mnt);
-            if dlkm_loop.is_some() {
-                siw_disconnect("vendor_dlkm", &slot);
-            }
-        }
-        // One-shot: drop any dm mapping this round created (see vendor).
-        siw_unmap("vendor_dlkm", &slot);
+}
+
+/// Heavy direct read, at most once per boot (the vendor stream is ~1.1G;
+///
+/// re-running it every daemon tick would churn tmpfs forever).
+fn iw_fetch_once(slot: &str) -> bool {
+    static TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if TRIED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return false;
     }
-    Path::new(AOCD_BIN).is_file() && Path::new(AOC_KO).is_file()
+    iw_fetch_aoc(slot)
 }
 
 /// `verify_aoc_responsive` gate (P11 `otg_yogi.sh:44`): the AoC core
@@ -1115,15 +1206,14 @@ pub fn run_otg_patch() -> Result<(), String> {
         Err(e) => info(&format!("TCPC switch not configured: {e}")),
     }
 
-    // 3. AoC staging is SECOND-STAGE work (rc daemon, normalized env):
-    // this oneshot runs before by-name/dm nodes exist, so bounded retries
-    // here only delay boot and still fail. One fast attempt now
-    // (first-stage roots + ko_stage + standard ko-fetch are already
-    // visible — stage_aoc never sleeps), then release otg_auto: the
-    // daemon retries staging + bringup + verify forever and owns host
-    // state from there.
-    if stage_aoc() {
-        info("staged aocd + libs + module into RAM (fast path)");
+    // 3. AoC staging is SECOND-STAGE work (rc daemon owns the full
+    // siw -> lptools -> iw chain). This oneshot only mounts EXISTING
+    // mapper nodes: it creates nothing, removes nothing, streams
+    // nothing — the block is never destroyed on this path. Then release
+    // otg_auto: the daemon retries staging + bringup + verify forever
+    // and owns host state from there.
+    if stage_aoc_mount_only() {
+        info("staged aocd + libs + module into RAM (mount-only fast path)");
     } else {
         info("staging deferred to otg-auto daemon (second stage)");
     }
@@ -1268,28 +1358,27 @@ mod tests {
     }
 
     #[test]
-    fn siw_connect_args_cover_both_slots() {
-        // Same selector shape as siw map: base + suffix letter + slot num.
-        let a = siw_connect_args("vendor", "_a").unwrap();
-        assert_eq!(a[0], "connect");
-        assert!(a.contains(&"vendor".to_string()));
-        assert!(a.contains(&"a".to_string()));
-        assert!(a.contains(&"0".to_string()));
-        let b = siw_connect_args("vendor_dlkm", "_b").unwrap();
-        assert!(b.contains(&"1".to_string()));
-        // Unknown slot: no unbounded recursion (daemon ticks forever).
-        assert!(siw_connect_args("vendor", "").is_none());
-        assert!(siw_connect_args("vendor", "_c").is_none());
+    fn slot_ids_cover_both_slots() {
+        assert_eq!(slot_ids("_a"), Some(("a", "0")));
+        assert_eq!(slot_ids("_b"), Some(("b", "1")));
+        assert_eq!(slot_ids(""), None);
+        assert_eq!(slot_ids("_c"), None);
     }
 
     #[test]
-    fn loop_node_parsed_from_chatter() {
+    fn lptools_dm_path_parsed() {
+        // Live lptools_new output tail: "... at /dev/block/dm-0".
         assert_eq!(
-            parse_loop_node("Created /dev/loop0 for vendor_b"),
-            Some("/dev/loop0".to_string())
+            parse_lptools_dm_path("Creating dm partition for vendor_b answered 1 at /dev/block/dm-0"),
+            Some("/dev/block/dm-0".to_string())
         );
-        assert_eq!(parse_loop_node("/dev/loop7"), Some("/dev/loop7".to_string()));
-        assert_eq!(parse_loop_node("error: no such partition"), None);
-        assert_eq!(parse_loop_node(""), None);
+        assert_eq!(parse_lptools_dm_path("Could not map partition: vendor_b"), None);
+        assert_eq!(parse_lptools_dm_path(""), None);
+    }
+
+    #[test]
+    fn resolve_rejects_bad_slot_without_touching_fs() {
+        assert!(resolve_mapper_node("vendor", "").is_none());
+        assert!(resolve_mapper_node("vendor", "_c").is_none());
     }
 }
