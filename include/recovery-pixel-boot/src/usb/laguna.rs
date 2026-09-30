@@ -633,9 +633,11 @@ fn unmap_ours(tool: &str, name: &str, created_here: bool) {
     if !created_here {
         return;
     }
+    let siw_args = ["unmap", name];
+    let lptools_args = ["--unmap", name];
     let (bin, args): (&str, &[&str]) = match tool {
-        "siw" => (SIW_BIN, &["unmap", name]),
-        "lptools" => (LPTOOLS_BIN, &["--unmap", name]),
+        "siw" => (SIW_BIN, &siw_args),
+        "lptools" => (LPTOOLS_BIN, &lptools_args),
         _ => return,
     };
     let (ok, out) = run_tool(bin, args);
