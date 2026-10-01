@@ -47,6 +47,7 @@
 | `torch_*` | `torch` | Матчи I2C/pinctrl/devicetree фонарика (LM3644) |
 | `vbus_paths[]` | `otg-auto` | VBUS-сенсоры для host/device-арбитража |
 | `tcpc_driver` | `otg-patch` | Type-C контроллер (свитч max77759 по I2C) |
+| `max_brightness` | `boot`-стадия → `DOF_MAX_BRIGHTNESS` → TWRP | Потолок яркости панели (рантайм-аналог статичного `TW_MAX_BRIGHTNESS`); не задан/0 = легаси-чтение sysfs `max_brightness` (панелям gs101 нужен 2000) |
 | `props{}` | `props-apply` | Модельные пропсы поверх семейных |
 
 Пути работают в двух режимах: **exact** (непустой путь — как есть) и

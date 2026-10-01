@@ -47,6 +47,7 @@ Vendor specifics do not live in code — only in JSON. Code reads the finished
 | `torch_*` | `torch` | Flashlight I2C/pinctrl/devicetree matches (LM3644) |
 | `vbus_paths[]` | `otg-auto` | VBUS sensors for host/device arbitration |
 | `tcpc_driver` | `otg-patch` | Type-C controller (max77759 switch over I2C) |
+| `max_brightness` | `boot` stage → `DOF_MAX_BRIGHTNESS` → TWRP | Panel brightness ceiling (runtime analogue of static `TW_MAX_BRIGHTNESS`); unset/0 = legacy sysfs `max_brightness` discovery (gs101 panels use 2000) |
 | `props{}` | `props-apply` | Model props on top of family ones |
 
 Paths work in two modes: **exact** (non-empty path — as is) and

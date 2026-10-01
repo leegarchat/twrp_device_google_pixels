@@ -305,12 +305,20 @@ fn apply_display_geometry(
     // Per-device status-bar height (pixel.json status_h): lets data.cpp drop
     // the compile-time OF_STATUS_H default, same pattern as DOF_SCREEN_H.
     let _ = set_prop("DOF_STATUS_H", &cfg.status_h.to_string());
+    // Panel max brightness override (pixel.json max_brightness): when set,
+    // data.cpp/twrp-functions.cpp use it as the slider ceiling (runtime
+    // analogue of the static TW_MAX_BRIGHTNESS) instead of the sysfs
+    // max_brightness file. Unset (0) = legacy sysfs discovery. Stamped
+    // only when set (same conditional pattern as DOF_THEME above).
+    if cfg.max_brightness > 0 {
+        let _ = set_prop("DOF_MAX_BRIGHTNESS", &cfg.max_brightness.to_string());
+    }
     crate::ko_picker::log_msg(
         "boot",
         "INFO",
-        &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, if theme.is_empty() { "twres" } else { theme }, cfg.is_fold),
+        &format!("display: {which} canvas {}x{} scale={scale} status_h={} max_brightness={} theme={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, cfg.max_brightness, if theme.is_empty() { "twres" } else { theme }, cfg.is_fold),
     );
-    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={} theme={}", geom.w, geom.h, cfg.status_h, if theme.is_empty() { "twres" } else { theme }));
+    dlog(log, &format!("display: {which} canvas {}x{} scale={scale} status_h={} max_brightness={} theme={} (fold={}, hinge={hinge:?})", geom.w, geom.h, cfg.status_h, cfg.max_brightness, if theme.is_empty() { "twres" } else { theme }, cfg.is_fold));
 }
 
 fn by_name_exists(part: &str) -> bool {

@@ -81,6 +81,13 @@ pub struct DeviceConfig {    pub family: String,
     /// Vertical letterbox for the fold inner canvas (default 1): inner
     /// displays use a 16:9 virtual canvas with bars on both axes.
     pub inner_progressive_scale: u32,
+    /// Panel max brightness override (default 0 = unset): when > 0, stamped
+    /// as DOF_MAX_BRIGHTNESS at early-init so TWRP uses it as the slider
+    /// ceiling (runtime analogue of the static TW_MAX_BRIGHTNESS), instead
+    /// of reading the sysfs max_brightness file. Unset keeps the legacy
+    /// sysfs discovery (gs101 panels need 2000: the s6e3hc3 driver reports
+    /// a bogus max and blanks at 2048).
+    pub max_brightness: u32,
 }
 
 /// Virtual display canvas (letterbox geometry) in pixels.
@@ -465,6 +472,10 @@ pub fn load_device_config_from(path: &Path, code: &str) -> Result<DeviceConfig, 
         } else {
             1
         },
+        max_brightness: {
+            let v = get_int(pairs, "max_brightness");
+            if v > 0 { v as u32 } else { 0 }
+        },
     })
 }
 
@@ -704,6 +715,24 @@ mod tests {
         // Missing keys: front defaults to stock stretch (0), inner to bars (1).
         assert_eq!(load_device_config_from(&f, "lynx").unwrap().progressive_scale, 0);
         assert_eq!(load_device_config_from(&f, "lynx").unwrap().inner_progressive_scale, 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn max_brightness_parses_with_default() {
+        let d = std::env::temp_dir().join(format!("fox_test_maxbr_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("c.json");
+        std::fs::write(
+            &f,
+            r#"{"raven": {"family": "gs101", "max_brightness": 2000, "props": {}},
+            "shiba": {"family": "zuma", "props": {}}}"#,
+        )
+        .unwrap();
+        assert_eq!(load_device_config_from(&f, "raven").unwrap().max_brightness, 2000);
+        // Missing key keeps the legacy sysfs discovery (0 = unset).
+        assert_eq!(load_device_config_from(&f, "shiba").unwrap().max_brightness, 0);
         let _ = std::fs::remove_dir_all(&d);
     }
 

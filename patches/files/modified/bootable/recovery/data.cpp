@@ -1460,11 +1460,29 @@ void DataManager::SetDefaultValues()
       mConst.SetValue("tw_has_brightnesss_file", "1");
       mConst.SetValue("tw_brightness_file", findbright);
       string maxBrightness;
+      // Runtime panel ceiling (DOF_MAX_BRIGHTNESS, stamped by
+      // recovery-pixel-boot from pixel.json max_brightness): runtime
+      // analogue of the static TW_MAX_BRIGHTNESS below. Takes priority over
+      // both legs; unset/<=0 keeps the legacy discovery (static define,
+      // else sysfs file).
+      char dof_max_brightness[PROPERTY_VALUE_MAX] = {0};
+      property_get("DOF_MAX_BRIGHTNESS", dof_max_brightness, "");
+      if (dof_max_brightness[0] != '\0' && atoi(dof_max_brightness) > 0)
+	{
+	  maxBrightness = dof_max_brightness;
+	  LOGINFO("Got max brightness %s from DOF_MAX_BRIGHTNESS (pixel.json)\n",
+		  maxBrightness.c_str());
+	}
 #ifdef TW_MAX_BRIGHTNESS
+      else
+	{
       ostringstream maxVal;
       maxVal << TW_MAX_BRIGHTNESS;
       maxBrightness = maxVal.str();
+	}
 #else
+      else
+	{
       // Attempt to locate the max_brightness file
       string maxbrightpath =
 	findbright.insert(findbright.rfind('/') + 1, "max_");
@@ -1488,6 +1506,7 @@ void DataManager::SetDefaultValues()
 	  ostringstream maxVal;
 	  maxVal << 255;
 	  maxBrightness = maxVal.str();
+	}
 	}
 #endif
       mConst.SetValue("tw_brightness_max", maxBrightness);
