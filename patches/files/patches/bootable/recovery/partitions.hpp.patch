@@ -1,6 +1,6 @@
 --- a/bootable/recovery/partitions.hpp
 +++ b/bootable/recovery/partitions.hpp
-@@ -363,10 +363,13 @@
+@@ -363,10 +363,14 @@
      	int Run_OTA_Survival_Restore(const string& Restore_Name);                 // Restore OTA survival
      	void Fox_Set_Dynamic_Partition_Props();					  // Set the OrangeFox dynamic partitions props
   	bool Prepare_All_Super_Volumes();					  // Prepare all known super volumes from super partition
@@ -12,12 +12,13 @@
 -   
 -     	bool Prepare_Super_Volume(TWPartition* twrpPart);				  // Prepare logical super partition volume for mounting
 +     	void Fox_Rescan_Super_Volumes(void);				  // Re-add TWRP objects for live dm devices mapped after startup (siw/keep-list); runtime dm truth interception
++	static bool Fox_Is_Super_Partition(TWPartition* p);		  // stable_partition predicate: super volumes sort before everything
 +    
 +      	bool Prepare_Super_Volume(TWPartition* twrpPart);				  // Prepare logical super partition volume for mounting
  	std::string Get_Super_Partition();					  // Get Super Partition block device path
  	void Setup_Super_Devices();						  // Setup logical dm devices on super partition
  	bool Get_Super_Status();						  // Return whether device has a super partition
-@@ -471,8 +474,7 @@
+@@ -471,8 +475,7 @@
  	Backup_Method_enum Backup_Method;                                         // Method used for backup
  	std::string original_ramdisk_format;                                      // Ramdisk format of boot partition
  	std::string repacked_ramdisk_format;                                      // Ramdisk format of boot image to repack from

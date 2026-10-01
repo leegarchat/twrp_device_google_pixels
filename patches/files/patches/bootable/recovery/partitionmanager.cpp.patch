@@ -108,7 +108,18 @@
  	// Fetch the Keymaster Service version to be started
  	std::string version;
  #ifndef TW_FORCE_KEYMASTER_VER
-@@ -676,6 +749,58 @@
+@@ -533,6 +606,10 @@
+ 	if (recovery_mode)
+ 		Process_Keymaster_Version(ven, false);
+ 	if (ven) ven->UnMount(Display_Error);
++	// Fox: super-first vector order (mount menu + /etc/fstab follow it)
++	// from the very first parse; the rescan fast-paths (nothing missing)
++	// and only reorders + rewrites fstab when startup left strays.
++	Fox_Rescan_Super_Volumes();
+ 	return true;
+ }
+ 
+@@ -676,6 +753,58 @@
  	return true;
  }
  
@@ -167,7 +178,7 @@
  void TWPartitionManager::Decrypt_Data() {
  	#ifdef TW_INCLUDE_CRYPTO
  	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
-@@ -687,9 +812,56 @@
+@@ -687,9 +816,56 @@
  				Mount_By_Path(Decrypt_Data->Key_Directory, false);
  		if (!Decrypt_Data->Key_Directory.empty()) {
  			Set_Crypto_Type("file");
@@ -225,7 +236,7 @@
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +871,45 @@
+@@ -699,9 +875,45 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -271,7 +282,7 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -709,6 +917,7 @@
+@@ -709,6 +921,7 @@
  			} else {
  				LOGINFO("Unable to decrypt metadata encryption\n");
  			}
@@ -279,7 +290,7 @@
  #else
  			LOGERR("Metadata FBE decrypt support not present in this build\n");
  #endif
-@@ -931,6 +1140,10 @@
+@@ -931,6 +1144,10 @@
  	if (Local_Path == "/tmp" || Local_Path == "/")
  		return true;
  
@@ -290,7 +301,7 @@
    	#ifdef OF_DEVICE_WITHOUT_PERSIST
    	if (Local_Path == "/persist")
        		return false;
-@@ -939,6 +1152,10 @@
+@@ -939,6 +1156,10 @@
  	// Iterate through all partitions
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  		if ((*iter)->Mount_Point == Local_Path || (!(*iter)->Symlink_Mount_Point.empty() && (*iter)->Symlink_Mount_Point == Local_Path)) {
@@ -301,7 +312,7 @@
  			ret = (*iter)->Mount(Display_Error);
  			found = true;
  		} else if ((*iter)->Is_SubPartition && (*iter)->SubPartition_Of == Local_Path) {
-@@ -1383,18 +1600,19 @@
+@@ -1383,18 +1604,19 @@
  		backup_path = Backup_List.substr(start_pos, end_pos - start_pos);
  		part_settings.Part = Find_Partition_By_Path(backup_path);
  		if (part_settings.Part != NULL) {
@@ -333,7 +344,7 @@
  			if (!Backup_Partition(&part_settings))
  				return false;
  		} else {
-@@ -2087,6 +2305,16 @@
+@@ -2087,6 +2309,16 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -350,7 +361,7 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2422,10 @@
+@@ -2194,7 +2426,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -362,7 +373,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2565,20 @@
+@@ -2334,6 +2569,20 @@
  #endif
  }
  
@@ -383,7 +394,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2641,17 @@
+@@ -2396,6 +2645,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -401,7 +412,7 @@
  
  			return 0;
  		} else {
-@@ -2859,17 +3115,102 @@
+@@ -2859,17 +3119,102 @@
    return true;
  }
  
@@ -504,7 +515,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3240,22 @@
+@@ -2899,8 +3244,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -528,7 +539,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3345,13 @@
+@@ -2990,6 +3349,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -542,7 +553,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -4662,7 +5024,12 @@
+@@ -4662,7 +5028,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -556,7 +567,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5207,237 @@
+@@ -4840,6 +5211,305 @@
  	}
  }
  
@@ -597,6 +608,13 @@
 +	}
 +	closedir(d);
 +	return false;
++}
++
++// Fox: stable_partition predicate — super volumes sort before everything.
++// Static member (TWPartitionManager is a friend of TWPartition, so Is_Super
++// is visible here; a free function is not).
++bool TWPartitionManager::Fox_Is_Super_Partition(TWPartition* p) {
++	return p != NULL && p->Is_Super;
 +}
 +
 +// Fox: live dm kernel names right now (one per /sys/block/dm-*/dm/name).
@@ -645,8 +663,51 @@
 +// fails Mount gracefully and is cleaned by the next Unmap.
 +void TWPartitionManager::Fox_Rescan_Super_Volumes(void) {
 +	std::vector<std::string> live = FoxLiveDmNames();
-+	if (live.empty())
++	// Live bare bases (slot suffix stripped) for the delete-pass below.
++	std::vector<std::string> live_bares;
++	if (!live.empty()) {
++		for (size_t i = 0; i < live.size(); i++) {
++			std::string bare = live[i];
++			if (bare.size() > 4 && bare.compare(bare.size() - 4, 4, "-cow") == 0)
++				continue;
++			size_t n = bare.size();
++			if (n > 2 && bare[n - 2] == '_' && (bare[n - 1] == 'a' || bare[n - 1] == 'b'))
++				bare.erase(n - 2);
++			if (std::find(live_bares.begin(), live_bares.end(), bare) == live_bares.end())
++				live_bares.push_back(bare);
++		}
++	}
++	bool changed = false;
++	// Delete-pass: drop Is_Super objects whose dm device is gone behind
++	// TWRP's back (field case: manual `siw unmap` leaves a dead menu entry
++	// that no update trigger cleans). Only unmounted ones — a mounted
++	// node is busy by definition and siw refuses to remove it anyway.
++	// Never touches non-super partitions.
++	for (std::vector<TWPartition*>::iterator it = Partitions.begin();
++			it != Partitions.end();) {
++		TWPartition* p = *it;
++		bool drop = false;
++		if (p->Is_Super && !p->Is_Mounted()) {
++			std::string bare = Get_Bare_Partition_Name(p->Get_Mount_Point());
++			if (std::find(live_bares.begin(), live_bares.end(), bare)
++					== live_bares.end())
++				drop = true;
++		}
++		if (drop) {
++			LOGINFO("FoxRescan: dropping %s (dm device gone)\n",
++				p->Get_Mount_Point().c_str());
++			delete p;
++			it = Partitions.erase(it);
++			changed = true;
++		} else {
++			++it;
++		}
++	}
++	if (live.empty()) {
++		if (changed)
++			Write_Fstab();
 +		return;
++	}
 +	// Fast path: every live device already has an object — nothing to do,
 +	// and the fstab is never even opened.
 +	bool missing = false;
@@ -710,13 +771,31 @@
 +				delete partition;
 +				continue;
 +			}
-+			Partitions.push_back(partition);
++			// Fox: super volumes live at the very top (mount menu and
++			// /etc/fstab both follow vector order) — insert into the
++			// super block, not at the tail.
++			if (partition->Is_Super) {
++				std::vector<TWPartition*>::iterator pos = Partitions.begin();
++				while (pos != Partitions.end() && (*pos)->Is_Super)
++					++pos;
++				Partitions.insert(pos, partition);
++			} else {
++				Partitions.push_back(partition);
++			}
++			changed = true;
 +			LOGINFO("FoxRescan: re-added %s for live dm device %s\n",
 +				mnt.c_str(), live[i].c_str());
 +		} else {
 +			delete partition;
 +		}
 +	}
++	// Fox: stable super-first order for the whole vector (mount menu and
++	// Write_Fstab follow it). Covers the startup order too — Process_Fstab
++	// calls this rescan before returning.
++	std::stable_partition(Partitions.begin(), Partitions.end(),
++		Fox_Is_Super_Partition);
++	if (changed)
++		Write_Fstab();
 +}
 +
 +static bool DestroyLogicalPartition_Retry(const std::string& name) {
@@ -794,7 +873,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5455,13 @@
+@@ -4857,13 +5527,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -810,7 +889,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4883,8 +5481,29 @@
+@@ -4883,8 +5553,29 @@
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
  				if (strcmp(partition.c_str(),"userdata") != 0){

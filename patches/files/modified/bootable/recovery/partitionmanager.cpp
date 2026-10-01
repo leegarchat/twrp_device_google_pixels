@@ -606,6 +606,10 @@ clear:
 	if (recovery_mode)
 		Process_Keymaster_Version(ven, false);
 	if (ven) ven->UnMount(Display_Error);
+	// Fox: super-first vector order (mount menu + /etc/fstab follow it)
+	// from the very first parse; the rescan fast-paths (nothing missing)
+	// and only reorders + rewrites fstab when startup left strays.
+	Fox_Rescan_Super_Volumes();
 	return true;
 }
 
@@ -5246,6 +5250,13 @@ static bool FoxDmDeviceExists(const std::string& name) {
 	return false;
 }
 
+// Fox: stable_partition predicate — super volumes sort before everything.
+// Static member (TWPartitionManager is a friend of TWPartition, so Is_Super
+// is visible here; a free function is not).
+bool TWPartitionManager::Fox_Is_Super_Partition(TWPartition* p) {
+	return p != NULL && p->Is_Super;
+}
+
 // Fox: live dm kernel names right now (one per /sys/block/dm-*/dm/name).
 // Same truth as FoxDmDeviceExists, in bulk for the rescan below.
 static std::vector<std::string> FoxLiveDmNames(void) {
@@ -5292,8 +5303,51 @@ static std::vector<std::string> FoxLiveDmNames(void) {
 // fails Mount gracefully and is cleaned by the next Unmap.
 void TWPartitionManager::Fox_Rescan_Super_Volumes(void) {
 	std::vector<std::string> live = FoxLiveDmNames();
-	if (live.empty())
+	// Live bare bases (slot suffix stripped) for the delete-pass below.
+	std::vector<std::string> live_bares;
+	if (!live.empty()) {
+		for (size_t i = 0; i < live.size(); i++) {
+			std::string bare = live[i];
+			if (bare.size() > 4 && bare.compare(bare.size() - 4, 4, "-cow") == 0)
+				continue;
+			size_t n = bare.size();
+			if (n > 2 && bare[n - 2] == '_' && (bare[n - 1] == 'a' || bare[n - 1] == 'b'))
+				bare.erase(n - 2);
+			if (std::find(live_bares.begin(), live_bares.end(), bare) == live_bares.end())
+				live_bares.push_back(bare);
+		}
+	}
+	bool changed = false;
+	// Delete-pass: drop Is_Super objects whose dm device is gone behind
+	// TWRP's back (field case: manual `siw unmap` leaves a dead menu entry
+	// that no update trigger cleans). Only unmounted ones — a mounted
+	// node is busy by definition and siw refuses to remove it anyway.
+	// Never touches non-super partitions.
+	for (std::vector<TWPartition*>::iterator it = Partitions.begin();
+			it != Partitions.end();) {
+		TWPartition* p = *it;
+		bool drop = false;
+		if (p->Is_Super && !p->Is_Mounted()) {
+			std::string bare = Get_Bare_Partition_Name(p->Get_Mount_Point());
+			if (std::find(live_bares.begin(), live_bares.end(), bare)
+					== live_bares.end())
+				drop = true;
+		}
+		if (drop) {
+			LOGINFO("FoxRescan: dropping %s (dm device gone)\n",
+				p->Get_Mount_Point().c_str());
+			delete p;
+			it = Partitions.erase(it);
+			changed = true;
+		} else {
+			++it;
+		}
+	}
+	if (live.empty()) {
+		if (changed)
+			Write_Fstab();
 		return;
+	}
 	// Fast path: every live device already has an object — nothing to do,
 	// and the fstab is never even opened.
 	bool missing = false;
@@ -5357,13 +5411,31 @@ void TWPartitionManager::Fox_Rescan_Super_Volumes(void) {
 				delete partition;
 				continue;
 			}
-			Partitions.push_back(partition);
+			// Fox: super volumes live at the very top (mount menu and
+			// /etc/fstab both follow vector order) — insert into the
+			// super block, not at the tail.
+			if (partition->Is_Super) {
+				std::vector<TWPartition*>::iterator pos = Partitions.begin();
+				while (pos != Partitions.end() && (*pos)->Is_Super)
+					++pos;
+				Partitions.insert(pos, partition);
+			} else {
+				Partitions.push_back(partition);
+			}
+			changed = true;
 			LOGINFO("FoxRescan: re-added %s for live dm device %s\n",
 				mnt.c_str(), live[i].c_str());
 		} else {
 			delete partition;
 		}
 	}
+	// Fox: stable super-first order for the whole vector (mount menu and
+	// Write_Fstab follow it). Covers the startup order too — Process_Fstab
+	// calls this rescan before returning.
+	std::stable_partition(Partitions.begin(), Partitions.end(),
+		Fox_Is_Super_Partition);
+	if (changed)
+		Write_Fstab();
 }
 
 static bool DestroyLogicalPartition_Retry(const std::string& name) {

@@ -368,6 +368,7 @@ public:
 	void Reset_Users_Decryption_Status();  
 	std::string Get_Bare_Partition_Name(std::string Mount_Point);
      	void Fox_Rescan_Super_Volumes(void);				  // Re-add TWRP objects for live dm devices mapped after startup (siw/keep-list); runtime dm truth interception
+	static bool Fox_Is_Super_Partition(TWPartition* p);		  // stable_partition predicate: super volumes sort before everything
     
       	bool Prepare_Super_Volume(TWPartition* twrpPart);				  // Prepare logical super partition volume for mounting
 	std::string Get_Super_Partition();					  // Get Super Partition block device path
