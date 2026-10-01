@@ -436,6 +436,22 @@ pub fn run_boot() -> Result<(), String> {
     // TWRP already set a sane value.
     nudge_brightness();
 
+    // dm truth: leave keep-listed LP nodes mapped for TWRP and publish the
+    // snapshot. First-stage/TWRP never maps vendor_dlkm itself (gs101:
+    // "unable to update logical partition" every boot), so without the
+    // kept node /vendor_dlkm can never mount. The dm-watch daemon (started
+    // from init rc) keeps the snapshot fresh from here on; it never
+    // remaps, so a format-time destroy stays destroyed.
+    {
+        let sfx = suffix.trim_start_matches('_');
+        if !sfx.is_empty() && !slot.is_empty() {
+            // part_touch is vendor_dlkm on every family today; keep the
+            // call generic so a future family with a different base works.
+            crate::dm::ensure_keep_mapped(&cfg.part_touch, sfx, &slot);
+        }
+        let _ = crate::dm::refresh("boot");
+    }
+
     if Path::new("/dev/lwis-flash-lm3644").exists() {
         info("torch: /dev/lwis-flash-lm3644 available");
     } else {

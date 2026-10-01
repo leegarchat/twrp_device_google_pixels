@@ -106,6 +106,12 @@ _siw_map() {
 # /dev/block/mapper/vendor_dlkm -> vendor_dlkm_a kept tripping
 # Unmap_Super_Devices into E:Unable to unmap at format).
 # Best-effort: warnings only, never fails the caller.
+# WARNING: unmaps by NAME — only call via _siw_unmap_ours below, which
+# verifies the node still resolves to the dm target this run created.
+# Unmapping a live TWRP/first-stage node (field case: fw-fetch mapped
+# vendor_a while ueventd hadn't linked it yet, then removed TWRP's own
+# mapping) leaves by-name/vendor dangling at a dead dm-0 and breaks
+# Unmap_Super_Devices/format. Direct callers: none (kept as primitive).
 _siw_unmap() {
     local _name="$1" _part="$2"
     local _a
@@ -125,6 +131,103 @@ _siw_unmap() {
     fi
 }
 
+# --- dm target of a mapper node -----------------------------------------
+# Basename of the /dev/block/mapper/<name> symlink target (e.g. "dm-2");
+# empty when the node is absent or dangling. Snapshot right after _siw_map
+# and compare before unmapping: the name alone proves nothing (TWRP or
+# first-stage may have recreated the node under the same name since).
+_dm_target() {
+    local _t
+    _t=$(readlink "/dev/block/mapper/$1" 2>/dev/null) || { echo ""; return 1; }
+    printf '%s' "${_t##*/}"
+}
+
+# --- keep-list: dm nodes left mapped for TWRP ----------------------------
+# LP bases whose mapper node stays behind when WE created it. TWRP only
+# resolves logical partitions (fs_mgr_update_logical_partition) and
+# re-resolves live at every Mount() (Find_Actual_Block_Device slotselect
+# branch) — but first-stage/TWRP never maps these itself (field case:
+# vendor_dlkm on gs101, "unable to update logical partition" at every
+# boot), so without a kept node /vendor_dlkm can never mount. Leaving a
+# linear node is safe: same extents as LP metadata, format-time Unmap
+# destroys it cleanly via the existing metadata entry. Empty = legacy
+# one-shot (map+copy+unmap, no traces).
+_KEEP_MAPPED="vendor_dlkm"
+
+_keep_listed() {
+    case " $_KEEP_MAPPED " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# Ensure /dev/block/mapper/<part>_<sfx> exists for TWRP (map when absent)
+# and leave it mapped. No-op when already present (foreign or ours) and
+# for non-listed partitions.
+_keep_node_mapped() {
+    local _part="$1" _sfx="$2" _slot="$3" _node
+    _keep_listed "$_part" || return 0
+    _node="/dev/block/mapper/${_part}_${_sfx}"
+    if [ -b "$_node" ]; then
+        plog "keep-mapped" "$_node already present, leaving it"
+        return 0
+    fi
+    if _siw_map "$_part" "$_sfx" "$_slot" && [ -b "$_node" ]; then
+        plog "keep-mapped" "left ${_part}_${_sfx} mapped for TWRP"
+        return 0
+    fi
+    plog "keep-mapped" "cannot map ${_part}_${_sfx} (TWRP mount stays unavailable)"
+    return 1
+}
+
+# --- guarded unmap: only what this run created ------------------------------
+# _siw_unmap_ours <mapped-name> <partbase> <expected-dm-target>
+# Removes the mapping only when the mapper node still resolves to the dm
+# target snapshotted right after _siw_map. Anything else (node recreated
+# by TWRP/first-stage under the same name, node gone) means the device is
+# NOT ours — skip the unmap, drop a dangling alias at most. Best-effort,
+# never fails the caller.
+_siw_unmap_ours() {
+    local _name="$1" _part="$2" _want="$3" _cur _a
+    _cur=$(_dm_target "$_name")
+    if [ -n "$_want" ] && [ "$_cur" = "$_want" ]; then
+        _siw_unmap "$_name" "$_part"
+        return 0
+    fi
+    plog "siw-unmap" "skip $_name (ours=$_want now=$_cur): foreign or gone"
+    if [ -n "$_part" ]; then
+        _a="/dev/block/mapper/$_part"
+        if [ -L "$_a" ] && [ ! -e "$_a" ]; then
+            rm -f "$_a" 2>/dev/null \
+                && plog "siw-unmap" "removed dangling alias $_a" \
+                || plog "siw-unmap" "cannot remove dangling alias $_a"
+        fi
+    fi
+    return 0
+}
+
+# --- dm state snapshot (service surface) --------------------------------
+# /tmp/fox_dm_state: mapper truth as owned by the staging layer
+# ("<name> <dm-target>" per line, "# v1 epoch=..." header). Whoever needs
+# live dm state (TWRP flows, adb debugging) reads this file instead of
+# guessing who mapped what. Volatile tmpfs: same lifetime as the dm
+# namespace itself (gone on reboot). Refreshed at every ko-fetch /
+# fw-fetch exit via trap (this script runs one stage per process, so EXIT
+# always fires exactly once per stage run).
+_dm_snapshot() {
+    local _t _n _s
+    _s="/tmp/fox_dm_state.tmp.$$"
+    {
+        echo "# v1 epoch=$(date +%s 2>/dev/null || echo 0)"
+        for _n in /dev/block/mapper/*; do
+            [ -e "$_n" ] || [ -L "$_n" ] || continue
+            _t=$(readlink "$_n" 2>/dev/null)
+            printf '%s %s\n' "${_n##*/}" "${_t##*/}"
+        done
+    } > "$_s" 2>/dev/null
+    mv -f "$_s" /tmp/fox_dm_state 2>/dev/null
+}
+
 # --- map + mount + copy fallback ------------------------------------------
 # _siw_map_copy <partbase> <slotsuffix(_a)> <slotnum> <mangle> <outdir> <findname>
 # Copies matching files to outdir, prints staged paths. Returns 0 if >=1.
@@ -132,21 +235,25 @@ _siw_unmap() {
 # path (copy ok, copy empty, mount failed) — no traces left behind.
 _siw_map_copy() {
     local _part="$1" _sfxname="$2" _slot="$3" _subdir="$4" _outdir="$5" _fname="$6"
-    local _node _mnt _n _f _base _mapped
+    local _node _mnt _n _f _base _mapped _want
     _node="/dev/block/mapper/${_part}${_sfxname}"
     _mapped=0
+    _want=""
     if [ ! -b "$_node" ]; then
         plog "map-copy" "$_node absent, mapping via siw"
         _siw_map "$_part" "${_sfxname#_}" "$_slot" \
             || { plog "map-copy" "map failed: ${_part}${_sfxname}"; return 1; }
         _mapped=1
+        # Ownership snapshot: unmap later only if the node still
+        # resolves here (see _siw_unmap_ours).
+        _want=$(_dm_target "${_part}${_sfxname}")
     fi
     _mnt="/dev/stage_mnt_$$"
     mkdir -p "$_mnt"
     if ! mount -r "$_node" "$_mnt" 2>>"$LOGF"; then
         plog "map-copy" "mount failed: $_node"
         rmdir "$_mnt" 2>/dev/null
-        [ "$_mapped" = 1 ] && _siw_unmap "${_part}${_sfxname}" "$_part"
+        [ "$_mapped" = 1 ] && _siw_unmap_ours "${_part}${_sfxname}" "$_part" "$_want"
         return 1
     fi
     mkdir -p "$_outdir" 2>/dev/null
@@ -162,7 +269,13 @@ _siw_map_copy() {
     done
     umount "$_mnt" 2>/dev/null
     rmdir "$_mnt" 2>/dev/null
-    [ "$_mapped" = 1 ] && _siw_unmap "${_part}${_sfxname}" "$_part"
+    if [ "$_mapped" = 1 ]; then
+        if _keep_listed "$_part"; then
+            plog "map-copy" "leaving ${_part}${_sfxname} mapped for TWRP"
+        else
+            _siw_unmap_ours "${_part}${_sfxname}" "$_part" "$_want"
+        fi
+    fi
     [ "$_n" -gt 0 ]
 }
 
@@ -242,10 +355,32 @@ case "$1" in
         esac
         ;;
 
+    dm-map)
+        # dm-map <partbase> <suffix-a|b> <slotnum>  (e.g. vendor_dlkm a 0)
+        # Map-and-LEAVE for the rust dm keep-list (dm.rs ensure_keep_mapped):
+        # ensures /dev/block/mapper/<part>_<sfx> exists and prints it.
+        # Never unmaps (the dm-watch daemon is snapshot-only, so a
+        # format-time destroy stays destroyed). No-op when already present.
+        trap '_dm_snapshot' EXIT
+        _part="$2"; _sfx="$3"; _slot="$4"
+        _node="/dev/block/mapper/${_part}_${_sfx}"
+        if [ -b "$_node" ]; then
+            echo "$_node"
+            exit 0
+        fi
+        if _siw_map "$_part" "$_sfx" "$_slot" && [ -b "$_node" ]; then
+            plog "dm-map" "mapped $_node for TWRP"
+            echo "$_node"
+            exit 0
+        fi
+        plog "dm-map" "map failed: ${_part}_${_sfx}"
+        exit 1
+        ;;
+
     ko-fetch)
         # ko-fetch <partbase> <suffix-a|b> <slotnum>  (e.g. vendor_dlkm a 0)
-        _part="$2"; _sfx="$3"; _slot="$4"
-        _out="/dev/ko_stage/${_part}_${_sfx}"
+        trap '_dm_snapshot' EXIT
+        _part="$2"; _sfx="$3"; _slot="$4"        _out="/dev/ko_stage/${_part}_${_sfx}"
         rm -rf "$_out"; mkdir -p "$_out"
         _img="/dev/stage_${_part}_${_sfx}.img"
         # Skip the stream when iw is missing/unusable: its parse step
@@ -253,6 +388,9 @@ case "$1" in
         if [ -x "$IW" ] && _siw_stream "$_part" "$_sfx" "$_slot" "$_img"; then
             if _iw_extract "$_img" '.ko' "$_out"; then
                 rm -f "$_img"
+                # Stream path creates no dm node; keep-listed partitions
+                # still need one for TWRP (see _KEEP_MAPPED).
+                _keep_node_mapped "$_part" "$_sfx" "$_slot"
                 exit 0
             fi
             plog "ko-fetch" "iw parse empty, map+mount fallback"
@@ -279,16 +417,22 @@ case "$1" in
         # stream second, by-name mount last.
         # (Plain assignments: case branches run at top level where `local`
         # is not portable; helpers localize their own vars, so no clobber.)
+        trap '_dm_snapshot' EXIT
         _part="$2"; _sfx="$3"; _slot="$4"
         mkdir -p /vendor/firmware 2>/dev/null
         _n=0
         _node="/dev/block/mapper/${_part}_${_sfx}"
         _fw_mapped=0
+        _fw_want=""
         if [ ! -b "$_node" ]; then
             if _siw_map "$_part" "$_sfx" "$_slot"; then
                 # map may exit 0 without creating the node (seen live
-                # on vendor); only teardown what actually appeared.
-                [ -b "$_node" ] && _fw_mapped=1
+                # on vendor); only teardown what actually appeared, and
+                # snapshot the dm target for the ownership check.
+                if [ -b "$_node" ]; then
+                    _fw_mapped=1
+                    _fw_want=$(_dm_target "${_part}_${_sfx}")
+                fi
             else
                 plog "fw-fetch" "siw map failed: ${_part}_${_sfx}"
             fi
@@ -303,8 +447,15 @@ case "$1" in
             umount "$_mnt" 2>/dev/null
         fi
         rmdir "$_mnt" 2>/dev/null
-        # One-shot: unmap what this run mapped, drop a dangling alias.
-        [ "$_fw_mapped" = 1 ] && _siw_unmap "${_part}_${_sfx}" "$_part"
+        # One-shot: unmap what this run mapped (ownership-checked),
+        # drop a dangling alias — unless keep-listed for TWRP.
+        if [ "$_fw_mapped" = 1 ]; then
+            if _keep_listed "$_part"; then
+                plog "fw-fetch" "leaving ${_part}_${_sfx} mapped for TWRP"
+            else
+                _siw_unmap_ours "${_part}_${_sfx}" "$_part" "$_fw_want"
+            fi
+        fi
         if [ "$_n" -gt 0 ]; then echo "$_n"; exit 0; fi
         plog "fw-fetch" "mount path empty, siw|iw stream fallback"
         _img="/dev/stage_${_part}_${_sfx}.img"

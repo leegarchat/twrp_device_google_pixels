@@ -21,10 +21,10 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
-// bionic ioctl(2) takes a 32-bit request; glibc takes c_ulong.
-#[cfg(target_os = "android")]
+// bionic/musl ioctl(2) takes a 32-bit request; glibc takes c_ulong.
+#[cfg(any(target_os = "android", target_env = "musl"))]
 const I2C_SLAVE_FORCE: libc::c_int = 0x0706;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_env = "musl")))]
 const I2C_SLAVE_FORCE: libc::c_ulong = 0x0706;
 const I2C_MAJOR: u32 = 89;
 const USBSW_CTRL_REG: u8 = 0x93;
@@ -213,6 +213,7 @@ pub fn open_i2c_dev(bus: u32) -> Result<std::fs::File, String> {
         .open(dev_path)
         .map_err(|e| format!("cannot open {dev_node}: {e}"))
 }
+
 
 /// Grab an I2C slave address on an open i2c-dev fd and write payload bytes.
 pub fn i2c_transact(fd: std::os::unix::io::RawFd, addr: u16, payload: &[u8]) -> Result<(), String> {

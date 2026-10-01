@@ -8,11 +8,14 @@
 //!   recovery-pixel-boot otg-auto    # VBUS auto-switch daemon (service otg_auto)
 //!   recovery-pixel-boot setup-temp  # thermal zone symlink (on init exec)
 //!   recovery-pixel-boot torch on|off# LM3644 flashlight (Fox OF_FL_PATH hook)
+//!   recovery-pixel-boot dm-state  # refresh /tmp/fox_dm_state once + print
+//!   recovery-pixel-boot dm-watch  # dm truth watch daemon (snapshot-only)
 //!
 //! Only std + libc. Exit 0 ok / skip (monolithic kernel), 1 fatal.
 
 mod boot;
 mod config;
+mod dm;
 mod i2c;
 mod init;
 mod ko_picker;
@@ -59,7 +62,9 @@ fn usage() -> ! {
          \x20 recovery-pixel-boot otg-patch\n\
          \x20 recovery-pixel-boot otg-auto\n\
          \x20 recovery-pixel-boot setup-temp\n\
-         \x20 recovery-pixel-boot torch on|off\n"
+         \x20 recovery-pixel-boot torch on|off\n\
+         \x20 recovery-pixel-boot dm-state\n\
+         \x20 recovery-pixel-boot dm-watch\n"
     );
     std::process::exit(1);
 }
@@ -89,6 +94,11 @@ fn main() -> ExitCode {
         "otg-auto" => {
             // Diverges under normal operation; the `!` coerces to ExitCode.
             usb::run_otg_auto()
+        }
+        "dm-state" => run_simple(dm::run_dm_state(), "dm-state"),
+        "dm-watch" => {
+            // Snapshot-only daemon; the `!` coerces to ExitCode.
+            dm::run_dm_watch()
         }
         _ => usage(),
     }
