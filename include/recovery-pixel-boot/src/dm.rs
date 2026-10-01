@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn keep_list_covers_vendor_dlkm_only() {
+    fn keep_list_covers_vendor_partitions() {
         assert!(KEEP_PARTS.contains(&"vendor_dlkm"));
         assert!(KEEP_PARTS.contains(&"vendor"));
         assert!(!KEEP_PARTS.contains(&"system"));

@@ -1140,6 +1140,10 @@ int TWPartitionManager::Mount_By_Path(string Path, bool Display_Error) {
 	if (Local_Path == "/tmp" || Local_Path == "/")
 		return true;
 
+	// Fox: runtime dm truth interception — re-add objects for devices
+	// mapped after startup (covers ORS/CLI mounts with no GUI refresh).
+	Fox_Rescan_Super_Volumes();
+
   	#ifdef OF_DEVICE_WITHOUT_PERSIST
   	if (Local_Path == "/persist")
       		return false;
@@ -3160,6 +3164,10 @@ void TWPartitionManager::Get_Partition_List(string ListType,
 					    *Partition_List)
 {
   std::vector < TWPartition * >::iterator iter;
+  // Fox: runtime dm truth interception — re-add TWRP objects for dm
+  // devices mapped after startup before building any GUI list, so the
+  // mount menu follows the live mapper state with no manual refresh.
+  Fox_Rescan_Super_Volumes();
   // Fox: live scan for /auto0 USB volumes (hotplug volumes appear after
   // fstab write, so the write-once Has_SubPartition flag can't be trusted
   // here). Computed once, used by the mount/storage filters below.
@@ -5016,7 +5024,12 @@ bool TWPartitionManager::Prepare_Super_Volume(TWPartition* twrpPart) {
     Fstab fstab;
 	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
 
-	Super_Partition_List.push_back(bare_partition_name);
+	// Fox: Prepare_Super_Volume now also runs on refresh paths
+	// (Update_System_Details, Get_Partition_List, Mount_By_Path), not just
+	// at startup — don't accumulate the display list unboundedly.
+	if (std::find(Super_Partition_List.begin(), Super_Partition_List.end(),
+			bare_partition_name) == Super_Partition_List.end())
+		Super_Partition_List.push_back(bare_partition_name);
 	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
 
 	std::string blk_device_partition;
@@ -5231,6 +5244,126 @@ static bool FoxDmDeviceExists(const std::string& name) {
 	}
 	closedir(d);
 	return false;
+}
+
+// Fox: live dm kernel names right now (one per /sys/block/dm-*/dm/name).
+// Same truth as FoxDmDeviceExists, in bulk for the rescan below.
+static std::vector<std::string> FoxLiveDmNames(void) {
+	std::vector<std::string> names;
+	DIR* d = opendir("/sys/block");
+	if (d == NULL)
+		return names;
+	struct dirent* de;
+	char namebuf[128];
+	while ((de = readdir(d)) != NULL) {
+		if (strncmp(de->d_name, "dm-", 3) != 0)
+			continue;
+		std::string f = std::string("/sys/block/") + de->d_name + "/dm/name";
+		FILE* fp = fopen(f.c_str(), "r");
+		if (!fp)
+			continue;
+		if (fgets(namebuf, sizeof(namebuf), fp) != NULL) {
+			std::string n = namebuf;
+			while (!n.empty() && (n.back() == '\n' || n.back() == '\r'))
+				n.pop_back();
+			if (!n.empty())
+				names.push_back(n);
+		}
+		fclose(fp);
+	}
+	closedir(d);
+	return names;
+}
+
+// Fox: runtime dm truth interception (see declaration in partitions.hpp).
+// Unmap_Super_Devices ERASES Is_Super objects from the Partitions vector,
+// and first-stage/staging churn (handoff teardown, siw map/unmap, ueventd
+// races) invalidates cached dm-N paths — so a dm device mapped AFTER
+// startup (field case: manual `siw map` after Unmap, keep-listed vendor
+// nodes) has no TWRP object and the mount menu, backup and Mount() all
+// report "unable to find partition" even though the kernel device is live.
+// Runs at the top of Update_System_Details, Get_Partition_List and
+// Mount_By_Path: every live dm device whose LP base exists in
+// /etc/recovery.fstab but has no TWRP object gets one replayed from its
+// fstab line (same per-line flow as Process_Fstab: Process_Fstab_Line +
+// Prepare_Super_Volume). Covers ALL dm blocks generically (bare-name match
+// on `logical` lines, slot suffix stripped; system -> /system_root via
+// Get_Android_Root_Path). Never deletes: a stale object with a dead path
+// fails Mount gracefully and is cleaned by the next Unmap.
+void TWPartitionManager::Fox_Rescan_Super_Volumes(void) {
+	std::vector<std::string> live = FoxLiveDmNames();
+	if (live.empty())
+		return;
+	// Fast path: every live device already has an object — nothing to do,
+	// and the fstab is never even opened.
+	bool missing = false;
+	std::vector<std::string> bares;
+	bares.reserve(live.size());
+	for (size_t i = 0; i < live.size(); i++) {
+		std::string bare = live[i];
+		// Skip snapshot leftovers, never LP devices.
+		if (bare.size() > 4 && bare.compare(bare.size() - 4, 4, "-cow") == 0)
+			continue;
+		// Strip the slot suffix (system_a -> system); slotless keeps
+		// its full name.
+		size_t n = bare.size();
+		if (n > 2 && bare[n - 2] == '_' && (bare[n - 1] == 'a' || bare[n - 1] == 'b'))
+			bare.erase(n - 2);
+		bares.push_back(bare);
+		std::string mnt = (bare == "system")
+			? Get_Android_Root_Path()
+			: "/" + bare;
+		if (Find_Partition_By_Path(mnt) == NULL)
+			missing = true;
+	}
+	if (!missing)
+		return;
+	// Build bare-name -> fstab-line map for `logical` entries only.
+	std::map<std::string, std::string> logical_lines;
+	FILE* fstabFile = fopen("/etc/recovery.fstab", "rt");
+	if (fstabFile == NULL)
+		return;
+	char fstab_line[MAX_FSTAB_LINE_LENGTH];
+	while (fgets(fstab_line, sizeof(fstab_line), fstabFile) != NULL) {
+		if (fstab_line[0] == '#' || strstr(fstab_line, "swap") != NULL)
+			continue;
+		if (strstr(fstab_line, "logical") == NULL)
+			continue;
+		// First whitespace-separated token is the LP base name.
+		size_t k = 0;
+		while (fstab_line[k] != '\0' && fstab_line[k] > 32)
+			k++;
+		if (k == 0)
+			continue;
+		logical_lines[std::string(fstab_line, k)] = fstab_line;
+	}
+	fclose(fstabFile);
+	if (logical_lines.empty())
+		return;
+	for (size_t i = 0; i < bares.size(); i++) {
+		const std::string& bare = bares[i];
+		std::string mnt = (bare == "system")
+			? Get_Android_Root_Path()
+			: "/" + bare;
+		if (Find_Partition_By_Path(mnt) != NULL)
+			continue;
+		std::map<std::string, std::string>::iterator it = logical_lines.find(bare);
+		if (it == logical_lines.end())
+			continue;
+		TWPartition* partition = new TWPartition();
+		// Process_Fstab_Line takes const char*; NULL flags = stock fallback.
+		if (partition->Process_Fstab_Line(it->second.c_str(), false, NULL)) {
+			if (partition->Is_Super && !Prepare_Super_Volume(partition)) {
+				delete partition;
+				continue;
+			}
+			Partitions.push_back(partition);
+			LOGINFO("FoxRescan: re-added %s for live dm device %s\n",
+				mnt.c_str(), live[i].c_str());
+		} else {
+			delete partition;
+		}
+	}
 }
 
 static bool DestroyLogicalPartition_Retry(const std::string& name) {

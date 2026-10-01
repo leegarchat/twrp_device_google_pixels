@@ -367,8 +367,9 @@ public:
 	void Check_Users_Decryption_Status();                                      // Checks to see if all users are decrypted
 	void Reset_Users_Decryption_Status();  
 	std::string Get_Bare_Partition_Name(std::string Mount_Point);
-   
-     	bool Prepare_Super_Volume(TWPartition* twrpPart);				  // Prepare logical super partition volume for mounting
+     	void Fox_Rescan_Super_Volumes(void);				  // Re-add TWRP objects for live dm devices mapped after startup (siw/keep-list); runtime dm truth interception
+    
+      	bool Prepare_Super_Volume(TWPartition* twrpPart);				  // Prepare logical super partition volume for mounting
 	std::string Get_Super_Partition();					  // Get Super Partition block device path
 	void Setup_Super_Devices();						  // Setup logical dm devices on super partition
 	bool Get_Super_Status();						  // Return whether device has a super partition
