@@ -12,6 +12,7 @@
     "stm_core",
     "syna_touch",
     "fst2",
+    "cl_dsp-core",
     "cs40l26-core",
     "cs40l26-i2c"
   ],
