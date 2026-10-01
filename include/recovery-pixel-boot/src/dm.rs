@@ -46,8 +46,10 @@ pub const STATE_PATH: &str = "/tmp/fox_dm_state";
 pub const MAPPER_DIR: &str = "/dev/block/mapper";
 /// LP bases whose node boot leaves mapped for TWRP (first-stage never maps
 /// them itself; without a kept node they can never mount). Format-time
-/// Unmap destroys them cleanly via the LP metadata entry.
-pub const KEEP_PARTS: &[&str] = &["vendor_dlkm"];
+/// Unmap destroys them cleanly via the LP metadata entries. Mirrored by
+/// _KEEP_MAPPED in pixelrunatboot.sh (shell fw-fetch keeps vendor_a,
+/// Rust boot keeps part_touch/vendor_dlkm_a via ensure_keep_mapped).
+pub const KEEP_PARTS: &[&str] = &["vendor_dlkm", "vendor"];
 /// Snapshot format version (parsers must ignore unknown `#` lines).
 pub const STATE_VERSION: &str = "v1";
 
@@ -303,6 +305,7 @@ mod tests {
     #[test]
     fn keep_list_covers_vendor_dlkm_only() {
         assert!(KEEP_PARTS.contains(&"vendor_dlkm"));
-        assert!(!KEEP_PARTS.contains(&"vendor"));
+        assert!(KEEP_PARTS.contains(&"vendor"));
+        assert!(!KEEP_PARTS.contains(&"system"));
     }
 }

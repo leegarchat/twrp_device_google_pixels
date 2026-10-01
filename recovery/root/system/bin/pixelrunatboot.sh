@@ -146,13 +146,15 @@ _dm_target() {
 # LP bases whose mapper node stays behind when WE created it. TWRP only
 # resolves logical partitions (fs_mgr_update_logical_partition) and
 # re-resolves live at every Mount() (Find_Actual_Block_Device slotselect
-# branch) — but first-stage/TWRP never maps these itself (field case:
+# branch) — but first-stage/TWRP never maps these itself (field cases:
 # vendor_dlkm on gs101, "unable to update logical partition" at every
-# boot), so without a kept node /vendor_dlkm can never mount. Leaving a
-# linear node is safe: same extents as LP metadata, format-time Unmap
-# destroys it cleanly via the existing metadata entry. Empty = legacy
-# one-shot (map+copy+unmap, no traces).
-_KEEP_MAPPED="vendor_dlkm"
+# boot; vendor_a destroyed again by the first-stage handoff ~5s in, so a
+# fresh fw-fetch mapping is the only live one), so without a kept node
+# /vendor_dlkm and /vendor can never mount. Leaving linear nodes is safe:
+# same extents as LP metadata, format-time Unmap destroys them cleanly
+# via the existing metadata entries. Empty = legacy one-shot
+# (map+copy+unmap, no traces).
+_KEEP_MAPPED="vendor_dlkm vendor"
 
 _keep_listed() {
     case " $_KEEP_MAPPED " in

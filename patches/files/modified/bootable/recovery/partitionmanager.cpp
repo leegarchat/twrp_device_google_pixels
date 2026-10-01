@@ -33,6 +33,7 @@
 #include <time.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <grp.h>
 #include <pwd.h>
 #include <zlib.h>
@@ -1147,6 +1148,10 @@ int TWPartitionManager::Mount_By_Path(string Path, bool Display_Error) {
 	// Iterate through all partitions
 	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
 		if ((*iter)->Mount_Point == Local_Path || (!(*iter)->Symlink_Mount_Point.empty() && (*iter)->Symlink_Mount_Point == Local_Path)) {
+			// Fox: same runtime re-resolve as Update_System_Details (covers
+			// ORS/CLI mounts that never trigger a details refresh).
+			if ((*iter)->Is_Super)
+				Prepare_Super_Volume(*iter);
 			ret = (*iter)->Mount(Display_Error);
 			found = true;
 		} else if ((*iter)->Is_SubPartition && (*iter)->SubPartition_Of == Local_Path) {
@@ -2296,6 +2301,16 @@ void TWPartitionManager::Update_System_Details(void) {
   	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
 		gui_msg("update_part_details=Updating partition details...");
 	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
+		// Fox: runtime dm truth interception. First-stage/staging churn
+		// (handoff teardown, siw map/unmap, ueventd races) invalidates the
+		// dm-N path cached at startup (field case: /vendor stuck at a dead
+		// dm-0 while vendor_a lives on dm-5). Re-resolve Is_Super volumes
+		// by name on every details refresh — the same resolve TWRP runs at
+		// startup — so sizes, mount states and Mount() follow the live
+		// mapper state the dm-watch service publishes to /tmp/fox_dm_state.
+		// Unresolvable keeps the old path (Mount then fails gracefully).
+		if ((*iter)->Is_Super)
+			Prepare_Super_Volume(*iter);
 		(*iter)->Update_Size(reporter);
 		if ((*iter)->Can_Be_Mounted) {
 			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
@@ -5185,8 +5200,50 @@ void TWPartitionManager::Unlock_Block_Partitions() {
 // which used to fail the whole format with "Unable to unmap dynamic
 // partitions" until a manual retry. Unmount (lazy fallback) + retries.
 static bool FoxRemoveDmDevice(const std::string& name);
+
+// Fox: true when a dm device with this kernel name exists right now.
+// Device-mapper minors are recycled (field case: by-name/vendor stuck at a
+// dead dm-0 while vendor_a lives on dm-5), so cached dm-N paths prove
+// nothing — the kernel name under /sys/block/dm-*/dm/name is the truth,
+// the same source the dm-watch service publishes to /tmp/fox_dm_state.
+// Pure sysfs scan, no libdm linkage needed.
+static bool FoxDmDeviceExists(const std::string& name) {
+	DIR* d = opendir("/sys/block");
+	if (d == NULL)
+		return false;
+	struct dirent* de;
+	char namebuf[128];
+	while ((de = readdir(d)) != NULL) {
+		if (strncmp(de->d_name, "dm-", 3) != 0)
+			continue;
+		std::string f = std::string("/sys/block/") + de->d_name + "/dm/name";
+		FILE* fp = fopen(f.c_str(), "r");
+		if (!fp)
+			continue;
+		bool hit = (fgets(namebuf, sizeof(namebuf), fp) != NULL
+			&& strncmp(namebuf, name.c_str(), name.size()) == 0
+			&& (namebuf[name.size()] == '\n' || namebuf[name.size()] == '\0'));
+		fclose(fp);
+		if (hit) {
+			closedir(d);
+			return true;
+		}
+	}
+	closedir(d);
+	return false;
+}
+
 static bool DestroyLogicalPartition_Retry(const std::string& name) {
 	std::string path = "/dev/block/mapper/" + name;
+	// Fox: destroying a name with no live dm device is a no-op success
+	// (field case: vendor_a never (re)mapped after the first-stage handoff
+	// tore it down — failing the whole Unmap/format over an already-gone
+	// node is wrong). A live-but-held node still goes through the retry
+	// path below and fails EBUSY, as it should.
+	if (!FoxDmDeviceExists(name)) {
+		LOGINFO("logical partition %s has no live dm device, skipping\n", name.c_str());
+		return true;
+	}
 	umount2(path.c_str(), 0);
 	umount2(path.c_str(), MNT_DETACH);
 	for (int i = 0; i < 5; i++) {
@@ -5291,6 +5348,27 @@ bool TWPartitionManager::Unmap_Super_Devices() {
 			if (de->d_type == DT_LNK) {
 				std::string partition = de->d_name;
 				if (strcmp(partition.c_str(),"userdata") != 0){
+					// Fox: destroy only real dm devices. Slot-less aliases
+					// (field case: mapper/vendor_dlkm -> vendor_dlkm_a left
+					// by siw map) are symlinks to another mapper entry, not
+					// to dm-N: DestroyLogicalPartition answers ENOENT and
+					// DM_DEV_REMOVE EINVAL on them, failing the whole unmap
+					// over a harmless alias. The suffixed target is handled
+					// by its own sweep entry (phase 1 or here).
+					std::string alias_target;
+					char alias_link[PATH_MAX];
+					ssize_t alias_len = readlink((block_path + partition).c_str(),
+						alias_link, sizeof(alias_link) - 1);
+					if (alias_len > 0) {
+						alias_link[alias_len] = '\0';
+						const char* alias_base = strrchr(alias_link, '/');
+						alias_target = alias_base ? alias_base + 1 : alias_link;
+					}
+					if (alias_target.compare(0, 3, "dm-") != 0) {
+						LOGINFO("skipping mapper alias (not a dm device): %s -> %s\n",
+							partition.c_str(), alias_target.c_str());
+						continue;
+					}
 					LOGINFO("removing dynamic partition: %s\n", partition.c_str());
 					destroyed = DestroyLogicalPartition_Retry(partition);
 					if (!destroyed) {
