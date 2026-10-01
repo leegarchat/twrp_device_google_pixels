@@ -620,10 +620,24 @@ if [[ -n "$LATEST_IMG" ]]; then
             # magiskboot unpacks fragments decompressed; recompress to the
             # stock lz4_legacy format for the fragment flash path.
             lz4 -l -9 -f "$AIO_WORK/$FRAG_SRC" "$AIO_WORK/vendor_ramdisk.cpio.lz4"
+            # Patch rides the name slot, never the version prefix: the fresh
+            # image already bakes -p into its name (OrangeFox-R12.0_2-...img
+            # for -p 2), so strip _<patch> from the prefix and re-attach it
+            # to the build name: OrangeFox-R12.0-internal_test_2-aio.
+            RAMDISK_PREFIX="$OFOX_PREFIX"
+            if [[ -n "$PATCH_VERSION" ]]; then
+                RAMDISK_PREFIX="${RAMDISK_PREFIX%_"$PATCH_VERSION"}"
+            fi
             if [[ -n "$BUILD_NAME" ]]; then
-                RAMDISK_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.ramdisk.lz4"
+                if [[ -n "$PATCH_VERSION" ]]; then
+                    RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${BUILD_NAME}_${PATCH_VERSION}-${FAMILY_TAG}.ramdisk.lz4"
+                else
+                    RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.ramdisk.lz4"
+                fi
+            elif [[ -n "$PATCH_VERSION" ]]; then
+                RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${PATCH_VERSION}-${FAMILY_TAG}.ramdisk.lz4"
             else
-                RAMDISK_DEST="$BUILDS_DIR/${OFOX_PREFIX}-${FAMILY_TAG}.ramdisk.lz4"
+                RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${FAMILY_TAG}.ramdisk.lz4"
             fi
             cp "$AIO_WORK/vendor_ramdisk.cpio.lz4" "$RAMDISK_DEST"
             echo "[build] ramdisk cpio: $RAMDISK_DEST (flash: $FRAG_FLASH $RAMDISK_DEST)"
