@@ -590,6 +590,20 @@ else
     OFOX_PREFIX="OrangeFox-UnknownVersion"
 fi
 
+# Canonical naming: the patch rides the name slot, never the version
+# prefix. The fresh image bakes -p into its name (OrangeFox-R12.0_3-...img
+# for -p 3), so strip _<patch> into NAME_PREFIX and re-attach it to the
+# build tag. Ramdisk payload, installer zip and push path all share these,
+# so the pair always matches (OrangeFox-R12.0-internal_test_3-aio.*).
+NAME_PREFIX="$OFOX_PREFIX"
+if [[ -n "$PATCH_VERSION" ]]; then
+    NAME_PREFIX="${NAME_PREFIX%_"$PATCH_VERSION"}"
+fi
+OFOX_TAG_NAME="${BUILD_NAME:-Beta}"
+if [[ -n "$PATCH_VERSION" ]]; then
+    OFOX_TAG_NAME="${OFOX_TAG_NAME}_${PATCH_VERSION}"
+fi
+
 if [[ -z "$LATEST_IMG" ]]; then
     echo "[build] WARNING: No OrangeFox image found in $PRODUCT_OUT (cpio extract skipped)"
 fi
@@ -620,24 +634,14 @@ if [[ -n "$LATEST_IMG" ]]; then
             # magiskboot unpacks fragments decompressed; recompress to the
             # stock lz4_legacy format for the fragment flash path.
             lz4 -l -9 -f "$AIO_WORK/$FRAG_SRC" "$AIO_WORK/vendor_ramdisk.cpio.lz4"
-            # Patch rides the name slot, never the version prefix: the fresh
-            # image already bakes -p into its name (OrangeFox-R12.0_2-...img
-            # for -p 2), so strip _<patch> from the prefix and re-attach it
-            # to the build name: OrangeFox-R12.0-internal_test_2-aio.
-            RAMDISK_PREFIX="$OFOX_PREFIX"
-            if [[ -n "$PATCH_VERSION" ]]; then
-                RAMDISK_PREFIX="${RAMDISK_PREFIX%_"$PATCH_VERSION"}"
-            fi
+            # NAME_PREFIX/OFOX_TAG_NAME carry the canonical split (patch on
+            # the name, not the version); see the naming block above.
             if [[ -n "$BUILD_NAME" ]]; then
-                if [[ -n "$PATCH_VERSION" ]]; then
-                    RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${BUILD_NAME}_${PATCH_VERSION}-${FAMILY_TAG}.ramdisk.lz4"
-                else
-                    RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${BUILD_NAME}-${FAMILY_TAG}.ramdisk.lz4"
-                fi
+                RAMDISK_DEST="$BUILDS_DIR/${NAME_PREFIX}-${OFOX_TAG_NAME}-${FAMILY_TAG}.ramdisk.lz4"
             elif [[ -n "$PATCH_VERSION" ]]; then
-                RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${PATCH_VERSION}-${FAMILY_TAG}.ramdisk.lz4"
+                RAMDISK_DEST="$BUILDS_DIR/${NAME_PREFIX}-${PATCH_VERSION}-${FAMILY_TAG}.ramdisk.lz4"
             else
-                RAMDISK_DEST="$BUILDS_DIR/${RAMDISK_PREFIX}-${FAMILY_TAG}.ramdisk.lz4"
+                RAMDISK_DEST="$BUILDS_DIR/${NAME_PREFIX}-${FAMILY_TAG}.ramdisk.lz4"
             fi
             cp "$AIO_WORK/vendor_ramdisk.cpio.lz4" "$RAMDISK_DEST"
             echo "[build] ramdisk cpio: $RAMDISK_DEST (flash: $FRAG_FLASH $RAMDISK_DEST)"
@@ -658,8 +662,8 @@ if [[ -n "${RAMDISK_DEST:-}" && -f "$RAMDISK_DEST" ]]; then
     echo "[build] packing installer zip for $FAMILY_TAG ..."
     OFOX_PAYLOAD="$RAMDISK_DEST" \
     OFOX_NAME="OrangeFox" \
-    OFOX_TYPE="$(echo "$OFOX_PREFIX" | cut -d'-' -f2)" \
-    OFOX_TAG="${BUILD_NAME:-Beta}" \
+    OFOX_TYPE="$(echo "$NAME_PREFIX" | cut -d'-' -f2)" \
+    OFOX_TAG="$OFOX_TAG_NAME" \
     OFOX_FAMILY="$FAMILY_TAG" \
     OFOX_BUILDS_DIR="$BUILDS_DIR" \
     bash "$SCRIPT_DIR/installer/pack-module-zip.sh" \
@@ -678,7 +682,7 @@ if [[ "${FOX_BUILD_OK:-}" != 1 ]]; then
         echo "[build] Push SKIPPED: build did not complete (no fresh zip; stale artifacts left untouched)"
     fi
 elif [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
-    _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$OFOX_PREFIX" | cut -d'-' -f2)-${BUILD_NAME:-Beta}-aio.zip"
+    _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$NAME_PREFIX" | cut -d'-' -f2)-${OFOX_TAG_NAME}-aio.zip"
     # -D/--diff-tag: range = previous reachable tag .. fresh -g tag (or
     # HEAD when built without -g). A fresh tag sits exactly on HEAD, so
     # step past it to find the previous one. Warns (zip-only) when the
