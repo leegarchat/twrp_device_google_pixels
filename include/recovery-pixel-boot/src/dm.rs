@@ -76,6 +76,9 @@ fn target_basename(link: Option<String>) -> Option<String> {
 }
 
 /// Live dm target of a mapper node, if the symlink resolves to a name.
+/// Single-node lookup for future query use; the bulk path goes through
+/// [`list_mapper`]. Kept (not removed) as service surface.
+#[allow(dead_code)]
 pub fn mapper_target(name: &str) -> Option<String> {
     let link = std::fs::read_link(format!("{MAPPER_DIR}/{name}"))
         .map(|p| p.to_string_lossy().into_owned())
