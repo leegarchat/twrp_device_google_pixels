@@ -16,14 +16,14 @@
 //! database connections and connections to services that Keystore needs
 //! to talk to.
 
+use crate::async_task::AsyncTask;
 use crate::gc::Gc;
 use crate::km_compat::{BacklevelKeyMintWrapper, KeyMintV1};
 use crate::ks_err;
 use crate::legacy_blob::LegacyBlobLoader;
 use crate::legacy_importer::LegacyImporter;
 use crate::super_key::SuperKeyManager;
-use crate::utils::watchdog as wd;
-use crate::{async_task::AsyncTask, database::BootTime};
+use crate::utils::{retry_get_interface, watchdog as wd};
 use crate::{
     database::KeystoreDB,
     database::Uuid,
@@ -44,10 +44,13 @@ use android_hardware_security_secureclock::aidl::android::hardware::security::se
 };
 use android_security_compat::aidl::android::security::compat::IKeystoreCompatService::IKeystoreCompatService;
 use anyhow::{Context, Result};
-use binder::get_declared_instances;
 use binder::FromIBinder;
-use lazy_static::lazy_static;
-use std::sync::{Arc, Mutex, RwLock};
+use binder::{get_declared_instances, is_declared};
+use rustutils::system_properties::PropertyWatcher;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, LazyLock, Mutex, RwLock,
+};
 use std::{cell::RefCell, sync::Once};
 use std::{collections::HashMap, path::Path, path::PathBuf};
 
@@ -62,22 +65,25 @@ static DB_INIT: Once = Once::new();
 /// is run only once, as long as the ASYNC_TASK instance is the same. So only one additional
 /// database connection is created for the garbage collector worker.
 pub fn create_thread_local_db() -> KeystoreDB {
-    let db_path = DB_PATH.read().expect("Could not get the database directory.");
+    let db_path = DB_PATH.read().expect("Could not get the database directory");
 
-    let mut db = KeystoreDB::new(&db_path, Some(GC.clone())).expect("Failed to open database.");
+    let result = KeystoreDB::new(&db_path, Some(GC.clone()));
+    let mut db = match result {
+        Ok(db) => db,
+        Err(e) => {
+            log::error!("Failed to open Keystore database at {db_path:?}: {e:?}");
+            log::error!("Has /data been mounted correctly?");
+            panic!("Failed to open database for Keystore, cannot continue: {e:?}")
+        }
+    };
 
     DB_INIT.call_once(|| {
         log::info!("Touching Keystore 2.0 database for this first time since boot.");
-        db.insert_last_off_body(BootTime::now());
         log::info!("Calling cleanup leftovers.");
-        let n = db.cleanup_leftovers().expect("Failed to cleanup database on startup.");
+        let n = db.cleanup_leftovers().expect("Failed to cleanup database on startup");
         if n != 0 {
             log::info!(
-                concat!(
-                    "Cleaned up {} failed entries. ",
-                    "This indicates keystore crashed during key generation."
-                ),
-                n
+                "Cleaned up {n} failed entries, indicating keystore crash on key generation"
             );
         }
     });
@@ -89,8 +95,7 @@ thread_local! {
     /// same database multiple times is safe as long as each connection is
     /// used by only one thread. So we store one database connection per
     /// thread in this thread local key.
-    pub static DB: RefCell<KeystoreDB> =
-            RefCell::new(create_thread_local_db());
+    pub static DB: RefCell<KeystoreDB> = RefCell::new(create_thread_local_db());
 }
 
 struct DevicesMap<T: FromIBinder + ?Sized> {
@@ -137,45 +142,54 @@ impl<T: FromIBinder + ?Sized> Default for DevicesMap<T> {
     }
 }
 
-lazy_static! {
-    /// The path where keystore stores all its keys.
-    pub static ref DB_PATH: RwLock<PathBuf> = RwLock::new(
-        Path::new("/data/misc/keystore").to_path_buf());
-    /// Runtime database of unwrapped super keys.
-    pub static ref SUPER_KEY: Arc<RwLock<SuperKeyManager>> = Default::default();
-    /// Map of KeyMint devices.
-    static ref KEY_MINT_DEVICES: Mutex<DevicesMap<dyn IKeyMintDevice>> = Default::default();
-    /// Timestamp service.
-    static ref TIME_STAMP_DEVICE: Mutex<Option<Strong<dyn ISecureClock>>> = Default::default();
-    /// A single on-demand worker thread that handles deferred tasks with two different
-    /// priorities.
-    pub static ref ASYNC_TASK: Arc<AsyncTask> = Default::default();
-    /// Singleton for enforcements.
-    pub static ref ENFORCEMENTS: Enforcements = Default::default();
-    /// LegacyBlobLoader is initialized and exists globally.
-    /// The same directory used by the database is used by the LegacyBlobLoader as well.
-    pub static ref LEGACY_BLOB_LOADER: Arc<LegacyBlobLoader> = Arc::new(LegacyBlobLoader::new(
-        &DB_PATH.read().expect("Could not get the database path for legacy blob loader.")));
-    /// Legacy migrator. Atomically migrates legacy blobs to the database.
-    pub static ref LEGACY_IMPORTER: Arc<LegacyImporter> =
-        Arc::new(LegacyImporter::new(Arc::new(Default::default())));
-    /// Background thread which handles logging via statsd and logd
-    pub static ref LOGS_HANDLER: Arc<AsyncTask> = Default::default();
+/// The path where keystore stores all its keys.
+pub static DB_PATH: LazyLock<RwLock<PathBuf>> =
+    LazyLock::new(|| RwLock::new(Path::new("/data/misc/keystore").to_path_buf()));
+/// Runtime database of unwrapped super keys.
+pub static SUPER_KEY: LazyLock<Arc<RwLock<SuperKeyManager>>> = LazyLock::new(Default::default);
+/// Map of KeyMint devices.
+static KEY_MINT_DEVICES: LazyLock<Mutex<DevicesMap<dyn IKeyMintDevice>>> =
+    LazyLock::new(Default::default);
+/// Timestamp service.
+static TIME_STAMP_DEVICE: Mutex<Option<Strong<dyn ISecureClock>>> = Mutex::new(None);
+/// A single on-demand worker thread that handles deferred tasks with two different
+/// priorities.
+pub static ASYNC_TASK: LazyLock<Arc<AsyncTask>> = LazyLock::new(Default::default);
+/// Singleton for enforcements.
+pub static ENFORCEMENTS: LazyLock<Enforcements> = LazyLock::new(Default::default);
+/// LegacyBlobLoader is initialized and exists globally.
+/// The same directory used by the database is used by the LegacyBlobLoader as well.
+pub static LEGACY_BLOB_LOADER: LazyLock<Arc<LegacyBlobLoader>> = LazyLock::new(|| {
+    Arc::new(LegacyBlobLoader::new(
+        &DB_PATH.read().expect("Could not determine database path for legacy blob loader"),
+    ))
+});
+/// Legacy migrator. Atomically migrates legacy blobs to the database.
+pub static LEGACY_IMPORTER: LazyLock<Arc<LegacyImporter>> =
+    LazyLock::new(|| Arc::new(LegacyImporter::new(Arc::new(Default::default()))));
+/// Background thread which handles logging via statsd and logd
+pub static LOGS_HANDLER: LazyLock<Arc<AsyncTask>> = LazyLock::new(Default::default);
+/// DER-encoded module information returned by `getSupplementaryAttestationInfo(Tag.MODULE_HASH)`.
+pub static ENCODED_MODULE_INFO: RwLock<Option<Vec<u8>>> = RwLock::new(None);
 
-    static ref GC: Arc<Gc> = Arc::new(Gc::new_init_with(ASYNC_TASK.clone(), || {
+static GC: LazyLock<Arc<Gc>> = LazyLock::new(|| {
+    Arc::new(Gc::new_init_with(ASYNC_TASK.clone(), || {
         (
             Box::new(|uuid, blob| {
                 let km_dev = get_keymint_dev_by_uuid(uuid).map(|(dev, _)| dev)?;
-                let _wp = wd::watch_millis("In invalidate key closure: calling deleteKey", 500);
+                let _wp = wd::watch("invalidate key closure: calling IKeyMintDevice::deleteKey");
                 map_km_error(km_dev.deleteKey(blob))
                     .context(ks_err!("Trying to invalidate key blob."))
             }),
-            KeystoreDB::new(&DB_PATH.read().expect("Could not get the database directory."), None)
-                .expect("Failed to open database."),
+            KeystoreDB::new(
+                &DB_PATH.read().expect("Could not determine database path for GC"),
+                None,
+            )
+            .expect("Failed to open database"),
             SUPER_KEY.clone(),
         )
-    }));
-}
+    }))
+});
 
 /// Determine the service name for a KeyMint device of the given security level
 /// gotten by binder service from the device and determining what services
@@ -223,8 +237,12 @@ fn connect_keymint(
 
     let (keymint, hal_version) = if let Some(service_name) = service_name {
         let km: Strong<dyn IKeyMintDevice> =
-            map_binder_status_code(binder::get_interface(&service_name))
-                .context(ks_err!("Trying to connect to genuine KeyMint service."))?;
+            if SecurityLevel::TRUSTED_ENVIRONMENT == *security_level {
+                map_binder_status_code(retry_get_interface(&service_name))
+            } else {
+                map_binder_status_code(binder::get_interface(&service_name))
+            }
+            .context(ks_err!("Trying to connect to genuine KeyMint service."))?;
         // Map the HAL version code for KeyMint to be <AIDL version> * 100, so
         // - V1 is 100
         // - V2 is 200
@@ -247,7 +265,11 @@ fn connect_keymint(
                     }
                     e => e,
                 })
-                .context(ks_err!("Trying to get Legacy wrapper."))?,
+                .context(ks_err!(
+                    "Trying to get Legacy wrapper. Attempt to get keystore \
+                    compat service for security level {:?}",
+                    *security_level
+                ))?,
             None,
         )
     };
@@ -255,17 +277,8 @@ fn connect_keymint(
     // If the KeyMint device is back-level, use a wrapper that intercepts and
     // emulates things that are not supported by the hardware.
     let keymint = match hal_version {
-        Some(300) => {
-            // Current KeyMint version: use as-is as v3 Keymint is current version
-            log::info!(
-                "KeyMint device is current version ({:?}) for security level: {:?}",
-                hal_version,
-                security_level
-            );
-            keymint
-        }
-        Some(200) => {
-            // Previous KeyMint version: use as-is as we don't have any software emulation of v3-specific KeyMint features.
+        Some(400) | Some(300) | Some(200) => {
+            // KeyMint v2+: use as-is (we don't have any software emulation of v3 or v4-specific KeyMint features).
             log::info!(
                 "KeyMint device is current version ({:?}) for security level: {:?}",
                 hal_version,
@@ -303,7 +316,7 @@ fn connect_keymint(
         }
     };
 
-    let wp = wd::watch_millis("In connect_keymint: calling getHardwareInfo()", 500);
+    let wp = wd::watch("connect_keymint: calling IKeyMintDevice::getHardwareInfo()");
     let mut hw_info =
         map_km_error(keymint.getHardwareInfo()).context(ks_err!("Failed to get hardware info."))?;
     drop(wp);
@@ -394,7 +407,7 @@ fn connect_secureclock() -> Result<Strong<dyn ISecureClock>> {
                 }
                 e => e,
             })
-            .context(ks_err!("Trying to get Legacy wrapper."))
+            .context(ks_err!("Failed attempt to get legacy secure clock."))
     }?;
 
     Ok(secureclock)
@@ -417,19 +430,20 @@ pub fn get_timestamp_service() -> Result<Strong<dyn ISecureClock>> {
 pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -> Result<String> {
     let remote_prov_descriptor: &str =
         <BpRemotelyProvisionedComponent as IRemotelyProvisionedComponent>::get_descriptor();
-    let remotely_prov_instances = get_declared_instances(remote_prov_descriptor).unwrap();
 
     match *security_level {
         SecurityLevel::TRUSTED_ENVIRONMENT => {
-            if remotely_prov_instances.iter().any(|instance| *instance == "default") {
-                Some(format!("{}/default", remote_prov_descriptor))
+            let instance = format!("{}/default", remote_prov_descriptor);
+            if is_declared(&instance)? {
+                Some(instance)
             } else {
                 None
             }
         }
         SecurityLevel::STRONGBOX => {
-            if remotely_prov_instances.iter().any(|instance| *instance == "strongbox") {
-                Some(format!("{}/strongbox", remote_prov_descriptor))
+            let instance = format!("{}/strongbox", remote_prov_descriptor);
+            if is_declared(&instance)? {
+                Some(instance)
             } else {
                 None
             }
@@ -437,5 +451,42 @@ pub fn get_remotely_provisioned_component_name(security_level: &SecurityLevel) -
         _ => None,
     }
     .ok_or(Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
-    .context(ks_err!())
+    .context(ks_err!("Failed to get rpc for sec level {:?}", *security_level))
+}
+
+/// Whether boot is complete.
+static BOOT_COMPLETED: AtomicBool = AtomicBool::new(false);
+
+/// Indicate whether boot is complete.
+///
+/// This in turn indicates whether it is safe to make permanent changes to state.
+pub fn boot_completed() -> bool {
+    BOOT_COMPLETED.load(Ordering::Acquire)
+}
+
+/// Monitor the system property for boot complete.  This blocks and so needs to be run in a separate
+/// thread.
+pub fn await_boot_completed() {
+    // Use a fairly long watchdog timeout of 5 minutes here. This blocks until the device
+    // boots, which on a very slow device (e.g., emulator for a non-native architecture) can
+    // take minutes. Blocking here would be unexpected only if it never finishes.
+    let _wp = wd::watch_millis("await_boot_completed", 300_000);
+    log::info!("monitoring for sys.boot_completed=1");
+    while let Err(e) = watch_for_boot_completed() {
+        log::error!("failed to watch for boot_completed: {e:?}");
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+
+    BOOT_COMPLETED.store(true, Ordering::Release);
+    log::info!("wait_for_boot_completed done, triggering GC");
+
+    // Garbage collection may have been skipped until now, so trigger a check.
+    GC.notify_gc();
+}
+
+fn watch_for_boot_completed() -> Result<()> {
+    let mut w = PropertyWatcher::new("sys.boot_completed")
+        .context(ks_err!("PropertyWatcher::new failed"))?;
+    w.wait_for_value("1", None).context(ks_err!("Failed to wait for sys.boot_completed"))?;
+    Ok(())
 }
