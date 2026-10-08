@@ -1,0 +1,3 @@
+# Python deps for device/google/pixels host tools (tools/tg_push.py).
+# Install: pip install -r tools/requirements.txt
+aiogram>=3,<4
