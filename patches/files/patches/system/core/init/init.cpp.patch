@@ -8,18 +8,19 @@
  #include <fcntl.h>
  #include <paths.h>
  #include <pthread.h>
-@@ -26,8 +27,10 @@
+@@ -26,9 +27,11 @@
  #include <sys/eventfd.h>
  #include <sys/mount.h>
  #include <sys/signalfd.h>
 +#include <sys/stat.h>
+ #include <sys/system_properties.h>
  #include <sys/types.h>
  #include <sys/utsname.h>
 +#include <sys/wait.h>
  #include <unistd.h>
  
- #define _REALLY_INCLUDE_SYS__SYSTEM_PROPERTIES_H_
-@@ -946,6 +949,136 @@
+ #include <filesystem>
+@@ -976,6 +979,136 @@
  
      SelinuxSetupKernelLogging();
  
