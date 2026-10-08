@@ -129,6 +129,12 @@ LGZ_EXCLUDE_LIST=(
     # "libstd.dylib.so"
     "*.rc"
     "recovery"
+    # snapuserd: stock first-stage init pre-creates /system/bin/snapuserd as
+    # a symlink (to first_stage_ramdisk copy) before the stub runs; a
+    # regular file for the same path in the cluster makes lgz refuse the
+    # whole unpack ("refusing to write through symlink"). Keep it open —
+    # runtime uses the first_stage copy, same as the 14.1 layout.
+    "system/bin/snapuserd"
     # "linker"
     # "linker64"
     # "ld-android.so"
