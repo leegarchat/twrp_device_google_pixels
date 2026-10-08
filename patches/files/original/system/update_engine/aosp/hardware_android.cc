@@ -26,7 +26,6 @@
 #include <android-base/properties.h>
 #include <base/files/file_util.h>
 #include <base/strings/string_number_conversions.h>
-#include <base/strings/string_util.h>
 #include <bootloader_message/bootloader_message.h>
 #include <fstab/fstab.h>
 #include <libavb/libavb.h>
@@ -108,7 +107,7 @@ std::string CalculateVbmetaDigestForInactiveSlot() {
   const std::string encoded_digest =
       base::HexEncode(vbmeta_digest, AVB_SHA256_DIGEST_SIZE);
   LOG(INFO) << "vbmeta digest for target slot: " << encoded_digest;
-  return base::ToLowerASCII(encoded_digest);
+  return ToLower(encoded_digest);
 }
 
 }  // namespace
@@ -214,10 +213,8 @@ int HardwareAndroid::GetPowerwashCount() const {
   return 0;
 }
 
-bool HardwareAndroid::SchedulePowerwash(bool save_rollback_data) {
+bool HardwareAndroid::SchedulePowerwash() {
   LOG(INFO) << "Scheduling a powerwash to BCB.";
-  LOG_IF(WARNING, save_rollback_data) << "save_rollback_data was true but "
-                                      << "isn't supported.";
   string err;
   if (!update_bootloader_message({"--wipe_data", "--reason=wipe_data_from_ota"},
                                  &err)) {
