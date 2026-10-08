@@ -11,7 +11,17 @@
  
  # Returns true if it is a low memory device, otherwise it returns false.
  define is-low-mem-device
-@@ -753,6 +755,20 @@
+@@ -523,7 +525,8 @@
+ 
+ ifeq ($(CALLED_FROM_SETUP),true)
+ include $(BUILD_SYSTEM)/ccache.mk
+-include $(BUILD_SYSTEM)/goma.mk
++# goma.mk is gone from the fox_16.0 manifest (Goma is dead upstream);
++# keep the include out or dumpvars/kati dies on the missing file.
+ include $(BUILD_SYSTEM)/rbe.mk
+ endif
+ 
+@@ -753,6 +756,20 @@
  # Path to tools.jar
  HOST_JDK_TOOLS_JAR := $(ANDROID_JAVA8_HOME)/lib/tools.jar
  
