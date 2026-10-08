@@ -1,26 +1,29 @@
 --- a/frameworks/native/libs/binder/rust/Android.bp
 +++ b/frameworks/native/libs/binder/rust/Android.bp
-@@ -19,6 +19,7 @@
-     host_supported: true,
-     vendor_available: true,
-     product_available: true,
+@@ -9,6 +9,8 @@
+ 
+ rust_library {
+     name: "libbinder_rs",
++    // FOX: recovery variant for ramdisk_snapshot/recovery binaries.
 +    recovery_available: true,
-     target: {
-         darwin: {
-             enabled: false,
-@@ -71,6 +72,7 @@
-     host_supported: true,
-     vendor_available: true,
-     product_available: true,
+     crate_name: "binder",
+     srcs: ["src/lib.rs"],
+     rustlibs: [
+@@ -73,6 +75,8 @@
+ 
+ rust_library {
+     name: "libbinder_ndk_sys",
++    // FOX: recovery variant for ramdisk_snapshot/recovery binaries.
 +    recovery_available: true,
-     target: {
-         darwin: {
-             enabled: false,
-@@ -92,6 +94,7 @@
+     crate_name: "binder_ndk_sys",
+     srcs: [
+         "sys/lib.rs",
+@@ -124,6 +128,8 @@
+ 
  rust_bindgen {
      name: "libbinder_ndk_bindgen",
-     crate_name: "binder_ndk_bindgen",
++    // FOX: recovery variant for ramdisk_snapshot/recovery binaries.
 +    recovery_available: true,
+     crate_name: "binder_ndk_bindgen",
      wrapper_src: "sys/BinderBindings.hpp",
      source_stem: "bindings",
-     bindgen_flag_files: [
