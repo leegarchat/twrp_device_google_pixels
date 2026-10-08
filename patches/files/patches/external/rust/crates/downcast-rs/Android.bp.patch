@@ -1,9 +1,0 @@
---- a/external/rust/crates/downcast-rs/Android.bp
-+++ b/external/rust/crates/downcast-rs/Android.bp
-@@ -101,5 +101,6 @@
-     ],
-     product_available: true,
-     vendor_available: true,
-+    recovery_available: true,
-     min_sdk_version: "29",
- }
