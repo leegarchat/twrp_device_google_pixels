@@ -1,5 +1,5 @@
---- a/bootable/recovery/gui/libguitwrp_defaults.go
-+++ b/bootable/recovery/gui/libguitwrp_defaults.go
+--- a/bootable/recovery/gui/libfoxui_defaults.go
++++ b/bootable/recovery/gui/libfoxui_defaults.go
 @@ -277,6 +277,11 @@
  	if getMakeVars(ctx, "AB_OTA_UPDATER") == "true" {
  		cflags = append(cflags, "-DAB_OTA_UPDATER=1")

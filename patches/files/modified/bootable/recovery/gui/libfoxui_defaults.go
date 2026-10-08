@@ -277,6 +277,11 @@ func globalFlags(ctx android.BaseContext) []string {
 	if getMakeVars(ctx, "AB_OTA_UPDATER") == "true" {
 		cflags = append(cflags, "-DAB_OTA_UPDATER=1")
 	}
+
+	if tw_framerate := getMakeVars(ctx, "TW_FRAMERATE"); tw_framerate != "" {
+		cflags = append(cflags, "-DTW_FRAMERATE="+tw_framerate)
+	}
+
 	return cflags
 }
 
@@ -319,7 +324,7 @@ func libGuiDefaults(ctx android.LoadHookContext) {
 }
 
 func init() {
-	android.RegisterModuleType("libguitwrp_defaults", libGuiDefaultsFactory)
+	android.RegisterModuleType("libfoxui_defaults", libGuiDefaultsFactory)
 }
 
 func libGuiDefaultsFactory() android.Module {
