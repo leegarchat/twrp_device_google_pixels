@@ -162,7 +162,7 @@ static bool FscryptMountMetadataEncryptedWithTimeout(
 		android::fs_mgr::Fstab fstab;
 		if (android::fs_mgr::ReadFstabFromFile(extra_fstab, &fstab)) {
 			if (auto entry = android::fs_mgr::GetEntryForMountPoint(&fstab, mount_point)) {
-				is_zoned = entry->is_zoned;
+				is_zoned = entry->fs_mgr_flags.is_zoned;
 				user_devices = entry->user_devices;
 				for (int a : entry->device_aliased) device_aliased.push_back(a != 0);
 				while (device_aliased.size() < user_devices.size())
