@@ -1,153 +1,94 @@
 //! usb::malibu — OTG implementation (Tensor G6: grizzly/cubs/kodiak/yogi).
 //!
-//! Faithful Rust port of the P11 reference `otg_yogi.sh` (83 lines,
-//! `/home/leegarbook/android_builds/P11_ofox/recovery/root/system/bin/otg_yogi.sh`):
-//! the kernel owns the Type-C mode (tcpm votes TCPCI:host on attach) and
-//! `google-usb-role-sw` additionally needs the AoC's vote, which goes host
-//! only once the AoC `usb_control` service runs — started by `aocd`. We
-//! stage the device's OWN vendor runtime (`aocd` + 6 libs +
-//! `aoc_usb_driver.ko`) into a tmpfs dir (survives a later vendor unmount),
-//! insmod once, and relaunch the flaky `aocd` until `usb_control` appears.
+//! Election-driven host mode, zuma-style driver manipulation — NO vendor
+//! staging by design (no siw/loop/dm-mapper, no vendor mounts, no aocd,
+//! no AoC sysfs polling).
 //!
-//! Local binary facts (grizzly factory `cd1a.260905.001.b1`, kodiak same
-//! build; kodiak GKI kernel byte-identical, both `.ko` md5-identical —
-//! cubs/yogi have no local factory zips, constants below are
-//! grizzly-derived for them):
-//! - GKI 6.12.69: `usb_role_switch`×41, `typec`×322, `tcpm-source-psy`×1,
-//!   `dwc3_otg_host_ready`×0, `CHARGER_MODE`×0, `dwc3_exynos_otg_id`×0 →
-//!   6.12-only family (no older kernel exists), shim dead by design, native
-//!   role-switch path only. There is NOTHING to force: no role writes, no
-//!   gvotable VBUS force (no `CHARGER_MODE` voter in the kernel).
-//! - `aoc_usb_driver.ko`: `usb_control` service inside, `depends=aoc_core,
-//!   gvotable`, vermagic `6.12.69-android16-6-g6a49175400c0-ab16238327-4k`
-//!   (strict insmod: matches the running vendor kernel by construction —
-//!   the factory GKI `boot.img` embeds an older `ab15835541` string, but the
-//!   on-device kernel the modules load against carries the vendor string;
-//!   the P11 script's plain `insmod` is field-proven, so strict flags here).
-//! - `dwc3-google-aux.ko`: alias `google,dwc3-mbu-aux`,
-//!   `desired_role`/`current_role` tracepoints, `depends=google_icc`.
-//! - First-stage (`vendor_kernel_boot` ramdisk `modules.load`) already
-//!   autoloads the whole stack before we run: `aoc_core`, `gvotable`,
-//!   `google_icc`, `google-role-sw`, `dwc3-google`, `tcpci_max77759`,
-//!   `usb_psy`, max77779 chargers. Our only insmod is `aoc_usb_driver.ko`
-//!   (deps already live); guarded by `/sys/module/aoc_usb_driver` so a
-//!   second run is a no-op. `modules.dep` in `vendor_dlkm` lists empty deps
-//!   for both `.ko` (their providers live in the other partition).
-//! - DTBO: `goog_usb_role_sw [google,usb-role-sw]` status=okay,
-//!   `max77779pmic [maxim,max77779pmic-spmi]` (SPMI!), charger
-//!   `google,cpm/chargers/max77779`, eUSB2 repeater `tiusb2e11`
-//!   `[goog-eusb2-repeater]`, `max77759tcpc-spmi@4/connector`.
-//! - Base DTB (`vendor_kernel_boot`): `dwc3@a210000` under
-//!   `usb3@a200000` + `usb-role-switch` property → UDC `a210000.dwc3`
-//!   (also P11 `runatinit.sh:185` + `twrp_malibu.flags` comment).
-//! - Live-device sysfs truths (kodiak recovery logs, Sept 2026):
-//!   role switches `/sys/class/usb_role/a200000.usb3-role-switch/role`
-//!   (`device`/`host`) + `i2c-8-003e-eusb2-repeater-role-switch`;
-//!   AoC platform device `a800000.aoc`; source psy
-//!   `tcpm-source-psy-spmi-max77759tcpc`; VBUS
-//!   `/sys/class/power_supply/usb/online`.
-//! - `vendor.img` (EROFS): `bin/aocd` + all 6 `lib64/*.so` present at the
-//!   exact P11 copy paths; `readelf -d aocd` NEEDED confirms the set
-//!   (`liblog`/`libc`/`libm`/`libdl` come from the recovery ramdisk).
-//! - `aoc_core.ko` strings carry `verify_aoc_responsive`/`responsive`/
-//!   `services`; `aoc_usb_driver.ko` votes `USB_ROLE_HOST` on the
-//!   `usb_data_role_votable` election (`VOTABLE_USB_DATA_ROLE="USB_DR_EL"`
-//!   per the kodiak mirror `aoc/usb/aoc_usb_dev.c`, which also shows the
-//!   `"usb_control"` service name and the `Fail to cast vote` retry).
+//! Mechanism (disassembly-verified on grizzly/yogi 6.12.69
+//! `google-role-sw.ko` + `aoc_usb_driver.ko`; DTBO
+//! `fragment@usb_data_role_switch`): identical to laguna — `google-role-sw`
+//! election `USB_DR_EL` needs `TCPCI=host AND AOC=host`, and our
+//! `aoc_vote_shim` (`include/source/aoc_vote_shim/`, shared with laguna:
+//! same election name, same voter, same constants) casts the AOC vote
+//! directly: `get_handle("USB_DR_EL")` + `cast_vote(h, "AOC", 1, 1)`.
 //!
-//! Deliberately NO i2c TCPC patch (`crate::i2c::patch_max77759_i2c_with_driver`
-//! is NOT called): the port controller is an SPMI device
-//! (`max77759tcpc-spmi@4`, first-stage `tcpci_max777x9_spmi.ko`,
-//! `vendor_boot` cmdline `max77779_pmic*`/`spmi_smartdv`) — there is no I2C
-//! client to grab (the old daemon logged `TCPC switch not configured` on
-//! device for exactly this reason) and the stock driver self-manages the
-//! data path. See `crate::i2c` docs.
+//! Malibu bonus, verified in stock DTBO (grizzly 46 overlays, yogi 9):
+//! `host-mode-aoc-optional` is PRESENT on `goog_usb_role_sw`, which the
+//! stock `aoc_usb_probe` reads via
+//! `of_find_compatible_node("google,usb-role-sw")` and treats as
+//! "AoC not required". So on stock malibu the gate is open from boot
+//! and the shim is belt-and-suspenders (best-effort, never a failure
+//! gate): even a missing shim prebuilt keeps patch green.
 //!
-//! Success predicate: host is ACTIVE only when the controller data role
-//! reads back `host` AND the TCPC source psy reads `online=1` — never the
-//! role alone (a bare `role=host` readback with no sourced VBUS is not
-//! host mode). `run_otg_patch` gates `sys.usb.patch_dwc3=1` (which starts
-//! `otg_auto` in our rc) on the durable enabler — the live AoC vote
-//! (`usb_control` present) — because an accessory may attach *after* boot;
-//! failing patch at boot-with-nothing-attached would brick late attach.
-//! The daemon then serves late attach by keeping the vote alive. Any staging
-//! / insmod / vote failure fails closed: device mode, adb safe (we never
-//! touch UDC, gadget, role or voter state — TCPC + role-sw negotiate modes
-//! on their own).
+//! The kernel self-switches via the election, so this code performs NO
+//! role/UDC writes and NO i2c TCPC patch (SPMI bus: `max77759tcpc-spmi@4`,
+//! self-managed by the stock driver). `aoc_core`/`aoc_usb_driver` are
+//! deliberately NOT insmodded (their only job was the vote).
+//! 6.12-only family; anything else fails closed (device mode, adb safe).
+//!
+//! Success predicate (field-proven, never role alone): controller
+//! `role == host` AND TCPC source psy `online == 1`.
 
-use crate::ko_picker::{is_module_loaded, load_kernel_module, log_msg};
-use crate::props::{get_prop, set_prop};
-use std::ffi::CString;
+use crate::ko_picker::{
+    detect_kernel_env, find_candidates, is_module_loaded, ko_try_load,
+    load_kernel_module, load_kernel_module_force, log_msg,
+};
+use crate::props::set_prop;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::thread::sleep;
 use std::time::Duration;
 
 const TAG: &str = "otg";
-/// Staging dir in tmpfs (P11 `otg_yogi.sh:17`: `RAM=/tmp/aoc`).
-const RAM_DIR: &str = "/tmp/aoc";
-/// Lib subdir (P11 `:17`: `mkdir -p "$RAM/lib"`).
-const RAM_LIB: &str = "/tmp/aoc/lib";
-/// Daemon binary name in RAM (P11 `:29`: `cp -f "$MV/bin/aocd" "$RAM/"`).
-const RAM_AOCD: &str = "/tmp/aoc/aocd";
-/// Module copy in RAM (P11 `:38`: `cp -f "$ko" "$RAM/"`).
-const RAM_KO: &str = "/tmp/aoc/aoc_usb_driver.ko";
-/// Module name for the `/sys/module` + `/proc/modules` guards (P11 `:69`).
-const MOD_NAME: &str = "aoc_usb_driver";
-/// sysfs guard: present once the module is loaded (P11 `:69`).
-const SYS_MODULE: &str = "/sys/module/aoc_usb_driver";
-/// Live vendor mount points (P11 `:20`: `MV=/dev/otg_mnt/vendor`,
-/// `MD=/dev/otg_mnt/vdlkm`).
-const MNT_VENDOR: &str = "/dev/otg_mnt/vendor";
-const MNT_VDLKM: &str = "/dev/otg_mnt/vdlkm";
-/// dm-mapper prefixes with the slot suffix appended (P11 `:28`,`:36`:
-/// `/dev/block/mapper/vendor$slot`, `vendor_dlkm$slot`).
-const MAP_VENDOR: &str = "/dev/block/mapper/vendor";
-const MAP_VDLKM: &str = "/dev/block/mapper/vendor_dlkm";
-/// Daemon source path on the live vendor (P11 `:29`: `$MV/bin/aocd`).
-const VENDOR_AOCD: &str = "bin/aocd";
-/// The 6 userspace libs (P11 `:30-32`):
-/// `libaoc libbase libevent aoc_aconfig_flags_c_lib
-/// libaconfig_storage_read_api_cc libc++` from `$MV/lib64/$l.so` —
-/// verified present on grizzly `vendor.img` + `readelf -d aocd` NEEDED.
-const AOC_LIBS: &[&str] = &[
-    "libaoc",
-    "libbase",
-    "libevent",
-    "aoc_aconfig_flags_c_lib",
-    "libaconfig_storage_read_api_cc",
-    "libc++",
-];
-/// AoC platform devices: `/sys/devices/platform/*.aoc` (P11 `:44-45`;
-/// live device name `a800000.aoc`).
-const AOC_PLATFORM: &str = "/sys/devices/platform";
-/// Responsiveness gate node + expected content (P11 `:44`:
-/// `verify_aoc_responsive` == `responsive`; strings live in `aoc_core.ko`).
-const VERIFY_NODE: &str = "verify_aoc_responsive";
-const RESPONSIVE: &str = "responsive";
-/// Service list node (P11 `:45`: `find ... -name services`).
-const SERVICES_NODE: &str = "services";
-/// The service proving the AoC vote is live (P11 `:45`,`:70-76`:
-/// `grep -q usb_control`; string lives in `aoc_usb_driver.ko`, service
-/// registered in mirror `aoc/usb/aoc_usb_dev.c:361`).
-const USB_CONTROL: &str = "usb_control";
-/// Role-switch class (zuma.rs pattern; live entries
-/// `a200000.usb3-role-switch`, `i2c-8-003e-eusb2-repeater-role-switch`).
+/// Role-switch class (live entries `a200000.usb3-role-switch`,
+/// `i2c-8-003e-eusb2-repeater-role-switch`).
 const USB_ROLE_CLASS: &str = "/sys/class/usb_role";
-/// Preferred role-switch entry: the DWC3 controller switch
-/// (`a200000.usb3-role-switch/role`, live log).
+/// Preferred role-switch entry: the DWC3 controller switch.
 const ROLE_PREFER: &str = "usb3";
 /// Source psy class + exact psy name (live chg log:
 /// `chg_psy_changed name=tcpm-source-psy-spmi-max77759tcpc`).
 const PSY_CLASS: &str = "/sys/class/power_supply";
 const SOURCE_PSY: &str = "tcpm-source-psy-spmi-max77759tcpc";
-/// Stable symlink for `/usb_otg` (P11 `:78-80`, `twrp_malibu.flags`,
-/// zuma.rs `OTG_USB_LINK`).
+/// UDC fallback: base DTB `dwc3@a210000` under `usb3@a200000`.
+/// Reference only (never written on malibu by design).
+#[allow(dead_code)]
+const UDC_FALLBACK: &str = "a210000.dwc3";
+/// Stable symlink for `/usb_otg`.
 const OTG_USB_LINK: &str = "/dev/block/otg-usb";
-/// `aocd` relaunch settle wait (P11 `:75`: `sleep 4`).
-const AOCD_SETTLE_SECS: u64 = 4;
-/// Supervisor tick (P11 `:82`: `sleep 3`).
+/// Our vote shim (shared prebuilt with laguna; best-effort here — the
+/// stock DT already opens the gate, see module docs).
+const SHIM_MODULE: &str = "aoc_vote_shim";
+const PROC_SHIM: &str = "/proc/aoc_vote_shim";
+const PROC_READY: &str = "/proc/aoc_vote_ready";
+/// Shim vote settle: the shim retries the election internally.
+const SHIM_SETTLE_SECS: u64 = 2;
+/// Supervisor tick.
 const TICK_SECS: u64 = 3;
+/// Stock USB chain in dep order (strict flags: stock modules match the
+/// running kernel by construction). First-stage (`vendor_kernel_boot`
+/// `modules.load`) normally autoloads all of these before we run, so
+/// this is a safety net. `aoc_core`/`aoc_usb_driver` intentionally
+/// ABSENT (shim owns the vote). Missing files are skipped LOUDLY.
+const STOCK_USB_CHAIN: &[&str] = &[
+    "gvotable",
+    "google_icc",
+    "google-usb-phy",
+    "google-role-sw",
+    "dwc3-google",
+    "dwc3-google-aux",
+    "usb_psy",
+    "tcpci_max77759",
+    "tcpci_max777x9_spmi",
+    "max77779-charger",
+    "max77779-charger-spmi",
+    "google-charger",
+];
+/// First-stage ramdisk first (see above).
+const STOCK_ROOTS: &[&str] = &[
+    "/lib/modules",
+    "/vendor_dlkm/lib/modules",
+    "/vendor/lib/modules",
+    "/system/lib64/modules",
+];
 
 fn info(msg: &str) {
     log_msg(TAG, "INFO", msg);
@@ -158,570 +99,87 @@ fn read_trim(p: &str) -> String {
     std::fs::read_to_string(p).unwrap_or_default().trim().to_string()
 }
 
-/// Slot suffix: `ro.boot.slot_suffix` wins, `/proc/bootconfig`
-/// `androidboot.slot_suffix = "_a"` line is the fallback (P11 `:18-19`).
-/// Pure over inputs (testable); live prop/file reads in [`slot_suffix`].
-fn parse_slot_suffix(prop: &str, bootconfig: &str) -> String {
-    let p = prop.trim();
-    if !p.is_empty() {
-        return p.to_string();
-    }
-    for line in bootconfig.lines() {
-        if let Some((k, v)) = line.split_once('=') {
-            if k.trim() == "androidboot.slot_suffix" {
-                let s = v.trim().trim_matches('"').trim().to_string();
-                if !s.is_empty() {
-                    return s;
-                }
-            }
-        }
-    }
-    String::new()
+/// Malibu exists only on 6.12. Pure over (major, minor) (testable).
+fn kernel_supported(major: u32, minor: u32) -> bool {
+    (major, minor) == (6, 12)
 }
 
-/// Live slot suffix.
-fn slot_suffix() -> String {
-    let prop = get_prop("ro.boot.slot_suffix");
-    let bc = std::fs::read_to_string("/proc/bootconfig").unwrap_or_default();
-    parse_slot_suffix(&prop, &bc)
-}
-
-/// One recursive walk collecting files named `want` (P11 `:37`:
-/// `find "$MD" -name aoc_usb_driver.ko | head -1`).
-fn find_named(root: &Path, want: &str, out: &mut Vec<PathBuf>) {
-    let entries = match std::fs::read_dir(root) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_dir() {
-            find_named(&p, want, out);
-        } else if p.file_name().and_then(|n| n.to_str()) == Some(want) {
-            out.push(p);
-            return;
-        }
-        if !out.is_empty() {
-            return;
-        }
-    }
-}
-
-/// Read-only mount trying EROFS first (local `file` on both vendor images),
-/// then ext4/f2fs. Raw mount(2) needs an fstype — unlike P11's
-/// `mount -o ro` auto-probe (P11 `:28`,`:36`).
-fn mount_ro(src: &str, dst: &str) -> bool {
-    let _ = std::fs::create_dir_all(dst);
-    let c_src = match CString::new(src) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let c_dst = match CString::new(dst) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    for fst in ["erofs", "ext4", "f2fs"] {
-        let c_fst = CString::new(fst).unwrap();
-        // SAFETY: all three pointers reference live CStrings; MS_RDONLY,
-        // NULL data is the standard ro-mount call.
-        let rc = unsafe {
-            libc::mount(
-                c_src.as_ptr(),
-                c_dst.as_ptr(),
-                c_fst.as_ptr(),
-                libc::MS_RDONLY,
-                std::ptr::null(),
-            )
-        };
-        if rc == 0 {
-            info(&format!("mounted {src} ro ({fst}) on {dst}"));
-            return true;
-        }
-    }
-    info(&format!(
-        "mount {src} on {dst} FAILED: {}",
-        std::io::Error::last_os_error()
-    ));
-    false
-}
-
-fn umount(dst: &str) {
-    if let Ok(c) = CString::new(dst) {
-        // SAFETY: pointer references a live CString; umount(2) contract.
-        unsafe {
-            libc::umount(c.as_ptr());
-        }
-    }
-}
-
-/// Staged iff both the daemon and the module copy are in RAM (P11 `:22`:
-/// `staged(){ [ -f "$RAM/aocd" ] && [ -f "$RAM/aoc_usb_driver.ko" ]; }`).
-fn staged() -> bool {
-    Path::new(RAM_AOCD).is_file() && Path::new(RAM_KO).is_file()
-}
-
-/// argv builder for `siw connect` (pure, testable): loop-device mapping
-/// that bypasses device-mapper entirely. Unknown slot reads as None
-/// (no unbounded recursion across daemon ticks).
-fn siw_connect_args(base: &str, slot: &str) -> Option<Vec<String>> {
-    let num = match slot {
-        "_a" => "0",
-        "_b" => "1",
-        _ => return None,
-    };
-    Some(vec![
-        "connect".to_string(),
-        "/dev/block/by-name/super".to_string(),
-        "-p".to_string(),
-        base.to_string(),
-        "--suffix".to_string(),
-        slot.trim_start_matches('_').to_string(),
-        "-s".to_string(),
-        num.to_string(),
-    ])
-}
-
-/// Loop node (`/dev/loopN`) from `siw connect` output (pure, testable).
-fn parse_loop_node(output: &str) -> Option<String> {
-    output.split_whitespace().find_map(|tok| {
-        let t = tok.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c != '/');
-        let t = t.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
-        let rest = t.strip_prefix("/dev/loop")?;
-        (!rest.is_empty() && rest.bytes().all(|c| c.is_ascii_digit())).then(|| t.to_string())
-    })
-}
-
-/// Loop-device mapping fallback (`siw connect`) for when dm mapping yields
-/// no usable node (seen live on laguna: `siw map` exits 0 but creates
-/// nothing for vendor). Returns the /dev/loopN node — caller mounts ro,
-/// copies, umounts, then MUST call [`siw_disconnect`]. Best-effort + loud.
-fn siw_connect_node(base: &str, slot: &str) -> Option<String> {
-    let args = match siw_connect_args(base, slot) {
-        Some(a) => a,
-        None => {
-            info(&format!("siw connect: unknown slot suffix {slot:?}, skipped"));
-            return None;
-        }
-    };
-    info(&format!("siw connect: mapping {base} (slot {slot}) via loop device"));
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    match std::process::Command::new("/system/bin/siw")
-        .args(&arg_refs)
-        .output()
-    {
-        Ok(out) => {
-            let combined = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&out.stdout),
-                String::from_utf8_lossy(&out.stderr)
-            );
-            match parse_loop_node(&combined) {
-                Some(node) if Path::new(&node).exists() => {
-                    info(&format!("siw connect: {node} for {base}"));
-                    Some(node)
-                }
-                Some(node) => {
-                    info(&format!("siw connect: parsed {node} but node absent"));
-                    None
-                }
-                None => {
-                    info(&format!("siw connect {base} FAILED: status={}", out.status));
-                    None
-                }
-            }
-        }
-        Err(e) => {
-            info(&format!("siw connect: cannot run /system/bin/siw: {e}"));
-            None
-        }
-    }
-}
-
-/// Release a loop device created by [`siw_connect_node`] (best-effort).
-fn siw_disconnect(base: &str, slot: &str) {
-    let (num, sfx) = match slot {
-        "_a" => ("0", "a"),
-        "_b" => ("1", "b"),
-        _ => return,
-    };
-    match std::process::Command::new("/system/bin/siw")
-        .args([
-            "disconnect",
-            "/dev/block/by-name/super",
-            "-p",
-            base,
-            "--suffix",
-            sfx,
-            "-s",
-            num,
-        ])
-        .output()
-    {
-        Ok(out) if out.status.success() => info(&format!("siw disconnect: {base} released")),
-        Ok(out) => info(&format!("siw disconnect {base} warning: status={}", out.status)),
-        Err(e) => info(&format!("siw disconnect: cannot run siw: {e}")),
-    }
-}
-
-/// Mapper node path, mirroring `siw map` naming (`-p vendor_dlkm
-/// --suffix b` -> `/dev/block/mapper/vendor_dlkm_b`, field-proven on
-/// laguna). Pure (testable).
-fn mapper_node(base: &str, slot: &str) -> String {
-    format!("/dev/block/mapper/{base}_{}", slot.trim_start_matches('_'))
-}
-
-/// Mapped-node name for [`siw_unmap`]: `siw unmap` takes the name `siw
-/// map` created, i.e. base+slot verbatim (`vendor_dlkm` + `_b`).
-/// Pure (testable).
-fn unmap_name(base: &str, slot: &str) -> String {
-    format!("{base}{slot}")
-}
-
-/// Release a dm-mapper node created by [`siw_map`] plus siw's slot-less
-/// alias when it dangles (best-effort). `siw disconnect` only drops loop
-/// nodes from `connect`; dm nodes from `map` need `siw unmap`, and the
-/// leftover alias tripped Unmap_Super_Devices at format time on laguna.
-/// One-shot: every dm map in [`stage_aoc`] is paired with this before
-/// return, so no mapper traces survive a staging round.
-fn siw_unmap(base: &str, slot: &str) {
-    match slot {
-        "_a" | "_b" => {}
-        _ => return,
-    }
-    let name = unmap_name(base, slot);
-    let node = mapper_node(base, slot);
-    if Path::new(&node).exists() {
-        match std::process::Command::new("/system/bin/siw")
-            .args(["unmap", &name])
-            .output()
-        {
-            Ok(out) if out.status.success() => info(&format!("siw unmap: {name} released")),
-            Ok(out) => info(&format!("siw unmap {name} warning: status={}", out.status)),
-            Err(e) => info(&format!("siw unmap: cannot run siw: {e}")),
-        }
-    }
-    // Slot-less alias siw leaves behind — drop only when provably dangling
-    // (symlink whose target is gone); live nodes are never touched.
-    let alias = format!("/dev/block/mapper/{base}");
-    let dangling = std::fs::symlink_metadata(&alias)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-        && std::fs::metadata(&alias).is_err();
-    if dangling && std::fs::remove_file(&alias).is_ok() {
-        info(&format!("siw unmap: removed dangling alias {alias}"));
-    }
-}
-
-/// Create a dm-mapper node via `siw` (same call the shell
-/// `pixelrunatboot.sh:_siw_map` uses: `siw map
-/// /dev/block/by-name/super -p <part> --suffix <a|b> -s <0|1>`).
-/// Field lesson from laguna (mustang 6.6 flog): nothing maps `/vendor`
-/// in recovery, so waiting for the node is waiting forever. True when
-/// the node exists afterwards (pre-existing or just created).
-fn siw_map(base: &str, slot: &str) -> bool {
-    let node = mapper_node(base, slot);
-    if Path::new(&node).exists() {
+/// Best-effort insmod of one STOCK module (strict flags). Returns true
+/// when loaded or already loaded.
+fn insmod_stock(name: &str) -> bool {
+    if is_module_loaded(name) {
         return true;
     }
-    let sfx = slot.trim_start_matches('_');
-    let num = match slot {
-        "_a" => "0",
-        "_b" => "1",
-        _ => {
-            info(&format!("siw map: unknown slot suffix {slot:?}, trying both"));
-            return siw_map(base, "_a") || siw_map(base, "_b");
-        }
-    };
-    info(&format!("siw map: creating {node}"));
-    match std::process::Command::new("/system/bin/siw")
-        .args([
-            "map",
-            "/dev/block/by-name/super",
-            "-p",
-            base,
-            "--suffix",
-            sfx,
-            "-s",
-            num,
-        ])
-        .output()
-    {
-        Ok(out) if out.status.success() && Path::new(&node).exists() => {
-            info(&format!("siw map: {node} created"));
-            true
-        }
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            let answer = String::from_utf8_lossy(&out.stdout);
-            info(
-                format!("siw map {node} FAILED: status={} err={err} out={answer}", out.status)
-                    .trim(),
-            );
-            Path::new(&node).exists()
-        }
-        Err(e) => {
-            info(&format!("siw map: cannot run /system/bin/siw: {e}"));
-            false
-        }
-    }
-}
-
-/// Copy the AoC runtime out of the live vendor/vendor_dlkm into RAM
-/// (P11 `:27-42`). Mount sources, richest first: pre-mapped
-/// `/dev/block/by-name/vendor` (unsuffixed = current slot, first-stage
-/// mapped — no slot logic, no siw), siw loop device (dm-independent,
-/// live-proven side-by-side with dm-0), siw dm-mapper node last (flaky
-/// on vendor: exit 0, no node).
-/// KO additionally comes from ko_stage / first-stage ramdisk / the
-/// standard ko-fetch mechanism before any mount. Second-stage-proof:
-/// whatever first-stage normalized (or didn't), one source works.
-fn stage_aoc(slot: &str) -> bool {
-    if staged() {
-        return true;
-    }
-    // The touch system siw-streams every vendor_dlkm .ko into ko_stage —
-    // grab the KO from there when the mapper dance is unnecessary.
-    for sfx in ["_a", "_b"] {
-        let cand = format!("/dev/ko_stage/vendor_dlkm{sfx}/aoc_usb_driver.ko");
-        if !Path::new(RAM_KO).is_file() && Path::new(&cand).is_file() {
-            match std::fs::copy(&cand, RAM_KO) {
-                Ok(_) => info(&format!("staged module from {cand}")),
-                Err(e) => info(&format!("stage: ko_stage copy FAILED: {e}")),
-            }
-        }
-    }
-    if !Path::new(RAM_KO).is_file() && Path::new("/lib/modules/aoc_usb_driver.ko").is_file() {
-        match std::fs::copy("/lib/modules/aoc_usb_driver.ko", RAM_KO) {
-            Ok(_) => info("staged module from first-stage ramdisk"),
-            Err(e) => info(&format!("stage: first-stage copy FAILED: {e}")),
-        }
-    }
-    // NOTE: no image streaming here — `usb_modules` from pixel.json are
-    // loaded by the boot process (sequential, race-free) before any daemon
-    // starts; concurrent ko-fetch streams would clobber the shared
-    // /dev/ko_stage + /dev/stage_*.img paths. File pickups + read-only
-    // mounts only from here on.
-    let _ = std::fs::create_dir_all(RAM_DIR);
-    let mut vendor_loop: Option<String> = None;
-    let mut vendor_mnt: Option<&str> = None;
-    if !Path::new(RAM_AOCD).is_file() {
-        if mount_ro("/dev/block/by-name/vendor", MNT_VENDOR) {
-            info("vendor via by-name (first-stage mapped)");
-            vendor_mnt = Some(MNT_VENDOR);
-        } else if let Some(loopnode) = siw_connect_node("vendor", slot) {
-            // Loop device before dm-mapper: fully independent of dm state
-            // (live-proven on shiba: loop0 + dm-0 side by side), while
-            // `siw map` on vendor is known-flaky (exit 0, no node).
-            if mount_ro(&loopnode, MNT_VENDOR) {
-                info("vendor via siw loop device");
-                vendor_mnt = Some(MNT_VENDOR);
-                vendor_loop = Some(loopnode);
-            } else {
-                siw_disconnect("vendor", slot);
-            }
-        }
-        if vendor_mnt.is_none()
-            && siw_map("vendor", slot)
-            && mount_ro(&format!("{MAP_VENDOR}{slot}"), MNT_VENDOR)
-        {
-            vendor_mnt = Some(MNT_VENDOR);
-        }
-    }
-    if let Some(mnt) = vendor_mnt {
-        let src = Path::new(mnt).join(VENDOR_AOCD);
-        if std::fs::copy(src, RAM_AOCD).is_ok() {
-            for lib in AOC_LIBS {
-                let from = Path::new(mnt).join(format!("lib64/{lib}.so"));
-                let to = Path::new(RAM_LIB).join(format!("{lib}.so"));
-                let _ = std::fs::create_dir_all(RAM_LIB);
-                if std::fs::copy(&from, &to).is_err() {
-                    info(&format!("stage: lib missing? {lib}"));
-                }
-            }
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(RAM_AOCD, std::fs::Permissions::from_mode(0o755));
-            info("staged aocd + 6 libs into RAM");
-        } else {
-            info("stage: aocd copy FAILED (vendor not ready?)");
-        }
-        umount(mnt);
-        if vendor_loop.is_some() {
-            siw_disconnect("vendor", slot);
-        }
-    }
-    // One-shot: drop any dm mapping this round created — including the
-    // map-ok/mount-failed path. No-op when nothing is mapped.
-    siw_unmap("vendor", slot);
-    // KO from the vendor_dlkm image: dm-mapper mount first (proven for
-    // dlkm — touch maps it daily), siw loop device as fallback.
-    if !Path::new(RAM_KO).is_file() {
-        let mut dlkm_loop: Option<String> = None;
-        let mut dlkm_mnt: Option<&str> = None;
-        if siw_map("vendor_dlkm", slot)
-            && mount_ro(&format!("{MAP_VDLKM}{slot}"), MNT_VDLKM)
-        {
-            dlkm_mnt = Some(MNT_VDLKM);
-        } else if let Some(loopnode) = siw_connect_node("vendor_dlkm", slot) {
-            if mount_ro(&loopnode, MNT_VDLKM) {
-                info("vendor_dlkm via siw loop device");
-                dlkm_mnt = Some(MNT_VDLKM);
-                dlkm_loop = Some(loopnode);
-            } else {
-                siw_disconnect("vendor_dlkm", slot);
-            }
-        }
-        if let Some(mnt) = dlkm_mnt {
-            let mut hits = Vec::new();
-            find_named(Path::new(mnt), "aoc_usb_driver.ko", &mut hits);
-            match hits.first() {
-                Some(ko) => {
-                    if std::fs::copy(ko, RAM_KO).is_ok() {
-                        info(&format!("staged module from {}", ko.display()));
-                    }
-                }
-                None => info("stage: aoc_usb_driver.ko NOT found on vendor_dlkm"),
-            }
-            umount(mnt);
-            if dlkm_loop.is_some() {
-                siw_disconnect("vendor_dlkm", slot);
-            }
-        }
-        // One-shot: drop any dm mapping this round created (see vendor).
-        siw_unmap("vendor_dlkm", slot);
-    }
-    staged()
-}
-
-/// insmod once, guarded by `/sys/module` (P11 `:69`:
-/// `[ -d /sys/module/aoc_usb_driver ] || insmod ...`). Strict flags: the
-/// stock module matches the running vendor kernel by construction (P11
-/// proven); first-stage already provides `aoc_core` + `gvotable`.
-fn ensure_module() -> bool {
-    if Path::new(SYS_MODULE).exists() || is_module_loaded(MOD_NAME) {
-        return true;
-    }
-    match load_kernel_module(Path::new(RAM_KO)) {
-        Ok(()) => {
-            info("aoc_usb_driver loaded");
-            true
-        }
-        Err(e) => {
-            info(&format!("aoc_usb_driver insmod FAILED: {e}"));
-            false
-        }
-    }
-}
-
-/// Live AoC platform device dirs (`/sys/devices/platform/*.aoc`, P11 `:44-45`).
-fn aoc_devices() -> Vec<PathBuf> {
-    std::fs::read_dir(AOC_PLATFORM)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|n| n.ends_with(".aoc"))
-                        .unwrap_or(false)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// `services` blob contains the `usb_control` service (P11 `:45`).
-/// Pure over content (testable); live sysfs walk in [`usb_control_live`].
-fn services_has_usb_control(content: &str) -> bool {
-    content.lines().any(|l| l.trim() == USB_CONTROL)
-}
-
-/// Live vote check: any `services` file under the AoC devices lists
-/// `usb_control` (P11 `:45`,`:70`).
-fn usb_control_live() -> bool {
-    for dev in aoc_devices() {
-        let mut stack = vec![dev];
-        while let Some(dir) = stack.pop() {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    stack.push(p);
-                } else if p.file_name().and_then(|n| n.to_str()) == Some(SERVICES_NODE) {
-                    let c = std::fs::read_to_string(&p).unwrap_or_default();
-                    if services_has_usb_control(&c) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-/// `verify_aoc_responsive` content check (P11 `:44`). Pure (testable).
-fn is_responsive_state(content: &str) -> bool {
-    content.trim() == RESPONSIVE
-}
-
-/// Live responsiveness gate (P11 `:72`).
-fn aoc_responsive() -> bool {
-    aoc_devices().iter().any(|dev| {
-        is_responsive_state(&std::fs::read_to_string(dev.join(VERIFY_NODE)).unwrap_or_default())
-    })
-}
-
-/// SIGKILL a previous `aocd` so instances never pile up (P11 `:73`:
-/// `kill $(pidof aocd)`). /proc scan — no fork.
-fn kill_aocd() {
-    let procs = match std::fs::read_dir("/proc") {
-        Ok(r) => r,
-        Err(_) => return,
-    };
-    for entry in procs.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !name.bytes().all(|b| b.is_ascii_digit()) {
+    for root in STOCK_ROOTS {
+        let p = Path::new(root).join(format!("{name}.ko"));
+        if !p.is_file() {
             continue;
         }
-        let pid: i32 = match name.parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let comm =
-            std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
-        if comm.trim() == "aocd" {
-            // SAFETY: pid comes from our own /proc scan; SIGKILL a same-name
-            // daemon is the documented P11 relaunch step.
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
+        match load_kernel_module(&p) {
+            Ok(()) => {
+                info(&format!("stock module loaded: {name}"));
+                return true;
             }
-            info(&format!("killed stale aocd (pid {pid})"));
+            Err(e) => {
+                info(&format!("stock module {name} FAILED: {e}"));
+                return false;
+            }
         }
     }
+    info(&format!("stock module {name} not found (tree lacks it?)"));
+    false
 }
 
-/// Launch a fresh `aocd` detached (P11 `:74`:
-/// `LD_LIBRARY_PATH="$RAM/lib":/system/lib64 "$RAM/aocd" &`).
-fn spawn_aocd() {
-    let libs = format!("{RAM_LIB}:/system/lib64");
-    match std::process::Command::new(RAM_AOCD)
-        .env("LD_LIBRARY_PATH", libs)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(_) => info("spawned fresh aocd"),
-        Err(e) => info(&format!("aocd spawn FAILED: {e}")),
+/// The shim vote is asserted once `/proc/aoc_vote_ready` reads `1`.
+fn vote_asserted() -> bool {
+    read_trim(PROC_READY) == "1"
+}
+
+/// Load our vote shim (best-effort on malibu: stock DT already opens the
+/// gate). Strict first, then forced (our code only). Pokes the vote and
+/// settles briefly; the shim retries the election internally.
+fn load_vote_shim() {
+    if vote_asserted() {
+        info("vote shim already active (/proc/aoc_vote_ready=1)");
+        return;
+    }
+    if Path::new(PROC_SHIM).exists() {
+        info("vote shim loaded, vote pending — poking");
+    } else if ko_try_load(SHIM_MODULE, Some(PROC_SHIM), TAG) {
+        info("vote shim loaded (strict)");
+    } else {
+        info("strict shim load failed (vermagic?), trying forced load");
+        match detect_kernel_env() {
+            Ok(env) => {
+                for cand in find_candidates(Path::new("/system/lib64/modules"), SHIM_MODULE, &env)
+                {
+                    info(&format!("force-trying {}", cand.display()));
+                    match load_kernel_module_force(&cand) {
+                        Ok(()) => {
+                            info(&format!("vote shim force-loaded {}", cand.display()));
+                            break;
+                        }
+                        Err(e) => info(&format!("force load failed: {e}")),
+                    }
+                }
+            }
+            Err(e) => info(&format!("detect_kernel_env failed: {e}")),
+        }
+    }
+    if Path::new(PROC_SHIM).exists() {
+        let _ = std::fs::write(PROC_SHIM, b"1\n");
+        sleep(Duration::from_secs(SHIM_SETTLE_SECS));
+    }
+    if vote_asserted() {
+        info("AOC vote live (shim asserted)");
+    } else {
+        info("shim vote not asserted (stock DT gate still carries host)");
     }
 }
 
 /// Controller role-switch `role` file: prefer the DWC3 controller entry
-/// (`a200000.usb3-role-switch`, live device log), else first sorted entry
-/// (zuma.rs `pick_role_entry` pattern). Pure over names (testable); live
-/// readdir in [`find_data_role`].
+/// (`a200000.usb3-role-switch`), else first sorted entry. Pure over names
+/// (testable); live readdir in [`find_data_role`].
 fn pick_role_entry(entries: &[String]) -> Option<String> {
     if entries.is_empty() {
         return None;
@@ -752,8 +210,8 @@ fn read_data_role() -> String {
 }
 
 /// Source psy `online` file: exact live name wins, then any
-/// `*tcpm-source*`, then any `*source*` (name drifts across spins; the
-/// kernel carries `tcpm-source-psy`×1). Pure over names (testable).
+/// `*tcpm-source*`, then any `*source*` (name drifts across spins).
+/// Pure over names (testable).
 fn pick_source_psy(entries: &[String]) -> Option<String> {
     if entries.is_empty() {
         return None;
@@ -789,8 +247,7 @@ fn host_active() -> bool {
     read_data_role() == "host" && read_source_online() == "1"
 }
 
-/// First removable USB disk (`sdX1` preferred, else whole disk) — zuma.rs
-/// `pick_otg_disk` pattern for the P11 `usb_disk()` (P11 `:49-58`).
+/// First removable USB disk (`sdX1` preferred, else whole disk).
 /// Pure core over candidates (testable); live sysfs walk in [`pick_otg_disk`].
 fn choose_otg_disk(cands: &[(&str, bool, bool, bool)]) -> Option<String> {
     let mut names: Vec<&str> = cands
@@ -832,11 +289,9 @@ fn pick_otg_disk() -> Option<String> {
     for n in &names {
         let dir = Path::new("/sys/block").join(n);
         let removable = read_trim(&dir.join("removable").to_string_lossy()) == "1";
-        // read_link returns the raw (usually relative:
-        // ../../../1-1:1.0/...) target, which never names the USB ancestors
-        // — canonicalize first so the "usb" check sees the real
+        // Canonicalize first so the "usb" check sees the real
         // /sys/devices/... path (field-proven: the raw link matched
-        // nothing, otg-usb was never created, OTG dedup never engaged).
+        // nothing, otg-usb was never created).
         let dev = dir
             .join("device")
             .canonicalize()
@@ -858,7 +313,7 @@ fn pick_otg_disk() -> Option<String> {
 }
 
 /// Keep `/dev/block/otg-usb` (`/usb_otg`) on the current OTG disk; relink
-/// only on change (P11 `:78-80`; zuma.rs `ensure_otg_symlink` pattern).
+/// only on change. Best-effort: no disk attached = nothing to do.
 fn ensure_otg_symlink() {
     let target = match pick_otg_disk() {
         Some(t) => t,
@@ -877,43 +332,15 @@ fn ensure_otg_symlink() {
     }
 }
 
-/// Single vote-keepalive step (P11 `:70-77`): `usb_control` present = vote
-/// live (log the transition once); responsive-but-no-service = the flaky
-/// startup → kill + fresh instance + settle wait, then recheck. `usb_control`
-/// persists once up, so relaunching stops then.
-fn keep_vote_alive(voted: &mut bool) {
-    if usb_control_live() {
-        if !*voted {
-            *voted = true;
-            info("aocd up; AOC vote live");
-        }
-        return;
-    }
-    *voted = false;
-    if aoc_responsive() {
-        kill_aocd();
-        spawn_aocd();
-        sleep(Duration::from_secs(AOCD_SETTLE_SECS));
-        if usb_control_live() {
-            *voted = true;
-            info("aocd up; AOC vote live");
-        } else {
-            info("aocd relaunch: usb_control not up yet (flaky startup, retrying)");
-        }
-    }
-}
-
-/// otg-patch (oneshot, service `otg_enable`): fast steps only (one
-/// sleep-free staging attempt), then releases the supervisor. Heavy
-/// staging + vote are SECOND-STAGE work (rc daemon, normalized env) —
-/// this oneshot runs before by-name/dm nodes exist. Sets
-/// `sys.usb.patch_dwc3=1` to start `otg_auto`, which owns host state
-/// from there; device mode (adb) always survives regardless.
+/// otg-patch (oneshot, service `otg_enable`): stock chain preload, vote
+/// shim (best-effort — stock DT carries host), then releases the
+/// supervisor. No staging, no sleeps-in-bringup. Sets
+/// `sys.usb.patch_dwc3=1` to start `otg_auto`; device mode (adb) always
+/// survives regardless.
 pub fn run_otg_patch() -> Result<(), String> {
-    info("starting OTG patch routine (malibu: stage AoC runtime + vote)");
-    // ONLY 6.12 exists on malibu; anything else is unverified → fail closed.
+    info("starting OTG patch routine (malibu: chain + vote shim)");
     match crate::ko_picker::detect_kernel_env() {
-        Ok(e) if (e.major, e.minor) == (6, 12) => {
+        Ok(e) if kernel_supported(e.major, e.minor) => {
             info(&format!("kernel {}.{} (malibu 6.12-only path)", e.major, e.minor));
         }
         Ok(e) => {
@@ -931,75 +358,44 @@ pub fn run_otg_patch() -> Result<(), String> {
         }
     }
 
-    // AoC staging is SECOND-STAGE work (rc daemon, normalized env):
-    // this oneshot runs before by-name/dm nodes exist, so bounded retries
-    // here only delay boot and still fail. One fast attempt now
-    // (ko_stage + first-stage ramdisk + standard ko-fetch are already
-    // visible — stage_aoc never sleeps), then release otg_auto: the
-    // supervisor retries staging + vote forever and owns host state.
-    // No i2c TCPC patch by design (SPMI bus — see module docs).
-    let slot = slot_suffix();
-    info(&format!("slot suffix: {slot:?}"));
-    if stage_aoc(&slot) {
-        info("staged aocd + libs + module into RAM (fast path)");
-    } else {
-        info("staging deferred to otg-auto supervisor (second stage)");
+    // Stock USB chain from the LIVE firmware (dep order; first-stage
+    // normally pre-loads all of it — this is a safety net).
+    let mut chain_ok = true;
+    for m in STOCK_USB_CHAIN {
+        chain_ok &= insmod_stock(m);
     }
+    info(&format!("chain done (all_found={chain_ok})"));
+
+    // No i2c TCPC patch by design (SPMI bus, stock driver self-manages).
+    // The AOC vote: best-effort shim on top of the stock-DT gate.
+    load_vote_shim();
     set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
     info("OTG patch routine finished, supervisor released (sys.usb.patch_dwc3=1)");
     Ok(())
 }
 
-/// otg-auto (service `otg_auto`): supervisor that keeps the AoC vote alive
-/// and the `otg-usb` symlink on the current disk. Never exits (an exiting
-/// non-oneshot service would respawn-loop). Never touches UDC/gadget/role/
-/// voter state — TCPC + role-sw negotiate modes on their own, so device
-/// mode (adb) always survives.
+/// otg-auto (service `otg_auto`): vote keeper + host observe +
+/// `otg-usb` symlink. Never exits. Never touches UDC/gadget/role/voter
+/// state — TCPC + role-sw negotiate modes on their own, so device mode
+/// (adb) always survives.
 pub fn run_otg_auto() -> ! {
-    info("starting (malibu supervisor: keep AoC vote alive + otg-usb symlink)");
-    let slot = slot_suffix();
-    let mut voted = false;
-    // Staging backoff (same lesson as laguna): an unmountable vendor
-    // would otherwise spam every tick forever. Slow down after a few
-    // fast rounds; partitions never appear at runtime.
-    let mut stage_fails = 0u32;
+    info("starting (malibu supervisor: vote keeper + otg-usb symlink)");
     loop {
-        if !staged() {
-            if stage_aoc(&slot) {
-                info("staged aocd + 6 libs + module into RAM");
-                stage_fails = 0;
-            } else {
-                stage_fails = stage_fails.saturating_add(1);
-                if stage_fails == 5 {
-                    info("AoC staging still failing, backing off to 60s polls");
-                }
-            }
+        // Keeper: re-poke if the shim reports the vote dropped.
+        if !vote_asserted() && Path::new(PROC_SHIM).exists() {
+            info("supervisor: vote not asserted, re-poking shim");
+            let _ = std::fs::write(PROC_SHIM, b"1\n");
         }
-        if staged() {
-            // Staging healthy: reset any backoff, keep the fast tick for
-            // vote/symlink maintenance.
-            stage_fails = 0;
-            if !ensure_module() {
-                info("supervisor: module not loaded yet (retrying)");
-            }
-            keep_vote_alive(&mut voted);
-            if pick_otg_disk().is_some() {
-                info(&format!(
-                    "disk present: data_role={:?} source_online={:?} host_active={}",
-                    read_data_role(),
-                    read_source_online(),
-                    host_active()
-                ));
-            }
-            ensure_otg_symlink();
+        if pick_otg_disk().is_some() {
+            info(&format!(
+                "disk present: data_role={:?} source_online={:?} host_active={}",
+                read_data_role(),
+                read_source_online(),
+                host_active()
+            ));
         }
-        // Slow poll only while staging keeps failing; staged ticks and
-        // the first fast rounds stay on TICK_SECS.
-        sleep(Duration::from_secs(if !staged() && stage_fails >= 5 {
-            60
-        } else {
-            TICK_SECS
-        }));
+        ensure_otg_symlink();
+        sleep(Duration::from_secs(TICK_SECS));
     }
 }
 
@@ -1008,46 +404,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slot_suffix_prefers_prop() {
-        assert_eq!(parse_slot_suffix("_b", ""), "_b");
-        assert_eq!(parse_slot_suffix(" _a\n", "androidboot.slot_suffix = \"_b\""), "_a");
-    }
-
-    #[test]
-    fn unmap_name_matches_map_node() {
-        // `siw unmap` takes the mapped name `siw map` created: the
-        // basename of mapper_node, i.e. base+slot verbatim.
-        assert_eq!(unmap_name("vendor_dlkm", "_b"), "vendor_dlkm_b");
-        assert_eq!(unmap_name("vendor", "_a"), "vendor_a");
-        assert!(mapper_node("vendor_dlkm", "_b").ends_with(&unmap_name("vendor_dlkm", "_b")));
-    }
-
-    #[test]
-    fn slot_suffix_falls_back_to_bootconfig() {
-        let bc = "androidboot.serialno = \"abc\"\nandroidboot.slot_suffix = \"_a\"\n";
-        assert_eq!(parse_slot_suffix("", bc), "_a");
-        // Spaces around '=' and quotes are tolerated.
-        assert_eq!(parse_slot_suffix("", "androidboot.slot_suffix=_b"), "_b");
-        // Empty everywhere reads as no slot (fail closed, mapper has no suffix).
-        assert_eq!(parse_slot_suffix("", ""), "");
-        assert_eq!(parse_slot_suffix("", "unrelated = \"x\""), "");
-    }
-
-    #[test]
-    fn services_vote_parses() {
-        // Real shape: one service per line in the sysfs blob.
-        assert!(services_has_usb_control("aoc_control\nusb_control\n"));
-        assert!(!services_has_usb_control("aoc_control\naoc_audio\n"));
-        assert!(!services_has_usb_control(""));
-        // Substring hits must not count (usb_control_ping is not the vote).
-        assert!(!services_has_usb_control("usb_control_ping\n"));
-    }
-
-    #[test]
-    fn responsive_gate_parses() {
-        assert!(is_responsive_state("responsive\n"));
-        assert!(!is_responsive_state("unresponsive\n"));
-        assert!(!is_responsive_state(""));
+    fn kernel_gate_is_612_only() {
+        assert!(kernel_supported(6, 12));
+        assert!(!kernel_supported(6, 6));
+        assert!(!kernel_supported(6, 1));
+        assert!(!kernel_supported(0, 0));
     }
 
     #[test]
@@ -1061,43 +422,11 @@ mod tests {
             pick_role_entry(&two),
             Some("a200000.usb3-role-switch".to_string())
         );
-        // No controller entry: first sorted entry (zuma-compatible fallback).
+        // No controller entry: first entry (zuma-compatible fallback).
         let one = vec!["other-switch".to_string()];
         assert_eq!(pick_role_entry(&one), Some("other-switch".to_string()));
         let empty: Vec<String> = Vec::new();
         assert_eq!(pick_role_entry(&empty), None);
-    }
-
-    #[test]
-    fn mapper_node_naming_matches_siw() {
-        // `siw map -p vendor_dlkm --suffix b` creates
-        // `/dev/block/mapper/vendor_dlkm_b` (laguna field-proven).
-        assert_eq!(mapper_node("vendor", "_b"), "/dev/block/mapper/vendor_b");
-        assert_eq!(mapper_node("vendor_dlkm", "_b"), "/dev/block/mapper/vendor_dlkm_b");
-        assert_eq!(mapper_node("vendor", "_a"), "/dev/block/mapper/vendor_a");
-    }
-
-    #[test]
-    fn siw_connect_args_cover_both_slots() {
-        let a = siw_connect_args("vendor", "_a").unwrap();
-        assert_eq!(a[0], "connect");
-        assert!(a.contains(&"vendor".to_string()));
-        assert!(a.contains(&"a".to_string()));
-        assert!(a.contains(&"0".to_string()));
-        let b = siw_connect_args("vendor_dlkm", "_b").unwrap();
-        assert!(b.contains(&"1".to_string()));
-        assert!(siw_connect_args("vendor", "").is_none());
-    }
-
-    #[test]
-    fn loop_node_parsed_from_chatter() {
-        assert_eq!(
-            parse_loop_node("Created /dev/loop0 for vendor_b"),
-            Some("/dev/loop0".to_string())
-        );
-        assert_eq!(parse_loop_node("/dev/loop12"), Some("/dev/loop12".to_string()));
-        assert_eq!(parse_loop_node("error: no such partition"), None);
-        assert_eq!(parse_loop_node(""), None);
     }
 
     #[test]
@@ -1146,5 +475,18 @@ mod tests {
         assert_eq!(choose_otg_disk(&[("sdd", true, false, true)]), None);
         let empty: [(&str, bool, bool, bool); 0] = [];
         assert_eq!(choose_otg_disk(&empty), None);
+    }
+
+    #[test]
+    fn stock_chain_has_no_aoc_modules() {
+        // The shim owns the AOC vote; insmodding the stock AoC drivers
+        // would re-cast (0,1) against us while the firmware is down.
+        // (On stock malibu DT the gate is open anyway — this only
+        // avoids fighting ourselves.)
+        for m in STOCK_USB_CHAIN {
+            assert!(!m.contains("aoc"), "{m} must not be in the chain");
+        }
+        assert!(STOCK_USB_CHAIN.contains(&"google-role-sw"));
+        assert!(STOCK_USB_CHAIN.contains(&"dwc3-google"));
     }
 }

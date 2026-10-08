@@ -1,26 +1,26 @@
 load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
 
-# 4k pages (default Pixel kernels).
+# 4k pages (default Pixel kernels, incl. laguna 6.6/6.12 4k and malibu 6.12 4k).
 kernel_module(
-    name = "otg_host_shim_4k",
+    name = "aoc_vote_shim_4k",
     srcs = [
-        "otg_host_shim.c",
+        "aoc_vote_shim.c",
         "Makefile",
         "Kbuild",
     ],
-    outs = ["otg_host_shim.ko"],
+    outs = ["aoc_vote_shim.ko"],
     kernel_build = "//common:kernel_aarch64",
 )
 
 # 16k pages (16k Pixel kernels). If your tree names the 16k config
 # differently, replace //common:kernel_aarch64_16k with it.
 kernel_module(
-    name = "otg_host_shim_16k",
+    name = "aoc_vote_shim_16k",
     srcs = [
-        "otg_host_shim.c",
+        "aoc_vote_shim.c",
         "Makefile",
         "Kbuild",
     ],
-    outs = ["otg_host_shim.ko"],
+    outs = ["aoc_vote_shim.ko"],
     kernel_build = "//common:kernel_aarch64_16k",
 )

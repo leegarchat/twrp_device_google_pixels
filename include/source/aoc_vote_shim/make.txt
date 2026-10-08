@@ -1,0 +1,12 @@
+# 4k variant (default):
+tools/bazel build //customDriverForDwc3:aoc_vote_shim_4k
+file bazel-bin/customDriverForDwc3/aoc_vote_shim_4k/aoc_vote_shim.ko
+# 16k variant:
+tools/bazel build //customDriverForDwc3:aoc_vote_shim_16k
+file bazel-bin/customDriverForDwc3/aoc_vote_shim_16k/aoc_vote_shim.ko
+# Install: rename per variant and drop into the ramdisk module tree where
+# ko_picker scores page size by parent dir (4k vs 16k), e.g.:
+#   /system/lib64/modules/otg/6.6/android15/4k/aoc_vote_shim_android15-6.6_4k.ko
+#   /system/lib64/modules/otg/6.6/android15/16k/aoc_vote_shim_android15-6.6_16k.ko
+# (major.minor + android api must match the target kernel; our shim needs
+# only the major.minor match, force-load covers the rest.)

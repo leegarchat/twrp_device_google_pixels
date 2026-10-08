@@ -1,7 +1,8 @@
 load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
 
+# 4k pages (default Pixel kernels).
 kernel_module(
-    name = "susfs_rename_fix",
+    name = "susfs_rename_fix_4k",
     srcs = [
         "susfs_rename_fix.c",
         "Makefile",
@@ -9,4 +10,17 @@ kernel_module(
     ],
     outs = ["susfs_rename_fix.ko"],
     kernel_build = "//common:kernel_aarch64",
+)
+
+# 16k pages (16k Pixel kernels). If your tree names the 16k config
+# differently, replace //common:kernel_aarch64_16k with it.
+kernel_module(
+    name = "susfs_rename_fix_16k",
+    srcs = [
+        "susfs_rename_fix.c",
+        "Makefile",
+        "Kbuild",
+    ],
+    outs = ["susfs_rename_fix.ko"],
+    kernel_build = "//common:kernel_aarch64_16k",
 )

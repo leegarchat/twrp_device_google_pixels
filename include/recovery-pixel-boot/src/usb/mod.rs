@@ -6,12 +6,15 @@
 //!   gates the daemon. `0` + `Err` keeps the device a well-behaved gadget.
 //! - `run_otg_auto()`: VBUS daemon (service `otg_auto`); never returns.
 //!
-//! Only `zuma` is implemented (field-proven on shiba/EVOX). `gs101`,
-//! `gs201`, `zumapro`, `laguna` and `malibu` are stubs with the identical
-//! interface: patch fails closed (device mode, adb safe), the daemon parks
-//! instead of exiting (an exiting non-oneshot service would respawn-loop).
-//! Fill a stub file when that family's firmware analysis lands — the
-//! dispatcher below needs no changes.
+//! Two host-enable mechanisms, picked per family at runtime:
+//! - Exynos generations (zuma/gs101/gs201/zumapro): `otg_host_shim`
+//!   (kprobe on `dwc3_otg_host_ready`, replaces the AoC probe) + OTG_ID +
+//!   CHARGER_MODE VBUS force, driven by the VBUS daemon.
+//! - Google-silicon generations (laguna/malibu): `aoc_vote_shim`
+//!   (`USB_DR_EL` election `cast_vote("AOC",1,1)`, replaces the whole
+//!   AoC/aocd stack — no vendor staging anywhere); the election
+//!   self-switches, the daemon only keeps the vote + verifies + maintains
+//!   `/dev/block/otg-usb`.
 //!
 //! Family identity: `ro.recovery.soc_family` (stamped by early-init from
 //! `families/*/family.json`) wins; `ro.hardware` codename is the fallback

@@ -1,2 +1,8 @@
-tools/bazel build //susfsFastSymlinkFix:susfs_rename_fix
-file bazel-bin/susfsFastSymlinkFix/susfs_rename_fix/susfs_rename_fix.ko
+# 4k variant (default):
+tools/bazel build //susfsFastSymlinkFix:susfs_rename_fix_4k
+file bazel-bin/susfsFastSymlinkFix/susfs_rename_fix_4k/susfs_rename_fix.ko
+# 16k variant:
+tools/bazel build //susfsFastSymlinkFix:susfs_rename_fix_16k
+file bazel-bin/susfsFastSymlinkFix/susfs_rename_fix_16k/susfs_rename_fix.ko
+# Install: rename per variant and drop into the ramdisk module tree where
+# page size is scored by parent dir (4k vs 16k).
