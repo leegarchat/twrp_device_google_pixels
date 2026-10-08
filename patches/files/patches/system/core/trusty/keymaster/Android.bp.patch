@@ -1,8 +1,8 @@
 --- a/system/core/trusty/keymaster/Android.bp
 +++ b/system/core/trusty/keymaster/Android.bp
-@@ -88,6 +88,7 @@
-         "keymint/android.hardware.security.keymint-service.trusty.xml",
-     ],
+@@ -84,6 +84,7 @@
+     name: "android.hardware.security.keymint-service.trusty.defaults",
+     relative_install_path: "hw",
      vendor: true,
 +    recovery_available: true,
      cflags: [
