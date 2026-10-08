@@ -1,12 +1,12 @@
 --- a/system/core/trusty/keymint/Android.bp
 +++ b/system/core/trusty/keymint/Android.bp
-@@ -21,6 +21,9 @@
+@@ -40,6 +40,9 @@
+ rust_binary {
      name: "android.hardware.security.keymint-service.rust.trusty",
-     relative_install_path: "hw",
      vendor: true,
-+    // FOX: allow install into the recovery ramdisk (zuma Rust-from-source
-+    // test copies the vendor output into vendor_boot manually).
++    // FOX: allow install into the recovery ramdisk (AIO ships both KeyMint
++    // HALs; build.sh builds this binary explicitly).
 +    recovery_available: true,
+     defaults: ["android.hardware.security.keymint-service.rust.trusty.default"],
      init_rc: ["android.hardware.security.keymint-service.rust.trusty.rc"],
      vintf_fragments: ["android.hardware.security.keymint-service.rust.trusty.xml"],
-     srcs: [
