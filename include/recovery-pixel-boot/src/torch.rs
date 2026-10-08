@@ -3,14 +3,14 @@
 //! Discovery has two paths (P11 ab40c6f port):
 //! 1. registered I2C client (/sys/bus/i2c/devices/*<match>, default "-0063")
 //!    + flash pinctrl from the device tree (`samsung,pins` under a
-//!    flash|torch path), GPIO chip by bank label (gs201/zuma/zumapro);
+//!      flash|torch path), GPIO chip by bank label (gs201/zuma/zumapro);
 //! 2. LWIS fallback (malibu/laguna): the flash is a google,lwis-i2c-device
 //!    whose camera driver never probes in recovery, so no I2C client and no
 //!    samsung,pins exist. Bus/addr/enable-GPIO come straight from the
 //!    flash@* device-tree node via phandle resolution.
-//! GPIO uses the v1 uAPI (structs defined locally: bionic/libc exposes no
-//! gpio ioctls); I2C reuses the i2c.rs transact helper.
-//! Called by the Fox GUI as `recovery-pixel-boot torch on|off`.
+//!    GPIO uses the v1 uAPI (structs defined locally: bionic/libc exposes no
+//!    gpio ioctls); I2C reuses the i2c.rs transact helper.
+//!    Called by the Fox GUI as `recovery-pixel-boot torch on|off`.
 
 use crate::i2c::{i2c_transact, open_i2c_dev};
 use crate::ko_picker::log_msg;

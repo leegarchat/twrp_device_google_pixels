@@ -14,8 +14,8 @@
 //!   role-switch path, NO shim by design. The `dwc3_exynos_otg_id` node
 //!   still exists but its store semantics are unverified on 6.12, so the
 //!   native path never touches it.
-//! Built solely from the cp2a-stable / Wild firmware composition, not from
-//! assumptions:
+//!   Built solely from the cp2a-stable / Wild firmware composition, not from
+//!   assumptions:
 //! - tester kernel 6.1.157 (Wild/EVOX); stock Google 6.1.157-gbd23337.
 //! - Samsung USB stack ships as DLKM modules (Wild set, proper vermagic):
 //!   dwc3-exynos-usb.ko (glue: creates dwc3_exynos_otg_id + hosts the
@@ -224,9 +224,9 @@ pub fn run_otg_patch() -> Result<(), String> {
     // arrays); mount(2) with debugfs fstype, NULL data is the standard call.
     let rc = unsafe {
         libc::mount(
-            b"debugfs\0".as_ptr() as *const libc::c_char,
-            b"/sys/kernel/debug\0".as_ptr() as *const libc::c_char,
-            b"debugfs\0".as_ptr() as *const libc::c_char,
+            c"debugfs".as_ptr(),
+            c"/sys/kernel/debug".as_ptr(),
+            c"debugfs".as_ptr(),
             0,
             std::ptr::null(),
         )

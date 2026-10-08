@@ -43,7 +43,7 @@ pub struct ScoredCandidate<'a> {
     pub api_match: bool,
 }
 
-impl<'a> Ord for ScoredCandidate<'a> {
+impl Ord for ScoredCandidate<'_> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.score
             .cmp(&other.score)
@@ -51,7 +51,7 @@ impl<'a> Ord for ScoredCandidate<'a> {
     }
 }
 
-impl<'a> PartialOrd for ScoredCandidate<'a> {
+impl PartialOrd for ScoredCandidate<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -107,7 +107,7 @@ pub fn score_candidate<'a>(path: &'a Path, env: &KernelEnv) -> Option<ScoredCand
 
     // 3. Kernel X.Y: file_name tokens first, then path components.
     let mut cand_kver: Option<(u32, u32)> = None;
-    for token in file_name.trim_end_matches(".ko").split(|c: char| c == '-' || c == '_') {
+    for token in file_name.trim_end_matches(".ko").split(['-', '_']) {
         if let Some(kv) = parse_kver_token(token) {
             cand_kver = Some(kv);
             break;

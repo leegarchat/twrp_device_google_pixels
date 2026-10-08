@@ -133,7 +133,7 @@ enum Val {
     Num(i64),
 }
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     fn ws(&mut self) {
         while self.i < self.b.len() && (self.b[self.i] as char).is_whitespace() {
             self.i += 1;

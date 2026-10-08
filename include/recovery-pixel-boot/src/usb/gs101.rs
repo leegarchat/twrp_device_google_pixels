@@ -426,7 +426,7 @@ fn load_aoc_from_vendor() -> bool {
     }
     // SAFETY: MNT is a valid NUL-terminated C string; umount(2) failure ignored.
     unsafe {
-        libc::umount(b"/dev/otg_mnt_vendor\0".as_ptr() as *const libc::c_char);
+        libc::umount(c"/dev/otg_mnt_vendor".as_ptr());
     }
     if from_loop {
         siw_disconnect("vendor", &slot);
@@ -556,9 +556,9 @@ pub fn run_otg_patch() -> Result<(), String> {
     // arrays); mount(2) with debugfs fstype, NULL data is the standard call.
     let rc = unsafe {
         libc::mount(
-            b"debugfs\0".as_ptr() as *const libc::c_char,
-            b"/sys/kernel/debug\0".as_ptr() as *const libc::c_char,
-            b"debugfs\0".as_ptr() as *const libc::c_char,
+            c"debugfs".as_ptr(),
+            c"/sys/kernel/debug".as_ptr(),
+            c"debugfs".as_ptr(),
             0,
             std::ptr::null(),
         )
