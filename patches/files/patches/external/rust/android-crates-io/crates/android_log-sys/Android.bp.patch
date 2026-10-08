@@ -1,0 +1,11 @@
+--- a/external/rust/android-crates-io/crates/android_log-sys/Android.bp
++++ b/external/rust/android-crates-io/crates/android_log-sys/Android.bp
+@@ -15,6 +15,8 @@
+ 
+ rust_library {
+     name: "libandroid_log_sys",
++    // FOX: recovery variant for the recovery-rust closure (tensor daemon, binder).
++    recovery_available: true,
+     host_supported: true,
+     crate_name: "android_log_sys",
+     cargo_env_compat: true,

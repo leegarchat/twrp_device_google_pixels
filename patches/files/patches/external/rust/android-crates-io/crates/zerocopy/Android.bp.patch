@@ -1,0 +1,11 @@
+--- a/external/rust/android-crates-io/crates/zerocopy/Android.bp
++++ b/external/rust/android-crates-io/crates/zerocopy/Android.bp
+@@ -15,6 +15,8 @@
+ 
+ rust_library {
+     name: "libzerocopy",
++    // FOX: recovery variant for the recovery-rust closure (tensor daemon, binder).
++    recovery_available: true,
+     host_supported: true,
+     crate_name: "zerocopy",
+     cargo_env_compat: true,

@@ -1,0 +1,11 @@
+--- a/external/rust/android-crates-io/crates/static_assertions/Android.bp
++++ b/external/rust/android-crates-io/crates/static_assertions/Android.bp
+@@ -15,6 +15,8 @@
+ 
+ rust_library {
+     name: "libstatic_assertions",
++    // FOX: recovery variant for the recovery-rust closure (tensor daemon, binder).
++    recovery_available: true,
+     host_supported: true,
+     crate_name: "static_assertions",
+     cargo_env_compat: true,
