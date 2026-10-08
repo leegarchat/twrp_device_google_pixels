@@ -1,0 +1,10 @@
+--- a/system/tools/aidl/build/aidl_interface_backends.go
++++ b/system/tools/aidl/build/aidl_interface_backends.go
+@@ -397,6 +397,7 @@
+ 		Host_supported:    i.properties.Host_supported,
+ 		Vendor_available:  i.properties.Vendor_available,
+ 		Product_available: i.properties.Product_available,
++		Recovery_available: i.properties.Recovery_available,
+ 		Apex_available:    i.properties.Backend.Rust.Apex_available,
+ 		Min_sdk_version:   i.minSdkVersion(langRust),
+ 		Rustlibs:          i.properties.Backend.Rust.Additional_rustlibs,
