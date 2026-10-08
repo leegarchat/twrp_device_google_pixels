@@ -1078,7 +1078,7 @@ int SecondStageMain(int argc, char** argv) {
         if (ofox_lgz_status != 0) {
             LOG(ERROR) << "[OFOX] recovery bootstrap failed: lgz=" << ofox_lgz_status
                        << " (rebooting to bootloader)";
-            HandlePowerctlMessage("reboot,bootloader");
+            HandlePowerctlMessage("reboot,recovery");  // DIAG-BUILD ONLY: loop instead of bootloader landing
             LOG(FATAL) << "[OFOX] forced reboot to bootloader after bootstrap failure";
         }
         LOG(INFO) << "[OFOX] recovery bootstrap OK";
