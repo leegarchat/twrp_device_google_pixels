@@ -499,8 +499,8 @@ echo "[build] Sourcing build/envsetup.sh ..."
 set +e
 source build/envsetup.sh
 
-echo "[build] Running lunch twrp_pixels-ap2a-eng ..."
-lunch twrp_pixels-ap2a-eng || fox_safe_exit $?
+echo "[build] Running lunch twrp_pixels-bp2a-eng ..."
+lunch twrp_pixels-bp2a-eng || fox_safe_exit $?
 if [[ "$fox_sourced" != true ]]; then
     set -eo pipefail
 fi
