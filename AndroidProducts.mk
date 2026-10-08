@@ -9,4 +9,4 @@ PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_pixels.mk
 
 COMMON_LUNCH_CHOICES := \
-    twrp_pixels-eng
+    twrp_pixels-bp2a-eng
