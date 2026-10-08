@@ -149,6 +149,40 @@ static bool FscryptMountMetadataEncryptedWithTimeout(
 	const std::string& extra_fstab,
 	const std::string& zoned_device,
 	int timeout_seconds) {
+	// Fox (malibu zoned userdata): derive the zoned/user-device topology
+	// FRESH from the fstab on every call. libfstab parses it into entry
+	// fields (is_zoned/user_devices/device_aliased); the one-shot
+	// access() gate may have missed late-enumerating UFS LUNs, so an
+	// explicitly resolved zoned_device (FoxResolveZonedDevice) wins and
+	// is appended when absent.
+	bool is_zoned = false;
+	std::vector<std::string> user_devices;
+	std::vector<bool> device_aliased;
+	if (!extra_fstab.empty()) {
+		android::fs_mgr::Fstab fstab;
+		if (android::fs_mgr::ReadFstabFromFile(extra_fstab, &fstab)) {
+			if (auto entry = android::fs_mgr::GetEntryForMountPoint(&fstab, mount_point)) {
+				is_zoned = entry->is_zoned;
+				user_devices = entry->user_devices;
+				for (int a : entry->device_aliased) device_aliased.push_back(a != 0);
+				while (device_aliased.size() < user_devices.size())
+					device_aliased.push_back(false);
+			} else {
+				LOGINFO("Metadata decrypt: no %s entry in %s\n", mount_point.c_str(), extra_fstab.c_str());
+			}
+		} else {
+			LOGINFO("Metadata decrypt: cannot parse %s\n", extra_fstab.c_str());
+		}
+	}
+	if (!zoned_device.empty()) {
+		is_zoned = true;
+		bool known = false;
+		for (const auto& d : user_devices) if (d == zoned_device) { known = true; break; }
+		if (!known) {
+			user_devices.push_back(zoned_device);
+			device_aliased.push_back(false);
+		}
+	}
 	pid_t pid = fork();
 	if (pid < 0) {
 		LOGERR("Metadata decrypt: failed to fork helper process, errno=%d\n", errno);
@@ -162,7 +196,10 @@ static bool FscryptMountMetadataEncryptedWithTimeout(
 			false,
 			false,
 			fs_type,
-			zoned_device,
+			is_zoned,
+			user_devices,
+			device_aliased,
+			0,
 			extra_fstab);
 		_exit(ok ? 0 : 1);
 	}
