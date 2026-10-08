@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "bypass_paths": [],
+  "patches": {
+    "snap-external-rust-crates-downcast-rs-Android-bp": {
+      "mode": "bypass"
+    },
+    "snap-external-rust-crates-libc-Android-bp": {
+      "mode": "bypass"
+    }
+  }
+}

@@ -68,6 +68,10 @@
 #   -T, --text TEXT   With --push: append TEXT to the zip message after the
 #                     md5 / full-changes-link lines
 #                     (e.g. -T "looks like OTG is fixed on P10").
+#   --no-patches      Skip the maintainer micro-patches step
+#                     (patches/apply_patches.py --apply). For test builds
+#                     on trees where some snapshots are paused or retargeted.
+#                     Alias: --skip-patches.
 #   -h, --help        Show this help.
 #
 # Removed in the AIO-only tree (rejected with an error, or accepted as a
@@ -204,6 +208,7 @@ FOX_GIT_TAG=""
 FOX_DIFF_TAG=""
 FOX_DIFF_FROM=""
 FOX_PUSH_TEXT=""
+FOX_SKIP_PATCHES=""
 
 while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
     case "$1" in
@@ -307,6 +312,10 @@ while [[ $# -gt 0 ]] && [[ "$SAFE_EXIT_REQUESTED" == false ]]; do
                 echo "ERROR: --text requires a message (e.g. -T \"OTG fixed on P10?\")"
                 fox_safe_exit 1
             fi
+            shift
+            ;;
+        --no-patches|--skip-patches)
+            FOX_SKIP_PATCHES=1
             shift
             ;;
         --build-type)
@@ -452,8 +461,13 @@ cd "$SOURCE_ROOT"
 
 # Apply maintainer micro-patches (PEP format: patches/files/{modified,original,new,patches}).
 # Fails the build on conflict so a stale patch never ships silently.
-python3 "$SCRIPT_DIR/patches/apply_patches.py" --apply --root "$SOURCE_ROOT" \
-    || fox_safe_exit 1
+# Skipped entirely with --no-patches (paused/retargeted snapshots, test builds).
+if [[ -n "${FOX_SKIP_PATCHES:-}" ]]; then
+    echo "[build] Skipping maintainer micro-patches (--no-patches)"
+else
+    python3 "$SCRIPT_DIR/patches/apply_patches.py" --apply --root "$SOURCE_ROOT" \
+        || fox_safe_exit 1
+fi
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     if [[ "$fox_sourced" == true ]]; then
         return "$SAFE_EXIT_CODE"
