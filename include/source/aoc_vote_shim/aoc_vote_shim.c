@@ -77,7 +77,7 @@ MODULE_DESCRIPTION("gvotable AOC vote shim for Tensor G5/G6 recovery (replaces a
  *   int gvotable_cast_vote(struct gvotable_election *el, const char *reason,
  *                          void *vote, bool enabled);
  * Pixel kernels enforce KCFI: every indirect call is checked against the
- * hash of the DECLARED type, and a void*/int-typed declaration trips
+ * hash of the DECLARED type, and a void-pointer/int-typed declaration trips
  * `brk` -> kernel panic -> bootloop on stock firmware (proven against
  * stock gvotable.ko typeids 0xccbab8a3/0x459a80c8). Values passed stay
  * stock-identical (assert (1,1), retract (0,1)); only the types matter. */
