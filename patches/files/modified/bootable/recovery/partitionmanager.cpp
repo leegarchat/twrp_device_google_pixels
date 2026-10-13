@@ -887,9 +887,7 @@ void TWPartitionManager::Decrypt_Data() {
 				// today's behavior (plus the read-path fallback below).
 				std::string fox_zoned = FoxResolveZonedDevice();
 				bool md_ok = false;
-				// TEST-ONLY (gs101 decrypt debug): single 20s attempt instead
-				// of 3x120s — do NOT ship, revert after field diagnosis.
-				for (int md_try = 0; md_try < 1 && !md_ok; md_try++) {
+				for (int md_try = 0; md_try < 3 && !md_ok; md_try++) {
 					if (md_try > 0) {
 						LOGINFO("Metadata decrypt: retry %d/3 after 5s settle\n", md_try + 1);
 						sleep(5);
@@ -906,7 +904,7 @@ void TWPartitionManager::Decrypt_Data() {
 						Decrypt_Data->Current_File_System,
 						TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "",
 						fox_zoned,
-						20);
+						120);
 				}
 				if (md_ok) {
 				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
