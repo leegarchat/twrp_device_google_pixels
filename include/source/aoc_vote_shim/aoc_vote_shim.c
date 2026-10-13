@@ -57,6 +57,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/types.h>
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
 #include <linux/seq_file.h>
@@ -71,10 +72,20 @@ MODULE_AUTHOR("LeeGarChat");
 MODULE_DESCRIPTION("gvotable AOC vote shim for Tensor G5/G6 recovery (replaces aocd)");
 
 /* gvotable.ko entry points (plain EXPORT_SYMBOL, no namespace).
- * Resolved at runtime via kprobe — see file header. Parameter names
- * are ours; the VALUES are stock: assert (1,1), retract (0,1). */
-static void *(*real_get_handle)(const char *name) = NULL;
-static int (*real_cast_vote)(void *election, const char *voter, int v1, int v2) = NULL;
+ * Resolved at runtime via kprobe — see file header. The declarations
+ * below MUST match the true gvotable.h prototypes exactly:
+ *   struct gvotable_election *gvotable_election_get_handle(const char *name);
+ *   int gvotable_cast_vote(struct gvotable_election *el, const char *reason,
+ *                          void *vote, bool enabled);
+ * Pixel kernels enforce KCFI: every indirect call is checked against the
+ * hash of the DECLARED type, and a void*/int-typed declaration trips
+ * `brk` -> kernel panic -> bootloop on stock firmware (proven against
+ * stock gvotable.ko typeids 0xccbab8a3/0x459a80c8). Values passed stay
+ * stock-identical (assert (1,1), retract (0,1)); only the types matter. */
+struct gvotable_election;
+static struct gvotable_election *(*real_get_handle)(const char *name) = NULL;
+static int (*real_cast_vote)(struct gvotable_election *el, const char *reason,
+                             void *vote, bool enabled) = NULL;
 
 static int resolve_gvotable_symbols(void)
 {
@@ -128,7 +139,7 @@ static int resolve_gvotable_symbols(void)
 #define REASSERT_1_MS 10000
 #define REASSERT_2_MS 30000
 
-static void *vote_handle;
+static struct gvotable_election *vote_handle;
 static bool vote_active;
 static struct proc_dir_entry *proc_shim;
 static struct proc_dir_entry *proc_ready;
@@ -147,7 +158,10 @@ static int cast_aoc(int v1)
             return -ENODEV;
         pr_info("aoc_vote_shim: election '%s' handle %p\n", ELECTION_NAME, vote_handle);
     }
-    ret = real_cast_vote(vote_handle, VOTER_NAME, v1, 1);
+    /* Values mirror the stock call sites ((1,1) assert, (0,1) retract);
+     * the explicit casts only satisfy the true prototype — KCFI hashes
+     * types, not values. */
+    ret = real_cast_vote(vote_handle, VOTER_NAME, (void *)(long)v1, true);
     if (ret)
         pr_err("aoc_vote_shim: cast_vote(%d) failed: %d\n", v1, ret);
     return ret;
@@ -181,7 +195,7 @@ static void vote_work_fn(struct work_struct *work)
         }
         pr_info("aoc_vote_shim: election '%s' handle %p\n", ELECTION_NAME, vote_handle);
     }
-    ret = real_cast_vote(vote_handle, VOTER_NAME, 1, 1);
+    ret = real_cast_vote(vote_handle, VOTER_NAME, (void *)1, true);
     if (ret) {
         pr_err("aoc_vote_shim: cast_vote failed: %d\n", ret);
         vote_active = false;
