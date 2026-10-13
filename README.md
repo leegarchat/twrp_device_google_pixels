@@ -29,14 +29,15 @@ generations (left to right), rows are features (top to bottom).
 | `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
 
 > 🟢 = works (confirmed) · 🔴 = broken ·
-> 🟡 = not tested yet.
+> 🟡 = not tested yet · 🔵 = should work, not verified in detail ·
+> 🟠 = flaky.
 
 | Feature | G1 | G2 | G3 | G4 | G5 | G6 |
 |---|---|---|---|---|---|---|
 | Data decryption | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | ROM flashing | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| OTG | 🔴 | 🟡 | 🟢 | 🟢 | 🟡 | 🟡 |
+| OTG | 🟠 | 🟡 | 🟢 | 🟢 | 🟡 | 🟡 |
 | Flashlight | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
 | Vibration | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
 | Reboot to Android | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
@@ -53,6 +54,28 @@ generations (left to right), rows are features (top to bottom).
 | Files + terminal | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | OTA survival | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Charging | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Format data | 🔵 | 🔵 | 🟢 | 🔵 | 🔵 | 🔵 |
+| Touch (broken super) | 🔵 | 🔵 | 🟢 | 🔵 | 🔵 | 🔵 |
+| Vibration (broken super) | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | 🟡 |
+
+> Broken-super footnote: with `super` unreadable, touch keeps working
+> because its modules come from the OFOX per-device package (verified
+> live on G3: stock fetch fails on both slots, 12/12 modules load);
+> vibration stays dead because the haptics firmware lives on `vendor`
+> inside `super`. OTG on G1 is 🟠: host mode works, but tester reports
+> behind it are thin, so flakiness is possible.
+
+### Fool-proof USB guard
+
+A newer-than-firmware kernel panics the device when the custom OTG
+stack force-switches VBUS power to host (seen in the field). Before
+any shim load or power write, recovery compares the running kernel's
+patch level against the firmware modules' `vermagic` (majority over
+stock `.ko` files; our own shims excluded). Mismatch = the whole
+custom stack stays off (no services, no VBUS switch — plain device
+mode, adb safe) instead of a panic. Monolithic kernels skip the
+check (nothing to inject); trees with no readable stock modules fail
+open with a loud log line.
 
 > Testers are not very active, so minor per-family fixes are on hold —
 > the current state is stable enough for a first release.
