@@ -407,16 +407,34 @@ def harvest_fs_image(img, workdir, quiet):
             if out:
                 return out
     # 3) privileged loop mount, read-only, non-interactive sudo only.
+    # NOTE: files MUST be copied out before umount — paths inside the
+    # mountpoint dangle afterwards (erofs images only ever reach this
+    # step: 7z/debugfs cannot read erofs, so without the copy every .ko
+    # below comes back with unreadable vermagic).
     mnt = os.path.join(workdir, "mnt_" + os.path.basename(img).replace(".img", ""))
     os.makedirs(mnt, exist_ok=True)
     r = run(["sudo", "-n", "mount", "-o", "loop,ro", img, mnt], quiet=True)
     if r.returncode == 0:
         try:
+            ddir = os.path.join(xdir, "lib", "modules")
             for cand in ("lib/modules", "lib"):
                 base = os.path.join(mnt, cand)
+                hit = False
                 for r2, _, fs in os.walk(base):
-                    out.extend(os.path.join(r2, f) for f in fs if f.endswith(".ko"))
-                if out:
+                    for f in fs:
+                        if not f.endswith(".ko"):
+                            continue
+                        rel = os.path.relpath(r2, base)
+                        dstdir = os.path.join(ddir, rel)
+                        os.makedirs(dstdir, exist_ok=True)
+                        try:
+                            shutil.copy2(os.path.join(r2, f),
+                                         os.path.join(dstdir, f))
+                        except OSError:
+                            continue
+                        out.append(os.path.join(dstdir, f))
+                        hit = True
+                if hit:
                     break
         finally:
             run(["sudo", "-n", "umount", mnt], quiet=True)
@@ -598,6 +616,14 @@ def main():
             print(f"SKIPPED: {skipped}")
         if args.all:
             print(f"extra non-set modules: {extra}")
+        if copied == 0 and extra == 0:
+            # Total failure must be loud: callers (fetch_google_firmware
+            # surgical/full) delete the source + logs on RC=0, which turns
+            # "nothing matched" into "zero modules, empty logs".
+            raise SystemExit(
+                f"no modules copied for {device} "
+                f"(missing {len(missing)}, skipped {len(skipped)}); "
+                f"source kept for inspection")
     finally:
         if not args.keep_tmp and not args.tmpdir:
             shutil.rmtree(tmpdir, ignore_errors=True)
