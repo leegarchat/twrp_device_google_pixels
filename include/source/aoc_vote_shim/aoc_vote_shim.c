@@ -63,7 +63,6 @@
 #include <linux/seq_file.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
-#include <linux/delay.h>
 #include <linux/kprobes.h>
 #include <linux/string.h>
 
@@ -102,7 +101,7 @@ static int resolve_gvotable_symbols(void)
                ret);
         return ret;
     }
-    real_get_handle = (void *(*)(const char *))kp.addr;
+    real_get_handle = (struct gvotable_election *(*)(const char *))kp.addr;
     unregister_kprobe(&kp);
 
     memset(&kp, 0, sizeof(kp));
@@ -113,7 +112,8 @@ static int resolve_gvotable_symbols(void)
         real_get_handle = NULL;
         return ret;
     }
-    real_cast_vote = (int (*)(void *, const char *, int, int))kp.addr;
+    real_cast_vote = (int (*)(struct gvotable_election *, const char *,
+                              void *, bool))kp.addr;
     unregister_kprobe(&kp);
 
     if (!real_get_handle || !real_cast_vote) {
@@ -140,11 +140,16 @@ static int resolve_gvotable_symbols(void)
 #define REASSERT_2_MS 30000
 
 static struct gvotable_election *vote_handle;
+/* Request state (init/poke) vs ground truth (a cast actually landed).
+ * /proc/aoc_vote_ready reports vote_asserted only — vote_active alone
+ * used to read 1 from insmod, before anything was cast. */
 static bool vote_active;
+static bool vote_asserted;
 static struct proc_dir_entry *proc_shim;
 static struct proc_dir_entry *proc_ready;
 static struct delayed_work vote_work;
 static int vote_step; /* 0 = acquiring, 1 = first re-assert done, 2 = settled */
+static int handle_retries;
 
 static int cast_aoc(int v1)
 {
@@ -167,50 +172,41 @@ static int cast_aoc(int v1)
     return ret;
 }
 
-/* Worker: resolve symbols (retries while gvotable.ko loads), acquire the
- * election, cast, then re-assert twice. Runs in process context. */
+/* Worker: one attempt per run (resolve symbols, acquire the USB_DR_EL
+ * election, cast), missing pieces requeue via delayed_work instead of an
+ * msleep loop — no workqueue thread hogged, and google-role-sw probing
+ * AFTER us is covered, not just a late gvotable.ko. Then re-assert twice
+ * against a late stock aoc_usb_driver. Runs in process context. */
 static void vote_work_fn(struct work_struct *work)
 {
-    int i, ret;
-
     if (!vote_active)
         return;
-    for (i = 0; i < HANDLE_RETRIES && vote_active; i++) {
-        if (!resolve_gvotable_symbols())
-            break;
-        msleep(HANDLE_RETRY_MS);
-    }
-    if (!real_get_handle || !real_cast_vote) {
-        pr_err("aoc_vote_shim: gvotable symbols never appeared, vote NOT asserted\n");
-        vote_active = false;
-        return;
-    }
-    if (!vote_handle) {
-        vote_handle = real_get_handle(ELECTION_NAME);
-        if (!vote_handle) {
-            pr_err("aoc_vote_shim: election '%s' never appeared, vote NOT asserted\n",
-                   ELECTION_NAME);
-            vote_active = false;
-            return;
+    if (resolve_gvotable_symbols() == 0 && cast_aoc(1) == 0) {
+        vote_asserted = true;
+        pr_info("aoc_vote_shim: AOC vote asserted (host-capable, step=%d)\n",
+                vote_step);
+        if (vote_step == 0) {
+            vote_step = 1;
+            schedule_delayed_work(&vote_work, msecs_to_jiffies(REASSERT_1_MS));
+        } else if (vote_step == 1) {
+            vote_step = 2;
+            schedule_delayed_work(&vote_work,
+                                  msecs_to_jiffies(REASSERT_2_MS - REASSERT_1_MS));
         }
-        pr_info("aoc_vote_shim: election '%s' handle %p\n", ELECTION_NAME, vote_handle);
-    }
-    ret = real_cast_vote(vote_handle, VOTER_NAME, (void *)1, true);
-    if (ret) {
-        pr_err("aoc_vote_shim: cast_vote failed: %d\n", ret);
-        vote_active = false;
+        /* vote_step == 2: settled, no further work. Manual re-poke via
+         * /proc/aoc_vote_shim remains available to recovery. */
         return;
     }
-    pr_info("aoc_vote_shim: AOC vote asserted (host-capable)\n");
-    if (vote_step == 0) {
-        vote_step = 1;
-        schedule_delayed_work(&vote_work, msecs_to_jiffies(REASSERT_1_MS));
-    } else if (vote_step == 1) {
-        vote_step = 2;
-        schedule_delayed_work(&vote_work, msecs_to_jiffies(REASSERT_2_MS - REASSERT_1_MS));
+    /* Hard error (symbols AND handle present, the cast itself failed):
+     * retrying is pointless. Anything missing -> requeue. */
+    if ((real_get_handle && real_cast_vote && vote_handle) ||
+        ++handle_retries >= HANDLE_RETRIES) {
+        pr_err("aoc_vote_shim: gvotable/USB_DR_EL never came up, vote NOT asserted\n");
+        vote_active = false;
+        vote_asserted = false;
+        return;
     }
-    /* vote_step == 2: settled, no further work. Manual re-poke via
-     * /proc/aoc_vote_shim remains available to recovery. */
+    schedule_delayed_work(&vote_work, msecs_to_jiffies(HANDLE_RETRY_MS));
 }
 
 static ssize_t shim_write(struct file *file, const char __user *ubuf,
@@ -233,19 +229,24 @@ static ssize_t shim_write(struct file *file, const char __user *ubuf,
     else
         return -EINVAL;
 
-    if (activate == vote_active)
-        return count;
-
+    /* No `activate == vote_active` early-out: a "1" poke always re-arms
+     * (matters after a timed-out acquisition, where the old code dropped
+     * the poke because vote_active was still true from init). */
     if (activate) {
         vote_active = true;
+        vote_asserted = false;
         vote_step = 0;
-        schedule_delayed_work(&vote_work, 0);
+        handle_retries = 0;
+        mod_delayed_work(system_wq, &vote_work, 0);
         pr_info("aoc_vote_shim: assert requested\n");
     } else {
+        /* Flag first: a worker between retries exits on its own instead
+         * of stalling cancel_delayed_work_sync for the full ~30s. */
+        vote_active = false;
         cancel_delayed_work_sync(&vote_work);
         if (vote_handle)
             cast_aoc(0);
-        vote_active = false;
+        vote_asserted = false;
         pr_info("aoc_vote_shim: vote retracted\n");
     }
     return count;
@@ -272,7 +273,7 @@ static const struct proc_ops shim_ops = {
 
 static int ready_show(struct seq_file *m, void *v)
 {
-    seq_printf(m, "%d\n", vote_active ? 1 : 0);
+    seq_printf(m, "%d\n", vote_asserted ? 1 : 0);
     return 0;
 }
 
@@ -313,10 +314,11 @@ static int __init aoc_vote_shim_init(void)
 
 static void __exit aoc_vote_shim_exit(void)
 {
-    cancel_delayed_work_sync(&vote_work);
-    if (vote_active && vote_handle)
-        cast_aoc(0);
     vote_active = false;
+    cancel_delayed_work_sync(&vote_work);
+    if (vote_asserted && vote_handle)
+        cast_aoc(0);
+    vote_asserted = false;
 
     if (proc_ready)
         proc_remove(proc_ready);
