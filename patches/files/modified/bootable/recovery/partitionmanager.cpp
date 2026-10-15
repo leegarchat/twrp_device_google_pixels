@@ -5257,8 +5257,6 @@ void TWPartitionManager::Unlock_Block_Partitions() {
 // (our own fw/ko staging mounts, vold/ueventd probes) or transiently open,
 // which used to fail the whole format with "Unable to unmap dynamic
 // partitions" until a manual retry. Unmount (lazy fallback) + retries.
-static bool FoxRemoveDmDevice(const std::string& name);
-
 // Fox: true when a dm device with this kernel name exists right now.
 // Device-mapper minors are recycled (field case: by-name/vendor stuck at a
 // dead dm-0 while vendor_a lives on dm-5), so cached dm-N paths prove
@@ -5510,7 +5508,7 @@ static bool DestroyLogicalPartition_Retry(const std::string& name) {
 	// whole format. A mounted/in-use node still fails EBUSY (correct).
 	if (errno == ENOENT || errno == ENXIO) {
 		LOGINFO("no LP entry for %s, removing dm device directly\n", name.c_str());
-		if (FoxRemoveDmDevice(name))
+		if (PartitionManager.RemoveDmDevice(name))
 			return true;
 	}
 	LOGERR("destroy logical partition %s failed after retries: %s\n", name.c_str(), strerror(errno));
@@ -5520,10 +5518,10 @@ static bool DestroyLogicalPartition_Retry(const std::string& name) {
 // Fox: direct DM_DEV_REMOVE for mapper nodes liblp doesn't know about.
 // True when the device is gone (or was never there); false otherwise
 // (EBUSY keeps failing the format, as it should).
-static bool FoxRemoveDmDevice(const std::string& name) {
+bool TWPartitionManager::RemoveDmDevice(const std::string& name) {
 	int fd = open("/dev/device-mapper", O_RDWR);
 	if (fd < 0) {
-		LOGERR("FoxRemoveDmDevice: cannot open /dev/device-mapper: %s\n", strerror(errno));
+		LOGERR("RemoveDmDevice: cannot open /dev/device-mapper: %s\n", strerror(errno));
 		return false;
 	}
 	const size_t bufsize = sizeof(struct dm_ioctl) + 4096;
@@ -5532,18 +5530,43 @@ static bool FoxRemoveDmDevice(const std::string& name) {
 		close(fd);
 		return false;
 	}
+	// Version handshake: DM_VERSION probe first (best-effort, diagnostics
+	// only). The kernel rejects EVERY ioctl whose user minor exceeds its
+	// own with EINVAL "ioctl interface mismatch" — live case: headers
+	// 4.48.0 vs 6.1 stock 4.47.0 kills even DM_VERSION itself, so the
+	// handshake can never succeed on a skewed pair. Stamp the ACTION
+	// ioctl with a floor version instead: kernels accept any user minor
+	// <= their own (backward-compat guarantee), and DM_DEV_REMOVE with a
+	// name-only payload is layout-stable across all 4.x, so {4,0,0} is
+	// accepted on every kernel we boot (5.10 -> 6.12).
+	unsigned kvers[3] = {DM_VERSION_MAJOR, DM_VERSION_MINOR, DM_VERSION_PATCHLEVEL};
+	io->version[0] = kvers[0];
+	io->version[1] = kvers[1];
+	io->version[2] = kvers[2];
+	io->data_size = bufsize;
+	io->data_start = sizeof(struct dm_ioctl);
+	if (ioctl(fd, DM_VERSION, io) == 0) {
+		LOGINFO("RemoveDmDevice: kernel dm %u.%u.%u (headers %u.%u.%u)\n",
+			io->version[0], io->version[1], io->version[2],
+			DM_VERSION_MAJOR, DM_VERSION_MINOR, DM_VERSION_PATCHLEVEL);
+		memset(io, 0, bufsize);
+	} else {
+		LOGINFO("RemoveDmDevice: DM_VERSION probe failed (%s), using floor version\n",
+			strerror(errno));
+		memset(io, 0, bufsize);
+	}
 	io->version[0] = DM_VERSION_MAJOR;
-	io->version[1] = DM_VERSION_MINOR;
-	io->version[2] = DM_VERSION_PATCHLEVEL;
+	io->version[1] = 0;
+	io->version[2] = 0;
 	io->data_size = bufsize;
 	io->data_start = sizeof(struct dm_ioctl);
 	snprintf(io->name, sizeof(io->name), "%s", name.c_str());
 	bool ok = ioctl(fd, DM_DEV_REMOVE, io) == 0;
 	int e = errno;
 	if (ok)
-		LOGINFO("FoxRemoveDmDevice: removed dm device %s directly (no LP entry)\n", name.c_str());
+		LOGINFO("RemoveDmDevice: removed dm device %s directly (no LP entry)\n", name.c_str());
 	else
-		LOGERR("FoxRemoveDmDevice: remove %s failed: %s\n", name.c_str(), strerror(e));
+		LOGERR("RemoveDmDevice: remove %s failed: %s\n", name.c_str(), strerror(e));
 	free(io);
 	close(fd);
 	if (ok)

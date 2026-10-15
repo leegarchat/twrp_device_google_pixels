@@ -18,7 +18,15 @@
  	std::string Get_Super_Partition();					  // Get Super Partition block device path
  	void Setup_Super_Devices();						  // Setup logical dm devices on super partition
  	bool Get_Super_Status();						  // Return whether device has a super partition
-@@ -471,8 +475,7 @@
+@@ -443,6 +447,7 @@
+ 	int Set_Crypto_Type(const char* crypto_type);                             // Sets encryption type for FDE (block) and FBE (file) devices (ro.crypto.type)
+ 	void Unlock_Block_Partitions();                                           // Unlock all block devices after update_engine runs
+ 	bool Unmap_Super_Devices();                                               // Unmap super devices in TWRP
++	bool RemoveDmDevice(const std::string& name);                           // DM_DEV_REMOVE for a mapper node (e.g. crypto "userdata" before data format)
+ 	bool Check_Pending_Merges();                                              // Check and run pending merges on data for VAB devices
+ 	bool Disable_AVB2(bool Display_Info);                                     // Disable AVB2.0 in vbmeta/vbmeta_system
+ 	void Check_UsbOtg_Status();						  // Checks if usb_otg is connected
+@@ -471,8 +476,7 @@
  	Backup_Method_enum Backup_Method;                                         // Method used for backup
  	std::string original_ramdisk_format;                                      // Ramdisk format of boot partition
  	std::string repacked_ramdisk_format;                                      // Ramdisk format of boot image to repack from

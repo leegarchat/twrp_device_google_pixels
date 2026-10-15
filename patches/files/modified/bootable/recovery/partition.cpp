@@ -2,9 +2,9 @@
 	Copyright 2013 to 2021 TeamWin
 	This file is part of TWRP/TeamWin Recovery Project.
 
-	Copyright (C) 2018-2025 OrangeFox Recovery Project
+	Copyright (C) 2018-2026 OrangeFox Recovery Project
 	This file is part of the OrangeFox Recovery Project.
-	
+
 	TWRP is free software: you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
 	the Free Software Foundation, either version 3 of the License, or
@@ -1392,9 +1392,9 @@ void TWPartition::Setup_Data_Media() {
 		}
 	}
 	ExcludeAll(Mount_Point + "/media");
-#ifdef FOX_MISCELLANEOUS_ROOT_DIRECTORY
+#ifdef OF_MISCELLANEOUS_ROOT_DIRECTORY
 	if (TWFunc::Get_Root_Path(Fox_Home) == Mount_Point) {
-		Storage_Path = FOX_MISCELLANEOUS_ROOT_DIRECTORY;
+		Storage_Path = OF_MISCELLANEOUS_ROOT_DIRECTORY;
 	}
 #endif
 }
@@ -1626,6 +1626,15 @@ bool TWPartition::Is_Mounted(void) {
 	test_path = Mount_Point + "/../.";
 	if (stat(test_path.c_str(), &st2) != 0)  return false;
 
+        // Check to see if a symlink mount point exists and is mounted
+        if (!Symlink_Mount_Point.empty()) {
+            scan_mounted_volumes();
+            const MountedVolume * sml = find_mounted_volume_by_mount_point(Symlink_Mount_Point.c_str());
+            if (sml != nullptr) {
+                return true;
+            }
+        }
+
 	// Compare the device IDs -- if they match then we're (probably) using tmpfs instead of an actual device
 	int ret = (st1.st_dev != st2.st_dev) ? true : false;
 
@@ -1650,6 +1659,7 @@ bool TWPartition::Mount(bool Display_Error) {
 	} else if (!Can_Be_Mounted) {
 		return false;
 	}
+
 
 	Find_Actual_Block_Device();
 
@@ -1798,14 +1808,24 @@ exit:
 	// checkpoint and make all subsequent writes durable.
 	if (Mount_Point == "/data" && Current_File_System == "f2fs") {
 		std::string cp_opts = Mount_Options;
-		// Remove checkpoint_merge if present, append checkpoint=enable
-		size_t pos = cp_opts.find("checkpoint_merge");
-		if (pos != std::string::npos) {
-			size_t end = pos + strlen("checkpoint_merge");
-			if (end < cp_opts.size() && cp_opts[end] == ',') end++;
-			else if (pos > 0 && cp_opts[pos-1] == ',') pos--;
-			cp_opts.erase(pos, end - pos);
+		// Drop checkpoint_merge and any checkpoint=disable (plain or with
+		// :pct value) before appending checkpoint=enable: a leftover
+		// disable voids the appended enable on some f2fs backports (or wins
+		// by position), silently keeping recovery writes non-durable — they
+		// look fine in recovery and vanish on next Android boot.
+		for (const char* drop : {"checkpoint_merge", "checkpoint=disable"}) {
+			size_t pos = cp_opts.find(drop);
+			while (pos != std::string::npos) {
+				size_t end = cp_opts.find(',', pos);
+				if (end == std::string::npos) {
+					if (pos > 0 && cp_opts[pos - 1] == ',') pos--;
+					cp_opts.erase(pos);
+					break;
+				}
+				cp_opts.erase(pos, end - pos + 1); // token + following comma
+			}
 		}
+		if (!cp_opts.empty() && cp_opts.back() == ',') cp_opts.pop_back();
 		if (!cp_opts.empty()) cp_opts += ",";
 		cp_opts += "checkpoint=enable";
 		if (mount(Actual_Block_Device.c_str(), Mount_Point.c_str(), "f2fs",
@@ -2371,9 +2391,19 @@ bool TWPartition::Wipe_Encryption() {
 	if (!UnMount(true))
 		return false;
 	if (Is_Decrypted && !Decrypted_Block_Device.empty()) {
-//		if (delete_crypto_blk_dev((char*)("userdata")) != 0) {
-//			LOGERR("Error deleting crypto block device, continuing anyway.\n");
-//		}
+		// The dm-default-key mapper (/dev/block/mapper/userdata) holds the
+		// physical userdata device exclusively. Upstream tore it down here
+		// via delete_crypto_blk_dev("userdata"), which no longer exists in
+		// this tree — so remove the node explicitly via device-mapper.
+		// Without this, every probe/ioctl/mount of the physical device
+		// fails EBUSY and the format dies ("Unable to format to remove
+		// encryption", storage dead till reboot). Node name is derived
+		// from our own Decrypted_Block_Device, never hardcoded.
+		std::string dm_node = Decrypted_Block_Device.substr(Decrypted_Block_Device.find_last_of('/') + 1);
+		if (TWFunc::Path_Exists(Decrypted_Block_Device)) {
+			LOGINFO("Removing crypto dm device '%s' before data format...\n", dm_node.c_str());
+			PartitionManager.RemoveDmDevice(dm_node);
+		}
 	}
 #endif
 	Has_Data_Media = false;
@@ -2387,7 +2417,20 @@ bool TWPartition::Wipe_Encryption() {
 	gui_print("DEBUG: Format_Target_File_System=%s\n", the_wipe_fs.c_str());
 #endif
 
-	if (Wipe(the_wipe_fs)) {
+	// A crypto format must remake the filesystem: rm -rf mode would try to
+	// mount ciphertext (impossible by design once keys/mapper are gone) and
+	// die mounting. The UI "use rm -rf" preference (tw_rm_rf, persisted)
+	// cannot apply here — force the mkfs path for this call only.
+	std::string saved_rm_rf;
+	bool had_rm_rf = DataManager::GetValue(TW_RM_RF_VAR, saved_rm_rf) == 0;
+	bool saved_Use_Rm_Rf = Use_Rm_Rf;
+	DataManager::SetValue(TW_RM_RF_VAR, "0");
+	Use_Rm_Rf = false;
+	bool wipe_ok = Wipe(the_wipe_fs);
+	if (had_rm_rf)
+		DataManager::SetValue(TW_RM_RF_VAR, saved_rm_rf);
+	Use_Rm_Rf = saved_Use_Rm_Rf;
+	if (wipe_ok) {
 		Has_Data_Media = Save_Data_Media;
 		DataManager::SetValue(TW_IS_ENCRYPTED, 0);
 #ifndef TW_OEM_BUILD
@@ -2763,8 +2806,12 @@ bool TWPartition::Wipe_F2FS() {
 	}
 
 	unsigned long long dev_sz = TWFunc::IOCTL_Get_Block_Size(Actual_Block_Device.c_str());
-	if (!dev_sz)
+	if (!dev_sz) {
+		// Silent failure here used to BURY the real cause (dm-default-key
+		// mapper holding the physical device: open() fails EBUSY). Log it.
+		LOGINFO("IOCTL_Get_Block_Size failed on '%s' (device held exclusively? dm mapper alive?)\n", Actual_Block_Device.c_str());
 		return false;
+	}
 
 	if (NeedPreserveFooter)
 		Length < 0 ? dev_sz += Length : dev_sz -= CRYPT_FOOTER_OFFSET;
@@ -2831,7 +2878,7 @@ bool TWPartition::Wipe_F2FS() {
 		}
 	#endif
 
-	#ifdef OF_USE_DMCTL
+	#if defined(OF_USE_DMCTL) || defined(TW_USE_DMCTL)
 	if (TWFunc::Path_Exists("/dev/block/mapper/userdata")) {
 		LOGINFO("OrangeFox: running dmctl before formatting...\n");
 		TWFunc::Exec_Cmd("dmctl delete userdata", false);
@@ -3159,8 +3206,10 @@ bool TWPartition::Raw_Read_Write(PartitionSettings *part_settings) {
 		goto exit;
 	}
 
-	if (part_settings->progress)
+	if (part_settings->progress) {
+		part_settings->progress->SetLabel(Backup_Display_Name);
 		part_settings->progress->SetPartitionSize(part_settings->total_restore_size);
+	}
 
 	while (Remain > 0) {
 		if (Remain < RW_Block_Size)
@@ -3208,8 +3257,10 @@ bool TWPartition::Backup_Dump_Image(PartitionSettings *part_settings) {
 	   gui_msg(Msg("backing_up=Backing up {1}...")(Backup_Display_Name));
 	}
 
-	if (part_settings->progress)
+	if (part_settings->progress) {
+		part_settings->progress->SetLabel(Backup_Display_Name);
 		part_settings->progress->SetPartitionSize(Backup_Size);
+	}
 
 	Backup_FileName = Backup_Name + "." + Current_File_System + ".win";
 	Full_FileName = part_settings->Backup_Folder + "/" + Backup_FileName;
@@ -3315,7 +3366,10 @@ bool TWPartition::Restore_Tar(PartitionSettings *part_settings) {
 	if (!Password.empty())
 		tar.setpassword(Password);
 #endif
-	part_settings->progress->SetPartitionSize(Get_Restore_Size(part_settings));
+	if (part_settings->progress) {
+		part_settings->progress->SetLabel(Backup_Display_Name);
+		part_settings->progress->SetPartitionSize(Get_Restore_Size(part_settings));
+	}
 	if (tar.extractTarFork() != 0)
 		ret = false;
 	else
@@ -3379,6 +3433,7 @@ bool TWPartition::Restore_Image(PartitionSettings *part_settings) {
 
 bool TWPartition::Update_Size(bool Display_Error) {
 	bool ret = false, Was_Already_Mounted = false, ro = false;
+	
 
 	Find_Actual_Block_Device();
 
@@ -3710,6 +3765,7 @@ bool TWPartition::Flash_Image_FI(const string& Filename, ProgressTracking *progr
 	gui_msg(Msg("flashing=Flashing {1}...")(Display_Name));
 	if (progress) {
 		file_size = (unsigned long long)(TWFunc::Get_File_Size(Filename));
+		progress->SetLabel(Display_Name);
 		progress->SetPartitionSize(file_size);
 	}
 	// Sometimes flash image doesn't like to flash due to the first 2KB matching, so we erase first to ensure that it flashes
