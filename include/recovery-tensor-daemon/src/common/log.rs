@@ -11,7 +11,7 @@ macro_rules! logi {
         eprintln!(
             "[recovery-tensor-daemon][{}][I] {}",
             $tag,
-            format!($($arg)*)
+            format_args!($($arg)*)
         );
     }};
 }
@@ -23,7 +23,7 @@ macro_rules! loge {
         eprintln!(
             "[recovery-tensor-daemon][{}][E] {}",
             $tag,
-            format!($($arg)*)
+            format_args!($($arg)*)
         );
     }};
 }
@@ -36,9 +36,11 @@ macro_rules! logd {
         eprintln!(
             "[recovery-tensor-daemon][{}][D] {}",
             $tag,
-            format!($($arg)*)
+            format_args!($($arg)*)
         );
         #[cfg(not(debug_assertions))]
-        let _ = $tag;
+        if false {
+            let _ = ($tag, format_args!($($arg)*));
+        }
     }};
 }

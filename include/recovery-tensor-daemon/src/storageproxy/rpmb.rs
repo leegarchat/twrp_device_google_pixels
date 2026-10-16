@@ -194,7 +194,7 @@ impl Rpmb {
                     }
                     SgStatus::Retry | SgStatus::Fail => {
                         crate::loge!("sp", "rpmb reliable-write SG_IO failed");
-                        break;
+                        return Err(io::Error::new(io::ErrorKind::Other, "rpmb reliable-write failed"));
                     }
                 }
             }
@@ -218,7 +218,7 @@ impl Rpmb {
                     }
                     SgStatus::Retry | SgStatus::Fail => {
                         crate::loge!("sp", "rpmb write SG_IO failed");
-                        break;
+                        return Err(io::Error::new(io::ErrorKind::Other, "rpmb write failed"));
                     }
                 }
             }
@@ -227,8 +227,12 @@ impl Rpmb {
         if read_size > 0 {
             let cdb = make_cdb(CDB_RPMB_READ, read_size as u32);
             match self.sg(SG_DXFER_FROM_DEV, &cdb, out.as_mut_ptr(), read_size as u32)? {
-                SgStatus::Ok | SgStatus::Fail => {}
+                SgStatus::Ok => {}
                 SgStatus::Retry => crate::logi!("sp", "rpmb read: unit attention, data may be stale"),
+                SgStatus::Fail => {
+                    crate::loge!("sp", "rpmb read SG_IO failed");
+                    return Err(io::Error::new(io::ErrorKind::Other, "rpmb read failed"));
+                }
             }
         }
         Ok(out)
@@ -261,7 +265,17 @@ impl SgStatus {
             } else {
                 (0xff, 0xff)
             };
-            if key == 0x00 || key == 0x0f {
+            if key == 0x00 {
+                return SgStatus::Ok;
+            }
+            if key == 0x0f {
+                crate::logi!(
+                    "sp",
+                    "SG_IO sense key=0x0f asc=0x{asc:02x} status={} host={} drv={}, treating as Ok",
+                    h.status,
+                    h.host_status,
+                    h.driver_status
+                );
                 return SgStatus::Ok;
             }
             if key == 0x06 && asc == 0x29 {
@@ -331,7 +345,10 @@ fn scan_sysfs() -> Option<String> {
             continue;
         }
         let dev_link = format!("{SG_CLASS_PATH}/{sg}/device");
-        let target = std::fs::read_link(&dev_link).ok()?.to_string_lossy().into_owned();
+        let Ok(target_path) = std::fs::read_link(&dev_link) else {
+            continue;
+        };
+        let target = target_path.to_string_lossy().into_owned();
         // Must belong to the UFS controller: filters out USB sticks, etc.
         if !(target.contains("ufshcd") || target.contains("ufs")) {
             continue;

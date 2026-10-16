@@ -154,9 +154,13 @@ impl GscDevice {
         // Safety: fd is a valid GSC fd; request code fits i32; &mut req borrows the locked buffer.
         let rc = unsafe { libc::ioctl(self.fd.as_raw_fd(), GSC_IOC_GSA_NOS_CALL as _, &mut req) };
         if rc < 0 {
-            return Err(GscError::Ioctl(io::Error::last_os_error()));
+            let err = io::Error::last_os_error();
+            guard[..args.len()].fill(0);
+            return Err(GscError::Ioctl(err));
         }
         let n = (req.reply_len as usize).min(guard.len());
-        Ok((guard[..n].to_vec(), req.call_status))
+        let reply = guard[..n].to_vec();
+        guard[..args.len().max(n)].fill(0);
+        Ok((reply, req.call_status))
     }
 }

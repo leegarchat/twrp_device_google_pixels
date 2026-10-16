@@ -85,6 +85,21 @@ pub fn run(trusty_dev: &str, rpmb_dev: Option<&str>, data_path: &str) -> Result<
                 if let Err(_e) = daemon.proxy_loop(&conn) {
                     crate::logd!("sp", "proxy loop exited: {_e}");
                 }
+                // Drop Trusty-orphaned handles: file_open forget()s the fd
+                // and the table owns it until STORAGE_FILE_CLOSE. Without
+                // this, a reconnect leaks the fds (fd exhaustion over many
+                // reconnects, tmpfs inode retention after FILE_DELETE, stale
+                // entries passing check_open). Single-threaded here, so no
+                // race with proxy_loop.
+                for handle in daemon.open.drain() {
+                    let fd = handle as libc::c_int;
+                    // Safety: handle came from our own open-handle table,
+                    // removed from it by drain() just above.
+                    unsafe {
+                        libc::fsync(fd);
+                        libc::close(fd);
+                    }
+                }
             }
             Err(e) => {
                 failures += 1;

@@ -160,9 +160,11 @@ fn split_run_args(args: &[String]) -> (Vec<String>, String) {
     let mut i = 0;
     while i < args.len() {
         let a = args[i].as_str();
-        if (a == "-d" || a == "-r" || a == "-p") && i + 1 < args.len() {
+        if a == "-d" || a == "-r" || a == "-p" {
             flags.push(args[i].clone());
-            flags.push(args[i + 1].clone());
+            if i + 1 < args.len() {
+                flags.push(args[i + 1].clone());
+            }
             i += 2;
         } else if a == "-h" || a == "--help" {
             usage();

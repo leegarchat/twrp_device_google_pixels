@@ -4,7 +4,6 @@ version = "1.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Unified recovery daemon for Pixel (Tensor) FBE decryption: Trusty storage proxy (RPMB/UFS) + Titan Mx Weaver HAL proxy"
-repository = "https://github.com/anomalyco/opencode"
 
 [[bin]]
 name = "recovery-tensor-daemon"
