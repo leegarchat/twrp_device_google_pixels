@@ -64,6 +64,7 @@
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 #include <linux/kprobes.h>
+#include <linux/err.h>
 #include <linux/string.h>
 
 MODULE_LICENSE("GPL");
@@ -157,10 +158,16 @@ static int cast_aoc(int v1)
 
     if (!real_get_handle || !real_cast_vote)
         return -ENODEV;
-    if (!vote_handle) {
+    /* get_handle returns NULL when the election does not exist (yet), but
+     * never trust a raw kernel pointer blindly: a cached ERR_PTR would pass
+     * the NULL check and panic the kernel on dereference inside cast_vote.
+     * Reset to NULL so the retry budget keeps applying. */
+    if (IS_ERR_OR_NULL(vote_handle)) {
         vote_handle = real_get_handle(ELECTION_NAME);
-        if (!vote_handle)
+        if (IS_ERR_OR_NULL(vote_handle)) {
+            vote_handle = NULL;
             return -ENODEV;
+        }
         pr_info("aoc_vote_shim: election '%s' handle %p\n", ELECTION_NAME, vote_handle);
     }
     /* Values mirror the stock call sites ((1,1) assert, (0,1) retract);
@@ -183,6 +190,7 @@ static void vote_work_fn(struct work_struct *work)
         return;
     if (resolve_gvotable_symbols() == 0 && cast_aoc(1) == 0) {
         vote_asserted = true;
+        handle_retries = 0;
         pr_info("aoc_vote_shim: AOC vote asserted (host-capable, step=%d)\n",
                 vote_step);
         if (vote_step == 0) {
@@ -233,12 +241,26 @@ static ssize_t shim_write(struct file *file, const char __user *ubuf,
      * (matters after a timed-out acquisition, where the old code dropped
      * the poke because vote_active was still true from init). */
     if (activate) {
+        /* Serialize against a possibly running worker first, then try the
+         * cast synchronously: at poke time (minutes after boot) symbols and
+         * election are normally present, so the vote lands before write()
+         * returns and ready reads 1 immediately (otg_host_shim contract).
+         * Missing pieces fall back to the queued retry below. */
+        vote_active = false;
+        cancel_delayed_work_sync(&vote_work);
         vote_active = true;
-        vote_asserted = false;
-        vote_step = 0;
         handle_retries = 0;
-        mod_delayed_work(system_wq, &vote_work, 0);
-        pr_info("aoc_vote_shim: assert requested\n");
+        if (resolve_gvotable_symbols() == 0 && cast_aoc(1) == 0) {
+            vote_asserted = true;
+            vote_step = 1;
+            schedule_delayed_work(&vote_work, msecs_to_jiffies(REASSERT_1_MS));
+            pr_info("aoc_vote_shim: AOC vote asserted synchronously\n");
+        } else {
+            vote_asserted = false;
+            vote_step = 0;
+            schedule_delayed_work(&vote_work, msecs_to_jiffies(HANDLE_RETRY_MS));
+            pr_info("aoc_vote_shim: assert queued (waiting for gvotable/USB_DR_EL)\n");
+        }
     } else {
         /* Flag first: a worker between retries exits on its own instead
          * of stalling cancel_delayed_work_sync for the full ~30s. */
