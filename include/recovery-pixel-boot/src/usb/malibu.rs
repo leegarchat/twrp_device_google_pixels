@@ -381,10 +381,17 @@ pub fn run_otg_patch() -> Result<(), String> {
 pub fn run_otg_auto() -> ! {
     info("starting (malibu supervisor: vote keeper + otg-usb symlink)");
     loop {
-        // Keeper: re-poke if the shim reports the vote dropped.
-        if !vote_asserted() && Path::new(PROC_SHIM).exists() {
-            info("supervisor: vote not asserted, re-poking shim");
-            let _ = std::fs::write(PROC_SHIM, b"1\n");
+        // Keeper: re-poke if the vote is not asserted; load the shim if
+        // it appeared after boot (e.g. dropped in by hand for testing) —
+        // same contract as the laguna keeper.
+        if !vote_asserted() {
+            if Path::new(PROC_SHIM).exists() {
+                info("supervisor: vote not asserted, re-poking shim");
+                let _ = std::fs::write(PROC_SHIM, b"1\n");
+            } else {
+                info("supervisor: vote shim missing, trying load");
+                load_vote_shim();
+            }
         }
         if pick_otg_disk().is_some() {
             info(&format!(
