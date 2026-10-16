@@ -5502,14 +5502,19 @@ static bool DestroyLogicalPartition_Retry(const std::string& name) {
 		sleep(1);
 		umount2(path.c_str(), MNT_DETACH);
 	}
-	// Fox (malibu format-data): the mapper sweep can hit a dm node with
-	// NO LP metadata entry (field case: bare vendor_dlkm on grizzly while
-	// metadata holds vendor_dlkm_b — creator unknown, node is real).
-	// liblp answers ENOENT and retrying is futile; remove the device
-	// directly via DM_DEV_REMOVE so one stray node no longer fails the
-	// whole format. A mounted/in-use node still fails EBUSY (correct).
-	if (errno == ENOENT || errno == ENXIO) {
-		LOGINFO("no LP entry for %s, removing dm device directly\n", name.c_str());
+	// Fox (malibu format-data, grizzly exp nodes): the mapper sweep can hit
+	// a dm node with NO LP metadata entry (field cases: bare vendor_dlkm
+	// on grizzly while metadata holds vendor_dlkm_b; userdata_exp.ai_256m
+	// and siblings with no usable LP record — creator unknown, node is
+	// real). liblp answers ENOENT/ENXIO, or EINVAL when it refuses the
+	// node outright; retrying liblp is futile either way. Remove the
+	// device directly via DM_DEV_REMOVE so one stray node no longer fails
+	// the whole format ("Unable to unmap dynamic partitions"). A
+	// mounted/in-use node still fails EBUSY (correct); anything else
+	// fails loudly below with its errno preserved for the log.
+	if (errno == ENOENT || errno == ENXIO || errno == EINVAL) {
+		LOGINFO("no LP entry for %s (liblp errno=%d %s), removing dm device directly\n",
+			name.c_str(), errno, strerror(errno));
 		if (FoxRemoveDmDevice(name))
 			return true;
 	}
@@ -5532,9 +5537,14 @@ static bool FoxRemoveDmDevice(const std::string& name) {
 		close(fd);
 		return false;
 	}
+	// Stamp a floor version, not headers: kernels reject any ioctl whose
+	// user minor exceeds their own (EINVAL "ioctl interface mismatch";
+	// live case headers 4.48 vs 6.1/5.x stock kernels). A low stamp is
+	// accepted everywhere we boot (5.10 -> 6.12), and DM_DEV_REMOVE with
+	// a name-only payload needs no features, so nothing is lost.
 	io->version[0] = DM_VERSION_MAJOR;
-	io->version[1] = DM_VERSION_MINOR;
-	io->version[2] = DM_VERSION_PATCHLEVEL;
+	io->version[1] = 0;
+	io->version[2] = 0;
 	io->data_size = bufsize;
 	io->data_start = sizeof(struct dm_ioctl);
 	snprintf(io->name, sizeof(io->name), "%s", name.c_str());
