@@ -1808,24 +1808,14 @@ exit:
 	// checkpoint and make all subsequent writes durable.
 	if (Mount_Point == "/data" && Current_File_System == "f2fs") {
 		std::string cp_opts = Mount_Options;
-		// Drop checkpoint_merge and any checkpoint=disable (plain or with
-		// :pct value) before appending checkpoint=enable: a leftover
-		// disable voids the appended enable on some f2fs backports (or wins
-		// by position), silently keeping recovery writes non-durable — they
-		// look fine in recovery and vanish on next Android boot.
-		for (const char* drop : {"checkpoint_merge", "checkpoint=disable"}) {
-			size_t pos = cp_opts.find(drop);
-			while (pos != std::string::npos) {
-				size_t end = cp_opts.find(',', pos);
-				if (end == std::string::npos) {
-					if (pos > 0 && cp_opts[pos - 1] == ',') pos--;
-					cp_opts.erase(pos);
-					break;
-				}
-				cp_opts.erase(pos, end - pos + 1); // token + following comma
-			}
+		// Remove checkpoint_merge if present, append checkpoint=enable
+		size_t pos = cp_opts.find("checkpoint_merge");
+		if (pos != std::string::npos) {
+			size_t end = pos + strlen("checkpoint_merge");
+			if (end < cp_opts.size() && cp_opts[end] == ',') end++;
+			else if (pos > 0 && cp_opts[pos-1] == ',') pos--;
+			cp_opts.erase(pos, end - pos);
 		}
-		if (!cp_opts.empty() && cp_opts.back() == ',') cp_opts.pop_back();
 		if (!cp_opts.empty()) cp_opts += ",";
 		cp_opts += "checkpoint=enable";
 		if (mount(Actual_Block_Device.c_str(), Mount_Point.c_str(), "f2fs",
@@ -2391,19 +2381,9 @@ bool TWPartition::Wipe_Encryption() {
 	if (!UnMount(true))
 		return false;
 	if (Is_Decrypted && !Decrypted_Block_Device.empty()) {
-		// The dm-default-key mapper (/dev/block/mapper/userdata) holds the
-		// physical userdata device exclusively. Upstream tore it down here
-		// via delete_crypto_blk_dev("userdata"), which no longer exists in
-		// this tree — so remove the node explicitly via device-mapper.
-		// Without this, every probe/ioctl/mount of the physical device
-		// fails EBUSY and the format dies ("Unable to format to remove
-		// encryption", storage dead till reboot). Node name is derived
-		// from our own Decrypted_Block_Device, never hardcoded.
-		std::string dm_node = Decrypted_Block_Device.substr(Decrypted_Block_Device.find_last_of('/') + 1);
-		if (TWFunc::Path_Exists(Decrypted_Block_Device)) {
-			LOGINFO("Removing crypto dm device '%s' before data format...\n", dm_node.c_str());
-			PartitionManager.RemoveDmDevice(dm_node);
-		}
+//		if (delete_crypto_blk_dev((char*)("userdata")) != 0) {
+//			LOGERR("Error deleting crypto block device, continuing anyway.\n");
+//		}
 	}
 #endif
 	Has_Data_Media = false;
@@ -2793,12 +2773,8 @@ bool TWPartition::Wipe_F2FS() {
 	}
 
 	unsigned long long dev_sz = TWFunc::IOCTL_Get_Block_Size(Actual_Block_Device.c_str());
-	if (!dev_sz) {
-		// Silent failure here used to BURY the real cause (dm-default-key
-		// mapper holding the physical device: open() fails EBUSY). Log it.
-		LOGINFO("IOCTL_Get_Block_Size failed on '%s' (device held exclusively? dm mapper alive?)\n", Actual_Block_Device.c_str());
+	if (!dev_sz)
 		return false;
-	}
 
 	if (NeedPreserveFooter)
 		Length < 0 ? dev_sz += Length : dev_sz -= CRYPT_FOOTER_OFFSET;

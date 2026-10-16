@@ -447,7 +447,6 @@ public:
 	int Set_Crypto_Type(const char* crypto_type);                             // Sets encryption type for FDE (block) and FBE (file) devices (ro.crypto.type)
 	void Unlock_Block_Partitions();                                           // Unlock all block devices after update_engine runs
 	bool Unmap_Super_Devices();                                               // Unmap super devices in TWRP
-	bool RemoveDmDevice(const std::string& name);                           // DM_DEV_REMOVE for a mapper node (e.g. crypto "userdata" before data format)
 	bool Check_Pending_Merges();                                              // Check and run pending merges on data for VAB devices
 	bool Disable_AVB2(bool Display_Info);                                     // Disable AVB2.0 in vbmeta/vbmeta_system
 	void Check_UsbOtg_Status();						  // Checks if usb_otg is connected
