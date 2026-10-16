@@ -277,29 +277,7 @@
  	}
  #endif
  	Has_Data_Media = false;
-@@ -2281,7 +2417,20 @@
- 	gui_print("DEBUG: Format_Target_File_System=%s\n", the_wipe_fs.c_str());
- #endif
- 
--	if (Wipe(the_wipe_fs)) {
-+	// A crypto format must remake the filesystem: rm -rf mode would try to
-+	// mount ciphertext (impossible by design once keys/mapper are gone) and
-+	// die mounting. The UI "use rm -rf" preference (tw_rm_rf, persisted)
-+	// cannot apply here — force the mkfs path for this call only.
-+	std::string saved_rm_rf;
-+	bool had_rm_rf = DataManager::GetValue(TW_RM_RF_VAR, saved_rm_rf) == 0;
-+	bool saved_Use_Rm_Rf = Use_Rm_Rf;
-+	DataManager::SetValue(TW_RM_RF_VAR, "0");
-+	Use_Rm_Rf = false;
-+	bool wipe_ok = Wipe(the_wipe_fs);
-+	if (had_rm_rf)
-+		DataManager::SetValue(TW_RM_RF_VAR, saved_rm_rf);
-+	Use_Rm_Rf = saved_Use_Rm_Rf;
-+	if (wipe_ok) {
- 		Has_Data_Media = Save_Data_Media;
- 		DataManager::SetValue(TW_IS_ENCRYPTED, 0);
- #ifndef TW_OEM_BUILD
-@@ -2657,8 +2806,12 @@
+@@ -2657,8 +2793,12 @@
  	}
  
  	unsigned long long dev_sz = TWFunc::IOCTL_Get_Block_Size(Actual_Block_Device.c_str());
@@ -313,7 +291,7 @@
  
  	if (NeedPreserveFooter)
  		Length < 0 ? dev_sz += Length : dev_sz -= CRYPT_FOOTER_OFFSET;
-@@ -2677,9 +2830,30 @@
+@@ -2677,9 +2817,30 @@
  	if (Needs_Fs_Compress)
  		f2fs_command += " -O compression,extra_attr";
  
@@ -346,7 +324,7 @@
  		f2fs_command += " && sload_f2fs -t /data " + Actual_Block_Device;
  	}
  
-@@ -2704,7 +2878,7 @@
+@@ -2704,7 +2865,7 @@
  		}
  	#endif
  
@@ -355,7 +333,7 @@
  	if (TWFunc::Path_Exists("/dev/block/mapper/userdata")) {
  		LOGINFO("OrangeFox: running dmctl before formatting...\n");
  		TWFunc::Exec_Cmd("dmctl delete userdata", false);
-@@ -2919,7 +3093,17 @@
+@@ -2919,7 +3080,17 @@
  		}
  	}
  	tar.part_settings = part_settings;
@@ -374,7 +352,7 @@
  	tar.setdir(Backup_Path);
  	tar.setfn(Full_FileName);
  	tar.setsize(Backup_Size);
-@@ -3022,8 +3206,10 @@
+@@ -3022,8 +3193,10 @@
  		goto exit;
  	}
  
@@ -386,7 +364,7 @@
  
  	while (Remain > 0) {
  		if (Remain < RW_Block_Size)
-@@ -3071,8 +3257,10 @@
+@@ -3071,8 +3244,10 @@
  	   gui_msg(Msg("backing_up=Backing up {1}...")(Backup_Display_Name));
  	}
  
@@ -398,7 +376,7 @@
  
  	Backup_FileName = Backup_Name + "." + Current_File_System + ".win";
  	Full_FileName = part_settings->Backup_Folder + "/" + Backup_FileName;
-@@ -3178,7 +3366,10 @@
+@@ -3178,7 +3353,10 @@
  	if (!Password.empty())
  		tar.setpassword(Password);
  #endif
@@ -410,7 +388,7 @@
  	if (tar.extractTarFork() != 0)
  		ret = false;
  	else
-@@ -3242,6 +3433,7 @@
+@@ -3242,6 +3420,7 @@
  
  bool TWPartition::Update_Size(bool Display_Error) {
  	bool ret = false, Was_Already_Mounted = false, ro = false;
@@ -418,7 +396,7 @@
  
  	Find_Actual_Block_Device();
  
-@@ -3573,6 +3765,7 @@
+@@ -3573,6 +3752,7 @@
  	gui_msg(Msg("flashing=Flashing {1}...")(Display_Name));
  	if (progress) {
  		file_size = (unsigned long long)(TWFunc::Get_File_Size(Filename));

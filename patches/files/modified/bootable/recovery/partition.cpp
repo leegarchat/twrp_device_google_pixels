@@ -2417,20 +2417,7 @@ bool TWPartition::Wipe_Encryption() {
 	gui_print("DEBUG: Format_Target_File_System=%s\n", the_wipe_fs.c_str());
 #endif
 
-	// A crypto format must remake the filesystem: rm -rf mode would try to
-	// mount ciphertext (impossible by design once keys/mapper are gone) and
-	// die mounting. The UI "use rm -rf" preference (tw_rm_rf, persisted)
-	// cannot apply here — force the mkfs path for this call only.
-	std::string saved_rm_rf;
-	bool had_rm_rf = DataManager::GetValue(TW_RM_RF_VAR, saved_rm_rf) == 0;
-	bool saved_Use_Rm_Rf = Use_Rm_Rf;
-	DataManager::SetValue(TW_RM_RF_VAR, "0");
-	Use_Rm_Rf = false;
-	bool wipe_ok = Wipe(the_wipe_fs);
-	if (had_rm_rf)
-		DataManager::SetValue(TW_RM_RF_VAR, saved_rm_rf);
-	Use_Rm_Rf = saved_Use_Rm_Rf;
-	if (wipe_ok) {
+	if (Wipe(the_wipe_fs)) {
 		Has_Data_Media = Save_Data_Media;
 		DataManager::SetValue(TW_IS_ENCRYPTED, 0);
 #ifndef TW_OEM_BUILD
