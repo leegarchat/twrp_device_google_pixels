@@ -34,7 +34,25 @@ adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 из `/first_stage_ramdisk/system/etc/fstab.<family>` загруженного слота
 (вендорные DFE-правки и наши снапшоты обходятся); отсутствующие ноды
 скипаются, а без exp-участников (пустой сет или одинокий zoned) легаси-путь
-однодевайсных семей остаётся нетронутым.
+однодевайсных семей остаётся нетронутым. Нечитаемый fstab или задекларированный
+exp-сет с нулём живых нод — громкий отказ (fail closed), а не угадывание.
+
+Стадии в `/tmp/recovery.log`:
+1. `FoxFstab: parsing ...` + `/data set: N device(s)` — что нашлось;
+2. quiesce: MTP off + `FoxTeardown: unmounted ...` (обратимые анмаунты);
+3. merge-check (Unmap уже по отмонтированному стеку), затем снос dm
+   сверху вниз (`FoxTeardown: removing dm mapping ...`) — после этого ребут
+   пересоздаст стек через расшифровку, ключи ещё в `/metadata`;
+4. `FoxFormat: erasing /data...` — discard userdata с проверкой header-kill,
+   затем discard компаньонов (zoned отдаётся на provision vold),
+   вайп `/metadata`, сброс memtag, Titan M nuke (`titan-wipe`), вайп
+   `trusty_userdata`, misc-флаги. `Can_Be_Mounted=false`: vold форматирует
+   сет при следующей загрузке Android. Проверка header доказывает только
+   убийство заголовка, не весь вайп; крипто-стирание завершают вайп
+   `/metadata` + nuke Титана.
+
+`EBUSY` на teardown = что-то держит `/data`: чистый ребут в рекавери и
+повтор; до этой точки ничего не уничтожается.
 
 Стадии в `/tmp/recovery.log`:
 1. `FoxFstab: parsing ...` + `/data set: N device(s)` — что нашлось;

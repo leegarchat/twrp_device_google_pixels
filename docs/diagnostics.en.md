@@ -34,21 +34,27 @@ factory reset. The live geometry is parsed at Format time from the booted slot's
 `/first_stage_ramdisk/system/etc/fstab.<family>` (vendor DFE edits and our
 snapshots are bypassed); missing nodes are skipped, and without exp members
 (empty set, or a lone zoned companion) the legacy single-device path stays
-untouched.
+untouched. An unscannable fstab or a declared exp set with zero surviving
+nodes refuses the format loudly (fail closed) instead of guessing.
 
 Stages in `/tmp/recovery.log`:
 1. `FoxFstab: parsing ...` + `/data set: N device(s)` — what was found;
-2. `FoxTeardown: unmounted ...` + `removing dm mapping ...` — reverse-order
-   detach of the decrypted stack before `Unmap_Super_Devices` (a `still in use`
-   error here means something holds `/data`: close it, retry; nothing is
-   destroyed yet);
-3. `FoxFormat: erasing /data...` — userdata discard with blank verification,
-   then `/metadata` wipe, memtag reset, `trusty_userdata` wipe, misc flags.
-   `Can_Be_Mounted=false`: vold formats the set on the next Android boot
-   («Android sets up /data on its next boot» in a successful log).
+2. quiesce: MTP off + `FoxTeardown: unmounted ...` (reversible unmounts);
+3. merge check (Unmap runs on the unmounted stack), then dm removal top-down
+   (`FoxTeardown: removing dm mapping ...`) — past this, a reboot recreates
+   the stack via decrypt, keys are still in `/metadata`;
+4. `FoxFormat: erasing /data...` — userdata discard with header-kill
+   verification, per-companion discards (zoned is left to vold provisioning),
+   then `/metadata` wipe, memtag reset, Titan M nuke (`titan-wipe`), wipe of
+   `trusty_userdata`, misc flags. `Can_Be_Mounted=false`: vold formats the
+   set on the next Android boot («Android sets up /data on its next boot»).
+   Header verify proves the 4K header kill only, never the whole wipe;
+   crypto-erasure is complete via the `/metadata` wipe + Titan nuke.
 
-`EINVAL`/`EBUSY` at `removing dynamic partition: userdata_exp.*` = build
-without the teardown (update first, then report).
+`EBUSY` at teardown = something still holds `/data`: reboot recovery
+cleanly and retry; nothing is destroyed before that point. `EINVAL`/`EBUSY`
+at `removing dynamic partition: userdata_exp.*` = build without the
+teardown (update first, then report).
 
 ## Full protocol for testers
 
