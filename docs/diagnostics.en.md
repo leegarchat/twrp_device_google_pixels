@@ -56,6 +56,15 @@ cleanly and retry; nothing is destroyed before that point. `EINVAL`/`EBUSY`
 at `removing dynamic partition: userdata_exp.*` = build without the
 teardown (update first, then report).
 
+DFE/plaintext units (no live crypto stack) keep legacy rm -rf-flavored
+paths — there is nothing to unbind. Plain `mkfs` on a multi-device set
+stays unsupported everywhere: tick the rm -rf checkbox for `/data`
+wipe/restore, never plain-format.
+
+Honest label: this Format Data is crypto-erasure (kills keys in
+`/metadata` + Titan M, discards the set). It does not guarantee physical
+zeroing of every UFS block.
+
 ## Full protocol for testers
 
 [`tester-guide.en.md`](tester-guide.en.md) — installation, outcomes A–D,
