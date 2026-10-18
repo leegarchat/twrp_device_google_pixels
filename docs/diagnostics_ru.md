@@ -24,7 +24,30 @@ adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 | Нет USB/OTG | `vbus_paths`, `patch_dwc3`, UDC-привязка в логе `otg-auto` |
 | GUI тормозит | `TW_FRAMERATE` в сборочном логе (`-DTW_FRAMERATE=` в cflags) |
 | Фолд: картинка/тач на разных экранах | `DOF_SCREEN_W/H`, выбор DSI-коннектора (cover-патч) |
-| Format Data падает только на шифрованном (malibu) | `Unmap_Super_Devices` в `/tmp/recovery.log`: `userdata_exp.*` должны скипаться, а не удаляться (`EINVAL`/`EBUSY` = старая сборка) |
+| Format Data падает | Строки `FoxFstab`/`FoxTeardown`/`FoxFormat` в `/tmp/recovery.log` (см. ниже) |
+
+## Format Data на мультидевайсной /data
+
+На аппаратах, чей стоковый `fstab` декларирует сет девайсов `/data`
+(`device=zoned|exp|exp_alias`, семьи malibu/laguna), рекавери не строит f2fs —
+повторяет стоковый factory reset. Живая геометрия парсится в момент Format
+из `/first_stage_ramdisk/system/etc/fstab.<family>` загруженного слота
+(вендорные DFE-правки и наши снапшоты обходятся); отсутствующие ноды
+скипаются, пустой сет оставляет легаси-путь однодевайсных семей нетронутым.
+
+Стадии в `/tmp/recovery.log`:
+1. `FoxFstab: parsing ...` + `/data set: N device(s)` — что нашлось;
+2. `FoxTeardown: unmounted ...` + `removing dm mapping ...` — обратное снятие
+   расшифрованного стека до `Unmap_Super_Devices` (ошибка `still in use`
+   означает, что что-то держит `/data`: закрыть, повторить; до этого момента
+   ничего не уничтожается);
+3. `FoxFormat: erasing /data...` — discard userdata с проверкой blank,
+   затем вайп `/metadata`, сброс memtag, вайп `trusty_userdata`, misc-флаги.
+   `Can_Be_Mounted=false`: vold форматирует сет при следующей загрузке
+   Android (в успешном логе — «Android sets up /data on its next boot»).
+
+`EINVAL`/`EBUSY` на `removing dynamic partition: userdata_exp.*` = сборка
+без teardown (сначала обновиться, потом репортить).
 
 ## Полный протокол для тестеров
 
