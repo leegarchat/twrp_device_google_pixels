@@ -24,6 +24,7 @@ adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 | Нет USB/OTG | `vbus_paths`, `patch_dwc3`, UDC-привязка в логе `otg-auto` |
 | GUI тормозит | `TW_FRAMERATE` в сборочном логе (`-DTW_FRAMERATE=` в cflags) |
 | Фолд: картинка/тач на разных экранах | `DOF_SCREEN_W/H`, выбор DSI-коннектора (cover-патч) |
+| Format Data падает только на шифрованном (malibu) | `Unmap_Super_Devices` в `/tmp/recovery.log`: `userdata_exp.*` должны скипаться, а не удаляться (`EINVAL`/`EBUSY` = старая сборка) |
 
 ## Полный протокол для тестеров
 

@@ -5603,7 +5603,16 @@ bool TWPartitionManager::Unmap_Super_Devices() {
 		while ((de = readdir(d)) != NULL) {
 			if (de->d_type == DT_LNK) {
 				std::string partition = de->d_name;
-				if (strcmp(partition.c_str(),"userdata") != 0){
+				if (strcmp(partition.c_str(),"userdata") != 0
+					&& partition.compare(0, 12, "userdata_exp") != 0) {
+					// Fox (malibu Format Data, grizzly exp nodes): skip
+					// userdata_exp.* alongside userdata. They are vold
+					// crypto (fstab device=exp*) dm devices, not LP super
+					// volumes, and stay held while /data (dm-7) is mounted:
+					// DestroyLogicalPartition answers EINVAL and direct
+					// DM_DEV_REMOVE EBUSY, aborting the whole format
+					// ("works when not encrypted" — nodes absent there).
+					// /data teardown belongs to Wipe_Encryption, not Unmap.
 					// Fox: destroy only real dm devices. Slot-less aliases
 					// (field case: mapper/vendor_dlkm -> vendor_dlkm_a left
 					// by siw map) are symlinks to another mapper entry, not

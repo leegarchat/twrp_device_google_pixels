@@ -24,6 +24,7 @@ adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 | No USB/OTG | `vbus_paths`, `patch_dwc3`, UDC binding in the `otg-auto` log |
 | Slow GUI | `TW_FRAMERATE` in the build log (`-DTW_FRAMERATE=` in cflags) |
 | Fold: image/touch on different screens | `DOF_SCREEN_W/H`, DSI connector selection (cover patch) |
+| Format Data fails only when encrypted (malibu) | `Unmap_Super_Devices` in `/tmp/recovery.log`: `userdata_exp.*` must be skipped, not removed (`EINVAL`/`EBUSY` = old build) |
 
 ## Full protocol for testers
 
