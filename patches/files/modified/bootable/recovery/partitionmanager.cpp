@@ -2233,6 +2233,7 @@ struct FoxDataDevices {
 	bool valid = false;   // a /data fstab line was found
 	bool is_zoned = false;
 	bool has_exp = false; // any surviving non-zoned member: true multi-device set
+	bool has_unknown = false; // unknown device= kind seen: fail closed, never guess
 	int declared_exp = 0; // non-zoned device= entries before access filtering
 	std::vector<std::string> devices;  // access()-checked user_devices
 	std::vector<int> aliased;          // 1 for exp_alias entries
@@ -5662,29 +5663,22 @@ static std::string FoxStockFstabPath(void) {
 // node that exists on this unit form the set; missing nodes (zoned on some
 // SKUs, DFE-stripped units) are skipped loudly, never guessed.
 static FoxDataDevices FoxParseStockDataDevices(void) {
-	// Parsed once per boot: the fstab does not change under a booted
-	// recovery, and a single snapshot avoids ueventd-race windows between
-	// repeated scans.
-	static bool done = false;
-	static FoxDataDevices cached;
-	if (done)
-		return cached;
+	// Parsed fresh on every call (one small file): no stale snapshot across
+	// ueventd races, and guards in other translation units always see the
+	// live tree. First_stage is immutable for the booted slot.
 	FoxDataDevices out;
 	std::string path = FoxStockFstabPath();
 	if (path.empty()) {
 		LOGINFO("FoxFstab: no stock family fstab found\n");
-		done = true;
-		return cached = out;
+		return out;
 	}
 	FILE* f = fopen(path.c_str(), "r");
 	if (!f) {
 		LOGINFO("FoxFstab: cannot open %s\n", path.c_str());
-		done = true;
-		return cached = out;
+		return out;
 	}
 	LOGINFO("FoxFstab: parsing %s\n", path.c_str());
 	char linebuf[4096];
-	std::vector<std::string> fallback;
 	while (fgets(linebuf, sizeof(linebuf), f) != NULL) {
 		if (linebuf[0] == '#' || linebuf[0] == '\n')
 			continue;
@@ -5696,11 +5690,8 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 			fields.push_back(tok);
 		if (fields.size() < 5 || fields[1] != "/data")
 			continue;
-		if (fields[2] != "f2fs") {
-			if (fallback.empty())
-				fallback = fields;  // ext4 line as last resort
-			continue;
-		}
+		if (fields[2] != "f2fs")
+			continue;  // only the f2fs line carries the live device set
 		std::vector<std::string> flags = android::base::Split(fields[4], ",");
 		for (size_t i = 0; i < flags.size(); i++) {
 			if (flags[i].compare(0, 7, "device=") != 0)
@@ -5714,6 +5705,12 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
 			if (kind != "zoned")
 				out.declared_exp++;
+			if (kind != "zoned" && kind != "exp" && kind != "exp_alias") {
+				LOGERR("FoxFstab: unknown device kind '%s' — refusing to guess the set (fail closed)\n",
+					kind.c_str());
+				out.has_unknown = true;
+				continue;
+			}
 			if (access(dev.c_str(), F_OK) != 0) {
 				LOGINFO("FoxFstab: %s absent on this unit, skipping\n", dev.c_str());
 				continue;
@@ -5722,45 +5719,25 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 				out.is_zoned = true;
 			else
 				out.has_exp = true;
-			if (kind != "zoned" && kind != "exp" && kind != "exp_alias")
-				LOGINFO("FoxFstab: unknown device kind '%s', keeping as plain\n", kind.c_str());
 			out.devices.push_back(dev);
 			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
 			out.zoned.push_back(kind == "zoned" ? 1 : 0);
 		}
+		if (out.has_unknown)
+			break;
 		out.valid = true;
 		break;
 	}
-	if (!out.valid && !fallback.empty() && fallback.size() >= 5) {
-		// No f2fs /data line (DFE unit?): parse the fallback line the same way.
-		std::vector<std::string> flags = android::base::Split(fallback[4], ",");
-		for (size_t i = 0; i < flags.size(); i++) {
-			if (flags[i].compare(0, 7, "device=") != 0)
-				continue;
-			std::string arg = flags[i].substr(7);
-			size_t colon = arg.find(':');
-			if (colon == std::string::npos)
-				continue;
-			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
-			if (kind != "zoned")
-				out.declared_exp++;
-			if (access(dev.c_str(), F_OK) != 0)
-				continue;
-			if (kind == "zoned")
-				out.is_zoned = true;
-			else
-				out.has_exp = true;
-			out.devices.push_back(dev);
-			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
-			out.zoned.push_back(kind == "zoned" ? 1 : 0);
-		}
-		out.valid = true;
-	}
 	fclose(f);
+	if (out.has_unknown) {
+		LOGERR("FoxFstab: unknown device kind present — set rejected (fail closed)\n");
+		out.valid = false;
+		out.devices.clear();
+		out.has_exp = false;
+	}
 	LOGINFO("FoxFstab: /data set: %zu device(s), zoned=%d, declared_exp=%d\n",
 		out.devices.size(), out.is_zoned ? 1 : 0, out.declared_exp);
-	done = true;
-	return cached = out;
+	return out;
 }
 
 // Fox: unmount every mount sourced from the crypto dm stack and everything
@@ -5890,21 +5867,26 @@ static bool FoxEraseUserdata(const std::string& device, bool* blank) {
 		return false;
 	}
 	uint64_t range[2] = {0, size};
-	if (ioctl(fd, BLKSECDISCARD, &range) != 0) {
+	bool discarded = (ioctl(fd, BLKSECDISCARD, &range) == 0);
+	if (!discarded) {
 		LOGINFO("FoxFormat: secure discard failed, used discard instead\n");
 		range[0] = 0;
 		range[1] = size;
-		if (ioctl(fd, BLKDISCARD, &range) != 0) {
-			LOGERR("FoxFormat: unable to discard %s.\n", path.c_str());
-			close(fd);
-			return false;
-		}
-		const char zeros[4096] = {};
-		if (::pwrite(fd, zeros, sizeof(zeros), 0) != (ssize_t)sizeof(zeros)
-				|| ::fsync(fd) != 0) {
-			close(fd);
-			return true;  // discarded, but blank is unverified
-		}
+		discarded = (ioctl(fd, BLKDISCARD, &range) == 0);
+	}
+	if (!discarded) {
+		LOGERR("FoxFormat: unable to discard %s.\n", path.c_str());
+		close(fd);
+		return false;
+	}
+	// Always zero the header after any successful discard: secure discard
+	// does not promise zeros, and the header-kill read-back below must test
+	// what is actually on the medium.
+	const char zeros[4096] = {};
+	if (::pwrite(fd, zeros, sizeof(zeros), 0) != (ssize_t)sizeof(zeros)
+			|| ::fsync(fd) != 0) {
+		close(fd);
+		return true;  // discarded, but the header kill is unverified
 	}
 	int dfd = open(path.c_str(), O_RDONLY | O_DIRECT | O_CLOEXEC);
 	bool direct = (dfd >= 0);
@@ -5918,7 +5900,11 @@ static bool FoxEraseUserdata(const std::string& device, bool* blank) {
 	void* buf = NULL;
 	bool zeros_ok = false;
 	if (dfd >= 0 && posix_memalign(&buf, 4096, 4096) == 0) {
-		zeros_ok = (::pread(dfd, buf, 4096, 0) == 4096);
+		ssize_t n;
+		do {
+			n = ::pread(dfd, buf, 4096, 0);
+		} while (n < 0 && errno == EINTR);
+		zeros_ok = (n == 4096);
 		uint8_t* bytes = static_cast<uint8_t*>(buf);
 		for (int i = 0; zeros_ok && i < 4096; i++)
 			zeros_ok = (bytes[i] == 0);

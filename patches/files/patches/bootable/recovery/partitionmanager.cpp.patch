@@ -394,7 +394,7 @@
  			if (!Backup_Partition(&part_settings))
  				return false;
  		} else {
-@@ -1955,9 +2220,50 @@
+@@ -1955,9 +2220,51 @@
  	}
  }
  
@@ -411,6 +411,7 @@
 +	bool valid = false;   // a /data fstab line was found
 +	bool is_zoned = false;
 +	bool has_exp = false; // any surviving non-zoned member: true multi-device set
++	bool has_unknown = false; // unknown device= kind seen: fail closed, never guess
 +	int declared_exp = 0; // non-zoned device= entries before access filtering
 +	std::vector<std::string> devices;  // access()-checked user_devices
 +	std::vector<int> aliased;          // 1 for exp_alias entries
@@ -445,7 +446,7 @@
  	TWPartition* dat = Find_Partition_By_Path("/data");
  	TWPartition* metadata = Find_Partition_By_Path("/metadata");
  	bool ret = false;
-@@ -1965,6 +2271,20 @@
+@@ -1965,6 +2272,20 @@
  		metadata->UnMount(false);
  
  	if (dat != NULL) {
@@ -466,7 +467,7 @@
  		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
  		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
  		#endif
-@@ -1979,6 +2299,7 @@
+@@ -1979,6 +2300,7 @@
  				return false;
  		}
  		ret = dat->Wipe_Encryption();
@@ -474,7 +475,7 @@
  	} else {
  		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/data"));
  		return false;
-@@ -2087,6 +2408,16 @@
+@@ -2087,6 +2409,16 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -491,7 +492,7 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2525,10 @@
+@@ -2194,7 +2526,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -503,7 +504,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2668,20 @@
+@@ -2334,6 +2669,20 @@
  #endif
  }
  
@@ -524,7 +525,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2744,17 @@
+@@ -2396,6 +2745,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -542,7 +543,7 @@
  
  			return 0;
  		} else {
-@@ -2859,17 +3218,102 @@
+@@ -2859,17 +3219,102 @@
    return true;
  }
  
@@ -645,7 +646,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3343,22 @@
+@@ -2899,8 +3344,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -669,7 +670,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3448,13 @@
+@@ -2990,6 +3449,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -683,7 +684,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -4662,7 +5127,12 @@
+@@ -4662,7 +5128,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -697,7 +698,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5310,823 @@
+@@ -4840,6 +5311,808 @@
  	}
  }
  
@@ -1053,29 +1054,22 @@
 +// node that exists on this unit form the set; missing nodes (zoned on some
 +// SKUs, DFE-stripped units) are skipped loudly, never guessed.
 +static FoxDataDevices FoxParseStockDataDevices(void) {
-+	// Parsed once per boot: the fstab does not change under a booted
-+	// recovery, and a single snapshot avoids ueventd-race windows between
-+	// repeated scans.
-+	static bool done = false;
-+	static FoxDataDevices cached;
-+	if (done)
-+		return cached;
++	// Parsed fresh on every call (one small file): no stale snapshot across
++	// ueventd races, and guards in other translation units always see the
++	// live tree. First_stage is immutable for the booted slot.
 +	FoxDataDevices out;
 +	std::string path = FoxStockFstabPath();
 +	if (path.empty()) {
 +		LOGINFO("FoxFstab: no stock family fstab found\n");
-+		done = true;
-+		return cached = out;
++		return out;
 +	}
 +	FILE* f = fopen(path.c_str(), "r");
 +	if (!f) {
 +		LOGINFO("FoxFstab: cannot open %s\n", path.c_str());
-+		done = true;
-+		return cached = out;
++		return out;
 +	}
 +	LOGINFO("FoxFstab: parsing %s\n", path.c_str());
 +	char linebuf[4096];
-+	std::vector<std::string> fallback;
 +	while (fgets(linebuf, sizeof(linebuf), f) != NULL) {
 +		if (linebuf[0] == '#' || linebuf[0] == '\n')
 +			continue;
@@ -1087,11 +1081,8 @@
 +			fields.push_back(tok);
 +		if (fields.size() < 5 || fields[1] != "/data")
 +			continue;
-+		if (fields[2] != "f2fs") {
-+			if (fallback.empty())
-+				fallback = fields;  // ext4 line as last resort
-+			continue;
-+		}
++		if (fields[2] != "f2fs")
++			continue;  // only the f2fs line carries the live device set
 +		std::vector<std::string> flags = android::base::Split(fields[4], ",");
 +		for (size_t i = 0; i < flags.size(); i++) {
 +			if (flags[i].compare(0, 7, "device=") != 0)
@@ -1105,6 +1096,12 @@
 +			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
 +			if (kind != "zoned")
 +				out.declared_exp++;
++			if (kind != "zoned" && kind != "exp" && kind != "exp_alias") {
++				LOGERR("FoxFstab: unknown device kind '%s' — refusing to guess the set (fail closed)\n",
++					kind.c_str());
++				out.has_unknown = true;
++				continue;
++			}
 +			if (access(dev.c_str(), F_OK) != 0) {
 +				LOGINFO("FoxFstab: %s absent on this unit, skipping\n", dev.c_str());
 +				continue;
@@ -1113,45 +1110,25 @@
 +				out.is_zoned = true;
 +			else
 +				out.has_exp = true;
-+			if (kind != "zoned" && kind != "exp" && kind != "exp_alias")
-+				LOGINFO("FoxFstab: unknown device kind '%s', keeping as plain\n", kind.c_str());
 +			out.devices.push_back(dev);
 +			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
 +			out.zoned.push_back(kind == "zoned" ? 1 : 0);
 +		}
++		if (out.has_unknown)
++			break;
 +		out.valid = true;
 +		break;
 +	}
-+	if (!out.valid && !fallback.empty() && fallback.size() >= 5) {
-+		// No f2fs /data line (DFE unit?): parse the fallback line the same way.
-+		std::vector<std::string> flags = android::base::Split(fallback[4], ",");
-+		for (size_t i = 0; i < flags.size(); i++) {
-+			if (flags[i].compare(0, 7, "device=") != 0)
-+				continue;
-+			std::string arg = flags[i].substr(7);
-+			size_t colon = arg.find(':');
-+			if (colon == std::string::npos)
-+				continue;
-+			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
-+			if (kind != "zoned")
-+				out.declared_exp++;
-+			if (access(dev.c_str(), F_OK) != 0)
-+				continue;
-+			if (kind == "zoned")
-+				out.is_zoned = true;
-+			else
-+				out.has_exp = true;
-+			out.devices.push_back(dev);
-+			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
-+			out.zoned.push_back(kind == "zoned" ? 1 : 0);
-+		}
-+		out.valid = true;
-+	}
 +	fclose(f);
++	if (out.has_unknown) {
++		LOGERR("FoxFstab: unknown device kind present — set rejected (fail closed)\n");
++		out.valid = false;
++		out.devices.clear();
++		out.has_exp = false;
++	}
 +	LOGINFO("FoxFstab: /data set: %zu device(s), zoned=%d, declared_exp=%d\n",
 +		out.devices.size(), out.is_zoned ? 1 : 0, out.declared_exp);
-+	done = true;
-+	return cached = out;
++	return out;
 +}
 +
 +// Fox: unmount every mount sourced from the crypto dm stack and everything
@@ -1281,21 +1258,26 @@
 +		return false;
 +	}
 +	uint64_t range[2] = {0, size};
-+	if (ioctl(fd, BLKSECDISCARD, &range) != 0) {
++	bool discarded = (ioctl(fd, BLKSECDISCARD, &range) == 0);
++	if (!discarded) {
 +		LOGINFO("FoxFormat: secure discard failed, used discard instead\n");
 +		range[0] = 0;
 +		range[1] = size;
-+		if (ioctl(fd, BLKDISCARD, &range) != 0) {
-+			LOGERR("FoxFormat: unable to discard %s.\n", path.c_str());
-+			close(fd);
-+			return false;
-+		}
-+		const char zeros[4096] = {};
-+		if (::pwrite(fd, zeros, sizeof(zeros), 0) != (ssize_t)sizeof(zeros)
-+				|| ::fsync(fd) != 0) {
-+			close(fd);
-+			return true;  // discarded, but blank is unverified
-+		}
++		discarded = (ioctl(fd, BLKDISCARD, &range) == 0);
++	}
++	if (!discarded) {
++		LOGERR("FoxFormat: unable to discard %s.\n", path.c_str());
++		close(fd);
++		return false;
++	}
++	// Always zero the header after any successful discard: secure discard
++	// does not promise zeros, and the header-kill read-back below must test
++	// what is actually on the medium.
++	const char zeros[4096] = {};
++	if (::pwrite(fd, zeros, sizeof(zeros), 0) != (ssize_t)sizeof(zeros)
++			|| ::fsync(fd) != 0) {
++		close(fd);
++		return true;  // discarded, but the header kill is unverified
 +	}
 +	int dfd = open(path.c_str(), O_RDONLY | O_DIRECT | O_CLOEXEC);
 +	bool direct = (dfd >= 0);
@@ -1309,7 +1291,11 @@
 +	void* buf = NULL;
 +	bool zeros_ok = false;
 +	if (dfd >= 0 && posix_memalign(&buf, 4096, 4096) == 0) {
-+		zeros_ok = (::pread(dfd, buf, 4096, 0) == 4096);
++		ssize_t n;
++		do {
++			n = ::pread(dfd, buf, 4096, 0);
++		} while (n < 0 && errno == EINTR);
++		zeros_ok = (n == 4096);
 +		uint8_t* bytes = static_cast<uint8_t*>(buf);
 +		for (int i = 0; zeros_ok && i < 4096; i++)
 +			zeros_ok = (bytes[i] == 0);
@@ -1521,7 +1507,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6144,13 @@
+@@ -4857,13 +6130,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1537,7 +1523,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6169,39 @@
+@@ -4882,9 +6155,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
