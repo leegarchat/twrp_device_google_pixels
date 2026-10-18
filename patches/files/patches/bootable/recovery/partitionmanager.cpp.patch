@@ -1,9 +1,10 @@
 --- a/bootable/recovery/partitionmanager.cpp
 +++ b/bootable/recovery/partitionmanager.cpp
-@@ -27,10 +27,13 @@
+@@ -27,10 +27,14 @@
  #include <unistd.h>
  #include <map>
  #include <vector>
++#include <algorithm>
 +#include <fstream>
 +#include <sstream>
  #include <dirent.h>
@@ -14,7 +15,7 @@
  #include <grp.h>
  #include <pwd.h>
  #include <zlib.h>
-@@ -40,6 +43,8 @@
+@@ -40,6 +44,8 @@
  #include <linux/fs.h>
  #include <sys/mount.h>
  #include <sys/poll.h>
@@ -23,7 +24,7 @@
  #include <sys/socket.h>
  #include <sys/stat.h>
  #include <sys/types.h>
-@@ -137,6 +142,87 @@
+@@ -137,6 +143,87 @@
  
  std::string additional_fstab = "/etc/additional.fstab";
  
@@ -111,7 +112,7 @@
  TWPartitionManager::TWPartitionManager(void) {
  	mtp_was_enabled = false;
  	mtp_write_fd = -1;
-@@ -243,8 +329,32 @@
+@@ -243,8 +330,32 @@
  	#endif
  	return ver;
  }
@@ -145,7 +146,7 @@
  	// Fetch the Keymaster Service version to be started
  	std::string version;
  #ifndef TW_FORCE_KEYMASTER_VER
-@@ -533,6 +643,10 @@
+@@ -533,6 +644,10 @@
  	if (recovery_mode)
  		Process_Keymaster_Version(ven, false);
  	if (ven) ven->UnMount(Display_Error);
@@ -156,7 +157,7 @@
  	return true;
  }
  
-@@ -676,6 +790,58 @@
+@@ -676,6 +791,58 @@
  	return true;
  }
  
@@ -215,7 +216,7 @@
  void TWPartitionManager::Decrypt_Data() {
  	#ifdef TW_INCLUDE_CRYPTO
  	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
-@@ -687,9 +853,60 @@
+@@ -687,9 +854,60 @@
  				Mount_By_Path(Decrypt_Data->Key_Directory, false);
  		if (!Decrypt_Data->Key_Directory.empty()) {
  			Set_Crypto_Type("file");
@@ -277,7 +278,7 @@
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +916,45 @@
+@@ -699,9 +917,45 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -323,7 +324,7 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -709,6 +962,7 @@
+@@ -709,6 +963,7 @@
  			} else {
  				LOGINFO("Unable to decrypt metadata encryption\n");
  			}
@@ -331,7 +332,7 @@
  #else
  			LOGERR("Metadata FBE decrypt support not present in this build\n");
  #endif
-@@ -931,6 +1185,10 @@
+@@ -931,6 +1186,10 @@
  	if (Local_Path == "/tmp" || Local_Path == "/")
  		return true;
  
@@ -342,7 +343,7 @@
    	#ifdef OF_DEVICE_WITHOUT_PERSIST
    	if (Local_Path == "/persist")
        		return false;
-@@ -939,6 +1197,10 @@
+@@ -939,6 +1198,10 @@
  	// Iterate through all partitions
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  		if ((*iter)->Mount_Point == Local_Path || (!(*iter)->Symlink_Mount_Point.empty() && (*iter)->Symlink_Mount_Point == Local_Path)) {
@@ -353,7 +354,7 @@
  			ret = (*iter)->Mount(Display_Error);
  			found = true;
  		} else if ((*iter)->Is_SubPartition && (*iter)->SubPartition_Of == Local_Path) {
-@@ -1383,18 +1645,19 @@
+@@ -1383,18 +1646,19 @@
  		backup_path = Backup_List.substr(start_pos, end_pos - start_pos);
  		part_settings.Part = Find_Partition_By_Path(backup_path);
  		if (part_settings.Part != NULL) {
@@ -385,7 +386,44 @@
  			if (!Backup_Partition(&part_settings))
  				return false;
  		} else {
-@@ -2087,6 +2350,16 @@
+@@ -1955,9 +2219,36 @@
+ 	}
+ }
+ 
++// Fox: stock first-stage fstab parsing for /data (multi-device geometry).
++// The universal payload ships per-family recovery.fstab snapshots that drift
++// (vendor DFE edits, generation differences), while the booted slot's stock
++// first_stage_ramdisk always carries the exact fstab.<family> the firmware
++// was built with. Parse the live /data line instead of hardcoding names:
++// device=zoned|exp|exp_alias:<path> entries form the multi-device set that
++// teardown must remove and mkfs must be told about (fs_mgr_format.cpp
++// mirror). Empty set = legacy single-device /data: callers keep the old
++// path untouched, so pre-Tensor-G6 families see zero behavior change.
++struct FoxDataDevices {
++	bool valid = false;   // a /data fstab line was found
++	bool is_zoned = false;
++	std::vector<std::string> devices;  // access()-checked user_devices
++	std::vector<int> aliased;          // 1 for exp_alias entries
++};
++
++static FoxDataDevices FoxParseStockDataDevices(void);
++static bool FoxTeardownDecryptedData(const FoxDataDevices& dd);
++
+ int TWPartitionManager::Format_Data(void) {
+ 	if (TWFunc::Block_Operations_Until_Reboot())
+ 		return false;
++	// Fox (multi-device /data): detach the decrypted stack in reverse order
++	// of the attach BEFORE Check_Pending_Merges runs Unmap over it. Attach
++	// is dm mappings first, mount last; Unmap sweeping live crypto mappings
++	// while /data still holds them dies EINVAL (not LP) then EBUSY — the
++	// grizzly test_5 field failure. Legacy single-device sets no-op here.
++	FoxDataDevices fox_dd = FoxParseStockDataDevices();
++	if (!FoxTeardownDecryptedData(fox_dd))
++		return false;
+ 	TWPartition* dat = Find_Partition_By_Path("/data");
+ 	TWPartition* metadata = Find_Partition_By_Path("/metadata");
+ 	bool ret = false;
+@@ -2087,6 +2378,16 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -402,7 +440,7 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2467,10 @@
+@@ -2194,7 +2495,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -414,7 +452,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2610,20 @@
+@@ -2334,6 +2638,20 @@
  #endif
  }
  
@@ -435,7 +473,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2686,17 @@
+@@ -2396,6 +2714,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -453,7 +491,7 @@
  
  			return 0;
  		} else {
-@@ -2859,17 +3160,102 @@
+@@ -2859,17 +3188,102 @@
    return true;
  }
  
@@ -556,7 +594,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3285,22 @@
+@@ -2899,8 +3313,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -580,7 +618,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3390,13 @@
+@@ -2990,6 +3418,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -594,7 +632,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -4662,7 +5069,12 @@
+@@ -4662,7 +5097,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -608,7 +646,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5252,315 @@
+@@ -4840,6 +5280,514 @@
  	}
  }
  
@@ -921,10 +959,209 @@
 +	return e == ENOENT || e == ENXIO;
 +}
 +
++// Fox: stock first-stage fstab location for this hardware. The booted
++// slot's stock image always matches the hardware 1:1, so normally exactly
++// one non-fips family fstab exists next to the -fips/zram/persist motorcade.
++// Anything ambiguous (or a missing first_stage) yields "": legacy path.
++static std::string FoxStockFstabPath(void) {
++	const char* dirpath = "/first_stage_ramdisk/system/etc";
++	DIR* d = opendir(dirpath);
++	if (d == NULL)
++		return "";
++	std::string fam = android::base::GetProperty("ro.recovery.soc_family", "");
++	std::string exact, single, second;
++	struct dirent* de;
++	while ((de = readdir(d)) != NULL) {
++		std::string n = de->d_name ? de->d_name : "";
++		if (n.compare(0, 6, "fstab.") != 0)
++			continue;
++		std::string suf = n.substr(6);
++		if (suf.empty() || suf.find("fips") != std::string::npos
++				|| suf.find("zram") != std::string::npos || suf.find("persist") != std::string::npos
++				|| suf.find("efs") != std::string::npos || suf.find("modem") != std::string::npos)
++			continue;
++		if (!fam.empty() && suf == fam) {
++			exact = std::string(dirpath) + "/" + n;
++			break;
++		}
++		if (single.empty())
++			single = std::string(dirpath) + "/" + n;
++		else
++			second = std::string(dirpath) + "/" + n;
++	}
++	closedir(d);
++	if (!exact.empty())
++		return exact;
++	if (!single.empty() && second.empty())
++		return single;
++	return "";
++}
++
++// Fox: parse the live /data line's multi-device set (libfs_mgr
++// ParseUserDevices mirror). device=zoned|exp|exp_alias:<path> entries with a
++// node that exists on this unit form the set; missing nodes (zoned on some
++// SKUs, DFE-stripped units) are skipped loudly, never guessed.
++static FoxDataDevices FoxParseStockDataDevices(void) {
++	FoxDataDevices out;
++	std::string path = FoxStockFstabPath();
++	if (path.empty()) {
++		LOGINFO("FoxFstab: no stock family fstab, legacy single-device path\n");
++		return out;
++	}
++	FILE* f = fopen(path.c_str(), "r");
++	if (!f) {
++		LOGINFO("FoxFstab: cannot open %s, legacy single-device path\n", path.c_str());
++		return out;
++	}
++	LOGINFO("FoxFstab: parsing %s\n", path.c_str());
++	char linebuf[4096];
++	std::vector<std::string> fallback;
++	while (fgets(linebuf, sizeof(linebuf), f) != NULL) {
++		if (linebuf[0] == '#' || linebuf[0] == '\n')
++			continue;
++		// fields: src mnt fstype mnt_flags fs_mgr_flags...
++		std::istringstream iss(linebuf);
++		std::vector<std::string> fields;
++		std::string tok;
++		while (iss >> tok)
++			fields.push_back(tok);
++		if (fields.size() < 5 || fields[1] != "/data")
++			continue;
++		if (fields[2] != "f2fs") {
++			if (fallback.empty())
++				fallback = fields;  // ext4 line as last resort
++			continue;
++		}
++		std::vector<std::string> flags = android::base::Split(fields[4], ",");
++		for (size_t i = 0; i < flags.size(); i++) {
++			if (flags[i].compare(0, 7, "device=") != 0)
++				continue;
++			std::string arg = flags[i].substr(7);
++			size_t colon = arg.find(':');
++			if (colon == std::string::npos) {
++				LOGINFO("FoxFstab: malformed device= flag '%s', skipping\n", flags[i].c_str());
++				continue;
++			}
++			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
++			if (access(dev.c_str(), F_OK) != 0) {
++				LOGINFO("FoxFstab: %s absent on this unit, skipping\n", dev.c_str());
++				continue;
++			}
++			if (kind == "zoned")
++				out.is_zoned = true;
++			else if (kind != "exp" && kind != "exp_alias")
++				LOGINFO("FoxFstab: unknown device kind '%s', keeping as plain\n", kind.c_str());
++			out.devices.push_back(dev);
++			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
++		}
++		out.valid = true;
++		break;
++	}
++	if (!out.valid && !fallback.empty() && fallback.size() >= 5) {
++		// No f2fs /data line (DFE unit?): parse the fallback line the same way.
++		std::vector<std::string> flags = android::base::Split(fallback[4], ",");
++		for (size_t i = 0; i < flags.size(); i++) {
++			if (flags[i].compare(0, 7, "device=") != 0)
++				continue;
++			std::string arg = flags[i].substr(7);
++			size_t colon = arg.find(':');
++			if (colon == std::string::npos)
++				continue;
++			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
++			if (access(dev.c_str(), F_OK) != 0)
++				continue;
++			if (kind == "zoned")
++				out.is_zoned = true;
++			out.devices.push_back(dev);
++			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
++		}
++		out.valid = true;
++	}
++	fclose(f);
++	LOGINFO("FoxFstab: /data set: %zu device(s), zoned=%d\n", out.devices.size(), out.is_zoned ? 1 : 0);
++	return out;
++}
++
++// Fox: unmount every mount sourced from the crypto dm stack and everything
++// below /data//sdcard, children first, never lazy. A detached f2fs can write
++// its superblock back after the discard and Android would then miss the wipe,
++// so EINVAL/ENOENT (already gone) are tolerated but anything else — including
++// EBUSY — fails loudly: close whatever holds /data and retry, nothing is
++// destroyed before this returns true.
++static bool FoxUnmountDataStack(const std::vector<std::string>& dm_srcs) {
++	std::string text;
++	if (!android::base::ReadFileToString("/proc/self/mounts", &text)) {
++		LOGERR("FoxTeardown: unable to read /proc/self/mounts\n");
++		return false;
++	}
++	std::vector<std::string> targets;
++	std::istringstream ms(text);
++	std::string mline;
++	while (std::getline(ms, mline)) {
++		std::istringstream ls(mline);
++		std::string src, dir;
++		if (!(ls >> src >> dir))
++			continue;
++		bool ours = (dir == "/data" || dir.compare(0, 6, "/data/") == 0
++				|| dir == "/sdcard" || dir.compare(0, 8, "/sdcard/") == 0);
++		if (!ours) {
++			for (size_t i = 0; i < dm_srcs.size() && !ours; i++)
++				ours = (src == dm_srcs[i]);
++		}
++		if (ours)
++			targets.push_back(dir);
++	}
++	std::sort(targets.begin(), targets.end(),
++		[](const std::string& a, const std::string& b) { return a.size() > b.size(); });
++	for (size_t i = 0; i < targets.size(); i++) {
++		if (umount2(targets[i].c_str(), 0) != 0 && errno != EINVAL && errno != ENOENT) {
++			LOGERR("FoxTeardown: %s still in use (%s). Close whatever is using it and try again.\n",
++				targets[i].c_str(), strerror(errno));
++			return false;
++		}
++		LOGINFO("FoxTeardown: unmounted %s\n", targets[i].c_str());
++	}
++	return true;
++}
++
++// Fox: reverse-order teardown of the decrypted /data stack (multi-device
++// only; empty set = no-op). Attach is dm mappings first, mount last —
++// detach in reverse: unmount the stack, then remove the mappings top-down
++// (userdata first, then the parsed user_devices by mapper name). Anything
++// still held fails here, before the point of no return, so a half-torn
++// stack is impossible.
++static bool FoxTeardownDecryptedData(const FoxDataDevices& dd) {
++	if (!dd.valid || dd.devices.empty())
++		return true;  // legacy single-device: untouched
++	std::vector<std::string> dm_srcs;
++	dm_srcs.push_back("/dev/block/mapper/userdata");
++	for (size_t i = 0; i < dd.devices.size(); i++) {
++		std::string leaf = dd.devices[i].substr(dd.devices[i].find_last_of('/') + 1);
++		dm_srcs.push_back("/dev/block/mapper/" + leaf);
++	}
++	if (!FoxUnmountDataStack(dm_srcs))
++		return false;
++	std::vector<std::string> names;
++	names.push_back("userdata");
++	for (size_t i = 0; i < dd.devices.size(); i++)
++		names.push_back(dd.devices[i].substr(dd.devices[i].find_last_of('/') + 1));
++	for (size_t i = 0; i < names.size(); i++) {
++		std::string mp = "/dev/block/mapper/" + names[i];
++		if (access(mp.c_str(), F_OK) != 0) {
++			LOGINFO("FoxTeardown: %s already gone, skipping\n", names[i].c_str());
++			continue;
++		}
++		LOGINFO("FoxTeardown: removing dm mapping %s\n", names[i].c_str());
++		if (!FoxRemoveDmDevice(names[i]))
++			return false;
++	}
++	return true;
++}
++
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5578,13 @@
+@@ -4857,13 +5805,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -940,7 +1177,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +5603,39 @@
+@@ -4882,9 +5830,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
