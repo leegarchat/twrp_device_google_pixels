@@ -2232,25 +2232,38 @@ static void Update_Encryption_Props_Before_Format() {
 struct FoxDataDevices {
 	bool valid = false;   // a /data fstab line was found
 	bool is_zoned = false;
-	bool has_exp = false; // any non-zoned member: true multi-device set
+	bool has_exp = false; // any surviving non-zoned member: true multi-device set
+	int declared_exp = 0; // non-zoned device= entries before access filtering
 	std::vector<std::string> devices;  // access()-checked user_devices
 	std::vector<int> aliased;          // 1 for exp_alias entries
+	std::vector<int> zoned;            // 1 for the zoned companion (never discarded)
 };
 
 static FoxDataDevices FoxParseStockDataDevices(void);
-static bool FoxTeardownDecryptedData(const FoxDataDevices& dd);
+static bool FoxQuiesceDataStack(const FoxDataDevices& dd);
+static bool FoxRemoveDataMappings(const FoxDataDevices& dd);
+static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd);
 
 int TWPartitionManager::Format_Data(void) {
 	if (TWFunc::Block_Operations_Until_Reboot())
 		return false;
-	// Fox (multi-device /data): detach the decrypted stack in reverse order
-	// of the attach BEFORE Check_Pending_Merges runs Unmap over it. Attach
-	// is dm mappings first, mount last; Unmap sweeping live crypto mappings
-	// while /data still holds them dies EINVAL (not LP) then EBUSY — the
-	// grizzly test_5 field failure. Legacy single-device sets no-op here.
+	// Fox (multi-device /data): fail closed, never guess. A missing or
+	// ambiguous stock fstab, or a declared exp set with zero surviving
+	// nodes (broken ueventd/tree), refuses the format loudly. Legacy
+	// single-device flow runs only on a positively clean parse, never as
+	// a fallback for an unscannable multi-device unit.
 	FoxDataDevices fox_dd = FoxParseStockDataDevices();
-	if (!FoxTeardownDecryptedData(fox_dd))
+	if (!fox_dd.valid) {
+		gui_err("format_data_disabled=Cannot read the stock userdata layout; Format Data refused rather than guessing.");
+		LOGERR("FoxFstab: no usable stock fstab — refusing Format Data (fail closed)\n");
 		return false;
+	}
+	if (fox_dd.declared_exp > 0 && !fox_dd.has_exp) {
+		gui_err("format_data_disabled=Declared userdata devices are missing; Format Data refused rather than guessing.");
+		LOGERR("FoxFstab: %d exp device(s) declared but none present — refusing Format Data (fail closed)\n",
+			fox_dd.declared_exp);
+		return false;
+	}
 	TWPartition* dat = Find_Partition_By_Path("/data");
 	TWPartition* metadata = Find_Partition_By_Path("/metadata");
 	bool ret = false;
@@ -2258,13 +2271,19 @@ int TWPartitionManager::Format_Data(void) {
 		metadata->UnMount(false);
 
 	if (dat != NULL) {
-		if (fox_dd.valid && fox_dd.has_exp) {
+		if (fox_dd.has_exp) {
 			// Fox: multi-device /data (zoned/exp set parsed from the stock
 			// fstab): stock-mirror path, recovery never builds the f2fs.
-			// The decrypted stack is already torn down above; /data stays
-			// unmounted and unmapped here — vold formats it on next boot.
-			ret = FoxFormatDataStock(dat, metadata);
+			// Attach is dm mappings first, mount last; detach runs in
+			// reverse: quiesce (reversible unmounts) happens here, before
+			// any check; the destructive dm removal runs inside
+			// FoxFormatDataStock only after the merge check passed.
+			// /data stays unmounted and unmapped after this — vold formats
+			// the set on the next boot.
+			Disable_MTP();
+			ret = FoxQuiesceDataStack(fox_dd) && FoxFormatDataStock(dat, metadata, fox_dd);
 			dat->Can_Be_Mounted = false;
+			Enable_MTP();
 		} else {
 		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
 		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
@@ -5643,16 +5662,25 @@ static std::string FoxStockFstabPath(void) {
 // node that exists on this unit form the set; missing nodes (zoned on some
 // SKUs, DFE-stripped units) are skipped loudly, never guessed.
 static FoxDataDevices FoxParseStockDataDevices(void) {
+	// Parsed once per boot: the fstab does not change under a booted
+	// recovery, and a single snapshot avoids ueventd-race windows between
+	// repeated scans.
+	static bool done = false;
+	static FoxDataDevices cached;
+	if (done)
+		return cached;
 	FoxDataDevices out;
 	std::string path = FoxStockFstabPath();
 	if (path.empty()) {
-		LOGINFO("FoxFstab: no stock family fstab, legacy single-device path\n");
-		return out;
+		LOGINFO("FoxFstab: no stock family fstab found\n");
+		done = true;
+		return cached = out;
 	}
 	FILE* f = fopen(path.c_str(), "r");
 	if (!f) {
-		LOGINFO("FoxFstab: cannot open %s, legacy single-device path\n", path.c_str());
-		return out;
+		LOGINFO("FoxFstab: cannot open %s\n", path.c_str());
+		done = true;
+		return cached = out;
 	}
 	LOGINFO("FoxFstab: parsing %s\n", path.c_str());
 	char linebuf[4096];
@@ -5684,6 +5712,8 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 				continue;
 			}
 			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
+			if (kind != "zoned")
+				out.declared_exp++;
 			if (access(dev.c_str(), F_OK) != 0) {
 				LOGINFO("FoxFstab: %s absent on this unit, skipping\n", dev.c_str());
 				continue;
@@ -5696,6 +5726,7 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 				LOGINFO("FoxFstab: unknown device kind '%s', keeping as plain\n", kind.c_str());
 			out.devices.push_back(dev);
 			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
+			out.zoned.push_back(kind == "zoned" ? 1 : 0);
 		}
 		out.valid = true;
 		break;
@@ -5711,6 +5742,8 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 			if (colon == std::string::npos)
 				continue;
 			std::string kind = arg.substr(0, colon), dev = arg.substr(colon + 1);
+			if (kind != "zoned")
+				out.declared_exp++;
 			if (access(dev.c_str(), F_OK) != 0)
 				continue;
 			if (kind == "zoned")
@@ -5719,12 +5752,15 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 				out.has_exp = true;
 			out.devices.push_back(dev);
 			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
+			out.zoned.push_back(kind == "zoned" ? 1 : 0);
 		}
 		out.valid = true;
 	}
 	fclose(f);
-	LOGINFO("FoxFstab: /data set: %zu device(s), zoned=%d\n", out.devices.size(), out.is_zoned ? 1 : 0);
-	return out;
+	LOGINFO("FoxFstab: /data set: %zu device(s), zoned=%d, declared_exp=%d\n",
+		out.devices.size(), out.is_zoned ? 1 : 0, out.declared_exp);
+	done = true;
+	return cached = out;
 }
 
 // Fox: unmount every mount sourced from the crypto dm stack and everything
@@ -5775,21 +5811,42 @@ static bool FoxUnmountDataStack(const std::vector<std::string>& dm_srcs) {
 // (userdata first, then the parsed user_devices by mapper name). Anything
 // still held fails here, before the point of no return, so a half-torn
 // stack is impossible.
-static bool FoxTeardownDecryptedData(const FoxDataDevices& dd) {
-	if (!dd.valid || !dd.has_exp)
-		return true;  // legacy single/zoned-only: untouched
-	std::vector<std::string> dm_srcs;
-	dm_srcs.push_back("/dev/block/mapper/userdata");
-	for (size_t i = 0; i < dd.devices.size(); i++) {
-		std::string leaf = dd.devices[i].substr(dd.devices[i].find_last_of('/') + 1);
-		dm_srcs.push_back("/dev/block/mapper/" + leaf);
-	}
-	if (!FoxUnmountDataStack(dm_srcs))
-		return false;
+// Fox: mapper names for the parsed set (userdata first, then user_devices
+// by by-name leaf — the dm name equals the by-name leaf on Pixels).
+static std::vector<std::string> FoxDmNames(const FoxDataDevices& dd) {
 	std::vector<std::string> names;
 	names.push_back("userdata");
 	for (size_t i = 0; i < dd.devices.size(); i++)
 		names.push_back(dd.devices[i].substr(dd.devices[i].find_last_of('/') + 1));
+	return names;
+}
+
+static std::vector<std::string> FoxDmSrcs(const FoxDataDevices& dd) {
+	std::vector<std::string> srcs;
+	std::vector<std::string> names = FoxDmNames(dd);
+	for (size_t i = 0; i < names.size(); i++)
+		srcs.push_back("/dev/block/mapper/" + names[i]);
+	return srcs;
+}
+
+// Fox: quiesce only — unmount the decrypted stack, no destruction. Fully
+// reversible (reboot or remount restores it); runs before the merge check so
+// that Unmap operates on an unmounted stack.
+static bool FoxQuiesceDataStack(const FoxDataDevices& dd) {
+	if (!dd.valid || !dd.has_exp)
+		return true;  // legacy single/zoned-only: untouched
+	return FoxUnmountDataStack(FoxDmSrcs(dd));
+}
+
+// Fox: destructive half — remove the dm mappings top-down (userdata first).
+// Runs only after the merge check passed: this is past the point of no
+// return for the in-memory stack (a reboot recreates it via decrypt, keys
+// are still in /metadata), but before the first truly irreversible step
+// (userdata discard).
+static bool FoxRemoveDataMappings(const FoxDataDevices& dd) {
+	if (!dd.valid || !dd.has_exp)
+		return true;  // legacy single/zoned-only: untouched
+	std::vector<std::string> names = FoxDmNames(dd);
 	for (size_t i = 0; i < names.size(); i++) {
 		std::string mp = "/dev/block/mapper/" + names[i];
 		if (access(mp.c_str(), F_OK) != 0) {
@@ -5807,9 +5864,11 @@ static bool FoxTeardownDecryptedData(const FoxDataDevices& dd) {
 // the raw userdata partition itself: realpath must resolve to
 // /dev/block/by-name/userdata and never under /dev/block/dm-. discard is
 // BLKSECDISCARD first, plain BLKDISCARD + zeroed first 4 KiB when the device
-// cannot do that; *blank reports whether the first 4 KiB read back (past
-// the page cache, O_DIRECT) as zeros — that blank prefix is what tells
-// Android's vold to format the multi-device set on the next boot.
+// cannot do that; *blank reports whether the first 4 KiB read back as
+// zeros — the header kill that tells Android's vold to format the
+// multi-device set on the next boot. Read-back prefers O_DIRECT (past the
+// page cache); a plain-read fallback is used and logged when O_DIRECT is
+// unavailable. This verifies the header kill only, never the whole wipe.
 static bool FoxEraseUserdata(const std::string& device, bool* blank) {
 	*blank = false;
 	std::string path;
@@ -5848,6 +5907,14 @@ static bool FoxEraseUserdata(const std::string& device, bool* blank) {
 		}
 	}
 	int dfd = open(path.c_str(), O_RDONLY | O_DIRECT | O_CLOEXEC);
+	bool direct = (dfd >= 0);
+	if (dfd < 0) {
+		// O_DIRECT unsupported here: fall back to a plain read. It can hit
+		// the page cache, so a pass proves less — logged honestly.
+		LOGINFO("FoxFormat: O_DIRECT unavailable (%s), verifying through page cache\n",
+			strerror(errno));
+		dfd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+	}
 	void* buf = NULL;
 	bool zeros_ok = false;
 	if (dfd >= 0 && posix_memalign(&buf, 4096, 4096) == 0) {
@@ -5861,6 +5928,8 @@ static bool FoxEraseUserdata(const std::string& device, bool* blank) {
 		close(dfd);
 	close(fd);
 	*blank = zeros_ok;
+	if (zeros_ok && !direct)
+		LOGINFO("FoxFormat: header reads back zero (page-cache read, weaker proof)\n");
 	return true;
 }
 
@@ -5923,12 +5992,42 @@ static bool FoxClearMiscFlags(void) {
 // every device of the multi-device set on the next boot, as after a stock
 // factory reset. Unmap above is trivially clean (teardown removed the stack,
 // the sweep skip guards strays); merge check still runs like stock.
-static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata) {
+// Fox: best-effort discard of one raw node (userdata companions). Missing
+// node = clean skip; anything else failing aborts: a half-dirty exp set
+// must not pass as wiped (fail closed).
+static bool FoxDiscardDevice(const char* path) {
+	int fd = open(path, O_RDWR | O_CLOEXEC);
+	if (fd < 0) {
+		if (errno == ENOENT) {
+			LOGINFO("FoxFormat: %s absent, skipping discard\n", path);
+			return true;
+		}
+		LOGERR("FoxFormat: cannot open %s: %s\n", path, strerror(errno));
+		return false;
+	}
+	uint64_t size = 0;
+	bool ok = (ioctl(fd, BLKGETSIZE64, &size) == 0 && size > 0);
+	if (ok) {
+		uint64_t range[2] = {0, size};
+		if (ioctl(fd, BLKSECDISCARD, &range) != 0
+				&& ioctl(fd, BLKDISCARD, &range) != 0)
+			ok = false;
+	}
+	if (!ok)
+		LOGERR("FoxFormat: unable to discard %s\n", path);
+	close(fd);
+	return ok;
+}
+
+static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd) {
 	if (metadata == NULL) {
 		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/metadata"));
 		return false;
 	}
 	LOGINFO("FoxFormat: stock-style format for multi-device /data\n");
+	// Read-only preflight first: merge check runs on the quiesced
+	// (unmounted but still mapped) stack. Destructive dm removal only
+	// after it passed.
 	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 #ifndef TW_EXCLUDE_APEX
 		twrpApex apex;
@@ -5938,6 +6037,16 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata) {
 		if (!Check_Pending_Merges())
 			return false;
 	}
+	// First destructive step: remove the dm mappings top-down. Keys still
+	// live in /metadata, so a reboot recreates the stack via decrypt.
+	if (!FoxRemoveDataMappings(dd))
+		return false;
+	// TWRP must never again resolve /data to the dead mapper: mirror the
+	// Wipe_Encryption epilogue state right here.
+	dat->Decrypted_Block_Device = "";
+	dat->Is_Decrypted = false;
+	dat->Is_Encrypted = false;
+	dat->Find_Actual_Block_Device();
 	// /metadata formats past the point of no return: it must be unmountable.
 	if (!metadata->UnMount(true)) {
 		LOGERR("FoxFormat: cannot unmount /metadata\n");
@@ -5947,10 +6056,25 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata) {
 	bool blank = false;
 	if (!FoxEraseUserdata(dat->Primary_Block_Device, &blank))
 		return false;
+	// Discard every companion LU of the set (zoned is provisioned by the
+	// vold mkfs, never discarded here). Crypto-erasure itself is already
+	// complete via the /metadata wipe below; this removes stale
+	// superblocks/Data that could confuse the next-boot assembly.
+	for (size_t i = 0; i < dd.devices.size(); i++) {
+		if (i < dd.zoned.size() && dd.zoned[i]) {
+			// Zoned companions are provisioned by the vold mkfs, never
+			// pre-discarded here (BLKDISCARD is not their API).
+			LOGINFO("FoxFormat: leaving zoned device %s to vold provisioning\n",
+				dd.devices[i].c_str());
+			continue;
+		}
+		if (!FoxDiscardDevice(dd.devices[i].c_str()))
+			return false;
+	}
 	// Nothing below can be undone: every step runs, failures reported at end.
 	bool success = blank;
 	if (!blank)
-		LOGERR("FoxFormat: start of userdata did not read back blank, Android may not set up /data.\n");
+		LOGERR("FoxFormat: header kill unverified (first 4K did not read back zero); Android may not set up /data.\n");
 	LOGINFO("FoxFormat: formatting /metadata...\n");
 	if (!PartitionManager.Wipe_By_Path("/metadata")) {
 		LOGERR("FoxFormat: /metadata wipe failed\n");
