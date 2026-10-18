@@ -6019,6 +6019,30 @@ static bool FoxDiscardDevice(const char* path) {
 	return ok;
 }
 
+// Fox: Titan M user-secret wipe via the tensor daemon (NUKE_FROM_ORBIT,
+// the same call the stock factory reset makes after data/metadata).
+// /dev/gsc0 serves one caller at a time, so the weaver service is stopped
+// first and restarted after. No per-generation branch: M1/M2/M3 share the
+// stable Nugget protocol; --check reads the firmware string for the log.
+static bool FoxWipeTitanM(void) {
+	android::base::SetProperty("ctl.stop", "recovery_weaver");
+	for (int i = 0; i < 5; i++) {
+		if (android::base::GetProperty("init.svc.recovery_weaver", "") == "stopped")
+			break;
+		sleep(1);
+	}
+	std::string output;
+	int rc = TWFunc::Exec_Cmd("/system/bin/recovery-tensor-daemon titan-wipe --erase", output, true);
+	LOGINFO("FoxFormat: titan-wipe output:\n%s", output.c_str());
+	android::base::SetProperty("ctl.start", "recovery_weaver");
+	if (rc != 0) {
+		LOGERR("FoxFormat: Titan M wipe failed\n");
+		return false;
+	}
+	LOGINFO("FoxFormat: wiped Titan M user secrets successfully\n");
+	return true;
+}
+
 static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd) {
 	if (metadata == NULL) {
 		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/metadata"));
@@ -6085,8 +6109,10 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const Fo
 		LOGERR("FoxFormat: failed to reset the memtag message: %s\n", err.c_str());
 		success = false;
 	}
-	// Titan M nuke is phase 2 (dedicated daemon subcommand); not required for boot.
-	LOGINFO("FoxFormat: Titan M wipe deferred (phase 2)\n");
+	// Titan M nuke closes the key loop opened by decrypt: without it the
+	// old Weaver slots stay valid. Same order as stock (data/metadata first).
+	if (!FoxWipeTitanM())
+		success = false;
 	if (!FoxWipeTrustyUserdata())
 		success = false;
 	if (!FoxClearMiscFlags())

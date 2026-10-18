@@ -5,7 +5,7 @@
 //! `android.hardware.weaver.IWeaver/default` Binder service consumed by
 //! Gatekeeper/CE FBE decryption.
 
-mod gsc;
+pub(crate) mod gsc;
 mod m3;
 mod proto;
 mod service;

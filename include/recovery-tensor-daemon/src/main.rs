@@ -13,6 +13,7 @@
 // `logi!`/`loge!`/`logd!` are #[macro_export]ed at the crate root.
 mod common;
 mod storageproxy;
+mod titan;
 mod weaver;
 
 use std::process::ExitCode;
@@ -24,6 +25,7 @@ fn usage() -> ! {
         "Usage:\n\
          \x20 recovery-tensor-daemon storageproxy -d <trusty_dev> [-r <rpmb_dev>] -p <data_path>\n\
          \x20 recovery-tensor-daemon weaver [gsc_dev]            (default: {DEFAULT_GSC_DEV})\n\
+         \x20 recovery-tensor-daemon titan-wipe [--check|--erase] [gsc_dev]\n\
          \x20 recovery-tensor-daemon run -d <trusty_dev> [-r <rpmb_dev>] -p <data_path> [gsc_dev]\n\
          \n\
          storageproxy proxies com.android.trusty.storage.proxy between Trusty\n\
@@ -192,6 +194,7 @@ fn main() -> ExitCode {
     match argv[1].as_str() {
         "storageproxy" => cmd_storageproxy(&argv[2..]),
         "weaver" => cmd_weaver(&argv[2..]),
+        "titan-wipe" => titan::run(&argv[2..]),
         "run" => cmd_run(&argv[2..]),
         "-h" | "--help" | "help" => usage(),
         other => {

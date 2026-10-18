@@ -697,7 +697,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5310,797 @@
+@@ -4840,6 +5310,823 @@
  	}
  }
  
@@ -1410,6 +1410,30 @@
 +	return ok;
 +}
 +
++// Fox: Titan M user-secret wipe via the tensor daemon (NUKE_FROM_ORBIT,
++// the same call the stock factory reset makes after data/metadata).
++// /dev/gsc0 serves one caller at a time, so the weaver service is stopped
++// first and restarted after. No per-generation branch: M1/M2/M3 share the
++// stable Nugget protocol; --check reads the firmware string for the log.
++static bool FoxWipeTitanM(void) {
++	android::base::SetProperty("ctl.stop", "recovery_weaver");
++	for (int i = 0; i < 5; i++) {
++		if (android::base::GetProperty("init.svc.recovery_weaver", "") == "stopped")
++			break;
++		sleep(1);
++	}
++	std::string output;
++	int rc = TWFunc::Exec_Cmd("/system/bin/recovery-tensor-daemon titan-wipe --erase", output, true);
++	LOGINFO("FoxFormat: titan-wipe output:\n%s", output.c_str());
++	android::base::SetProperty("ctl.start", "recovery_weaver");
++	if (rc != 0) {
++		LOGERR("FoxFormat: Titan M wipe failed\n");
++		return false;
++	}
++	LOGINFO("FoxFormat: wiped Titan M user secrets successfully\n");
++	return true;
++}
++
 +static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd) {
 +	if (metadata == NULL) {
 +		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/metadata"));
@@ -1476,8 +1500,10 @@
 +		LOGERR("FoxFormat: failed to reset the memtag message: %s\n", err.c_str());
 +		success = false;
 +	}
-+	// Titan M nuke is phase 2 (dedicated daemon subcommand); not required for boot.
-+	LOGINFO("FoxFormat: Titan M wipe deferred (phase 2)\n");
++	// Titan M nuke closes the key loop opened by decrypt: without it the
++	// old Weaver slots stay valid. Same order as stock (data/metadata first).
++	if (!FoxWipeTitanM())
++		success = false;
 +	if (!FoxWipeTrustyUserdata())
 +		success = false;
 +	if (!FoxClearMiscFlags())
@@ -1495,7 +1521,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6118,13 @@
+@@ -4857,13 +6144,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1511,7 +1537,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6143,39 @@
+@@ -4882,9 +6169,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
