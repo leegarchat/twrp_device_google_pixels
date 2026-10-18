@@ -2284,7 +2284,7 @@ int TWPartitionManager::Format_Data(void) {
 			// needs the holders gone, but must not flip a deliberately
 			// disabled MTP back on (security builds keep it off).
 #ifdef TW_HAS_MTP
-			bool mtp_was_on = Is_MTP_Enabled();
+			bool mtp_was_on = is_MTP_Enabled();
 			if (mtp_was_on)
 				Disable_MTP();
 #else
@@ -5646,7 +5646,7 @@ static std::string FoxStockFstabPath(void) {
 	std::string exact, single, second;
 	struct dirent* de;
 	while ((de = readdir(d)) != NULL) {
-		std::string n = de->d_name ? de->d_name : "";
+		std::string n = de->d_name;
 		if (n.compare(0, 6, "fstab.") != 0)
 			continue;
 		std::string suf = n.substr(6);
@@ -5844,7 +5844,7 @@ static bool FoxRemoveDataMappings(const FoxDataDevices& dd) {
 	if (d != NULL) {
 		struct dirent* de;
 		while ((de = readdir(d)) != NULL) {
-			std::string n = de->d_name ? de->d_name : "";
+			std::string n = de->d_name;
 			if (n != "zoned_device" && n.compare(0, 12, "userdata_exp") != 0)
 				continue;
 			bool known = false;
@@ -6077,7 +6077,7 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const Fo
 		apex.Unmount();
 #endif
 		metadata->Mount(true);
-		if (!Check_Pending_Merges())
+		if (!PartitionManager.Check_Pending_Merges())
 			return false;
 	}
 	// First destructive step: remove the dm mappings top-down. Keys still
@@ -6086,10 +6086,7 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const Fo
 		return false;
 	// TWRP must never again resolve /data to the dead mapper: mirror the
 	// Wipe_Encryption epilogue state right here.
-	dat->Decrypted_Block_Device = "";
-	dat->Is_Decrypted = false;
-	dat->Is_Encrypted = false;
-	dat->Find_Actual_Block_Device();
+	dat->FoxResetDecryptedState();
 	// /metadata formats past the point of no return: it must be unmountable.
 	if (!metadata->UnMount(true)) {
 		LOGERR("FoxFormat: cannot unmount /metadata\n");
@@ -6097,7 +6094,9 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const Fo
 	}
 	LOGINFO("FoxFormat: erasing /data...\n");
 	bool blank = false;
-	if (!FoxEraseUserdata(dat->Primary_Block_Device, &blank))
+	// Slotless by-name node on every family (SlotSelect is never set for
+	// /data); EraseUserdata re-validates the realpath before touching it.
+	if (!FoxEraseUserdata("/dev/block/by-name/userdata", &blank))
 		return false;
 	// Discard every companion LU of the set (zoned is provisioned by the
 	// vold mkfs, never discarded here). Crypto-erasure itself is already

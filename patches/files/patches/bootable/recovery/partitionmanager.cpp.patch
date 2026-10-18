@@ -462,7 +462,7 @@
 +			// needs the holders gone, but must not flip a deliberately
 +			// disabled MTP back on (security builds keep it off).
 +#ifdef TW_HAS_MTP
-+			bool mtp_was_on = Is_MTP_Enabled();
++			bool mtp_was_on = is_MTP_Enabled();
 +			if (mtp_was_on)
 +				Disable_MTP();
 +#else
@@ -711,7 +711,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5324,828 @@
+@@ -4840,6 +5324,827 @@
  	}
  }
  
@@ -1037,7 +1037,7 @@
 +	std::string exact, single, second;
 +	struct dirent* de;
 +	while ((de = readdir(d)) != NULL) {
-+		std::string n = de->d_name ? de->d_name : "";
++		std::string n = de->d_name;
 +		if (n.compare(0, 6, "fstab.") != 0)
 +			continue;
 +		std::string suf = n.substr(6);
@@ -1235,7 +1235,7 @@
 +	if (d != NULL) {
 +		struct dirent* de;
 +		while ((de = readdir(d)) != NULL) {
-+			std::string n = de->d_name ? de->d_name : "";
++			std::string n = de->d_name;
 +			if (n != "zoned_device" && n.compare(0, 12, "userdata_exp") != 0)
 +				continue;
 +			bool known = false;
@@ -1468,7 +1468,7 @@
 +		apex.Unmount();
 +#endif
 +		metadata->Mount(true);
-+		if (!Check_Pending_Merges())
++		if (!PartitionManager.Check_Pending_Merges())
 +			return false;
 +	}
 +	// First destructive step: remove the dm mappings top-down. Keys still
@@ -1477,10 +1477,7 @@
 +		return false;
 +	// TWRP must never again resolve /data to the dead mapper: mirror the
 +	// Wipe_Encryption epilogue state right here.
-+	dat->Decrypted_Block_Device = "";
-+	dat->Is_Decrypted = false;
-+	dat->Is_Encrypted = false;
-+	dat->Find_Actual_Block_Device();
++	dat->FoxResetDecryptedState();
 +	// /metadata formats past the point of no return: it must be unmountable.
 +	if (!metadata->UnMount(true)) {
 +		LOGERR("FoxFormat: cannot unmount /metadata\n");
@@ -1488,7 +1485,9 @@
 +	}
 +	LOGINFO("FoxFormat: erasing /data...\n");
 +	bool blank = false;
-+	if (!FoxEraseUserdata(dat->Primary_Block_Device, &blank))
++	// Slotless by-name node on every family (SlotSelect is never set for
++	// /data); EraseUserdata re-validates the realpath before touching it.
++	if (!FoxEraseUserdata("/dev/block/by-name/userdata", &blank))
 +		return false;
 +	// Discard every companion LU of the set (zoned is provisioned by the
 +	// vold mkfs, never discarded here). Crypto-erasure itself is already
@@ -1540,7 +1539,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6163,13 @@
+@@ -4857,13 +6162,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1556,7 +1555,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6188,39 @@
+@@ -4882,9 +6187,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;

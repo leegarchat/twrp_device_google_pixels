@@ -1,6 +1,15 @@
 --- a/bootable/recovery/partitions.hpp
 +++ b/bootable/recovery/partitions.hpp
-@@ -363,10 +363,14 @@
+@@ -163,6 +163,8 @@
+ 	string Backup_Method_By_Name();                                           // Returns a string of the backup method for human readable output
+ 	bool Decrypt(string Password);                                            // Decrypts the partition, return 0 for failure and -1 for success
+ 	bool Wipe_Encryption();                                                   // Ignores wipe commands for /data/media devices and formats the original block device
++	void FoxResetDecryptedState();                                            // Drops decrypted state, re-resolves the actual block device (stock-mirror Format Data after dm teardown)
++	bool FoxHasLiveCryptoStack();                                             // True while the decrypted mapper exists / Is_Decrypted is set (mkfs-guard predicate)
+ 	void Check_FS_Type();                                                     // Checks the fs type using blkid, does not do anything on MTD / yaffs2 because this crashes on some devices
+ 	bool Update_Size(bool Display_Error);                                     // Updates size information
+ 	void Recreate_Media_Folder();                                             // Recreates the /data/media folder
+@@ -363,10 +365,14 @@
      	int Run_OTA_Survival_Restore(const string& Restore_Name);                 // Restore OTA survival
      	void Fox_Set_Dynamic_Partition_Props();					  // Set the OrangeFox dynamic partitions props
   	bool Prepare_All_Super_Volumes();					  // Prepare all known super volumes from super partition
@@ -18,7 +27,7 @@
  	std::string Get_Super_Partition();					  // Get Super Partition block device path
  	void Setup_Super_Devices();						  // Setup logical dm devices on super partition
  	bool Get_Super_Status();						  // Return whether device has a super partition
-@@ -471,8 +475,7 @@
+@@ -471,8 +477,7 @@
  	Backup_Method_enum Backup_Method;                                         // Method used for backup
  	std::string original_ramdisk_format;                                      // Ramdisk format of boot partition
  	std::string repacked_ramdisk_format;                                      // Ramdisk format of boot image to repack from

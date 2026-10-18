@@ -163,6 +163,8 @@ public:
 	string Backup_Method_By_Name();                                           // Returns a string of the backup method for human readable output
 	bool Decrypt(string Password);                                            // Decrypts the partition, return 0 for failure and -1 for success
 	bool Wipe_Encryption();                                                   // Ignores wipe commands for /data/media devices and formats the original block device
+	void FoxResetDecryptedState();                                            // Drops decrypted state, re-resolves the actual block device (stock-mirror Format Data after dm teardown)
+	bool FoxHasLiveCryptoStack();                                             // True while the decrypted mapper exists / Is_Decrypted is set (mkfs-guard predicate)
 	void Check_FS_Type();                                                     // Checks the fs type using blkid, does not do anything on MTD / yaffs2 because this crashes on some devices
 	bool Update_Size(bool Display_Error);                                     // Updates size information
 	void Recreate_Media_Folder();                                             // Recreates the /data/media folder
