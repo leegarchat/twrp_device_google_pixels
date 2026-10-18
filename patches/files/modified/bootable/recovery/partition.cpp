@@ -45,6 +45,19 @@
 // stock first-stage fstab declares a user_devices set for /data (zoned/exp).
 // Guards below refuse raw mkfs paths on such units: only the stock-mirror
 // Format Data knows the full geometry.
+// Fox: live crypto-stack check for the mkfs guards below. Refuse only while
+// the decrypted mapper exists or the partition is in decrypted state —
+// there route B owns the format. DFE/plaintext units (no mapper, never
+// decrypted) keep the legacy rm-rf-flavored paths: without keys there is
+// nothing to unbind, and rm -rf preserves the existing multi-device
+// geometry that a plain mkfs would build wrong. Plain mkfs on a
+// multi-device set stays unsupported everywhere: DFE users must tick the
+// rm -rf checkbox for /data wipe/restore instead of formatting.
+static bool FoxCryptoStackLive(TWPartition* part) {
+	if (part->Is_Decrypted && !part->Decrypted_Block_Device.empty())
+		return true;
+	return access("/dev/block/mapper/userdata", F_OK) == 0;
+}
 bool FoxDataIsMultiDevice(void);
 #include "variables.h"
 #include "twcommon.h"
@@ -2365,8 +2378,9 @@ bool TWPartition::Wipe_Encryption() {
 
 	// Fox: on multi-device /data only the stock-mirror Format Data knows the
 	// full geometry (zoned/exp set from the stock fstab). Raw crypto wipe here
-	// would build a broken fs — refuse, point at Format Data.
-	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
+	// would build a broken fs — refuse, point at Format Data. DFE/plaintext
+	// units (no live crypto stack) keep their rm-rf-flavored paths.
+	if (Mount_Point == "/data" && FoxDataIsMultiDevice() && FoxCryptoStackLive(this)) {
 		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
 		return false;
 	}
@@ -2600,8 +2614,9 @@ bool TWPartition::Wipe_EXT4() {
 	if (!UnMount(true))
 		return false;
 
-	// Fox: multi-device /data refusal (see Wipe_Encryption).
-	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
+	// Fox: multi-device /data refusal (see Wipe_Encryption); DFE/plaintext
+	// units keep their rm-rf-flavored paths.
+	if (Mount_Point == "/data" && FoxDataIsMultiDevice() && FoxCryptoStackLive(this)) {
 		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
 		return false;
 	}
@@ -2759,8 +2774,9 @@ bool TWPartition::Wipe_F2FS() {
 	if (!UnMount(true))
 		return false;
 
-	// Fox: multi-device /data refusal (see Wipe_Encryption).
-	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
+	// Fox: multi-device /data refusal (see Wipe_Encryption); DFE/plaintext
+	// units keep their rm-rf-flavored paths.
+	if (Mount_Point == "/data" && FoxDataIsMultiDevice() && FoxCryptoStackLive(this)) {
 		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
 		return false;
 	}

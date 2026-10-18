@@ -12,7 +12,7 @@
  	TWRP is free software: you can redistribute it and/or modify
  	it under the terms of the GNU General Public License as published by
  	the Free Software Foundation, either version 3 of the License, or
-@@ -41,6 +41,11 @@
+@@ -41,6 +41,24 @@
  
  #include "cutils/properties.h"
  #include "libblkid/include/blkid.h"
@@ -20,11 +20,24 @@
 +// stock first-stage fstab declares a user_devices set for /data (zoned/exp).
 +// Guards below refuse raw mkfs paths on such units: only the stock-mirror
 +// Format Data knows the full geometry.
++// Fox: live crypto-stack check for the mkfs guards below. Refuse only while
++// the decrypted mapper exists or the partition is in decrypted state —
++// there route B owns the format. DFE/plaintext units (no mapper, never
++// decrypted) keep the legacy rm-rf-flavored paths: without keys there is
++// nothing to unbind, and rm -rf preserves the existing multi-device
++// geometry that a plain mkfs would build wrong. Plain mkfs on a
++// multi-device set stays unsupported everywhere: DFE users must tick the
++// rm -rf checkbox for /data wipe/restore instead of formatting.
++static bool FoxCryptoStackLive(TWPartition* part) {
++	if (part->Is_Decrypted && !part->Decrypted_Block_Device.empty())
++		return true;
++	return access("/dev/block/mapper/userdata", F_OK) == 0;
++}
 +bool FoxDataIsMultiDevice(void);
  #include "variables.h"
  #include "twcommon.h"
  #include "partitions.hpp"
-@@ -989,12 +994,14 @@
+@@ -989,12 +1007,14 @@
  			Crypto_Key_Location = str;
  			break;
  		case TWFLAG_FILEENCRYPTION:
@@ -41,7 +54,7 @@
  					property_set("fbe.contents", FBE.c_str());
  					property_set("fbe.filenames", "");
  					LOGINFO("FBE contents '%s', filenames ''\n", FBE.c_str());
-@@ -1003,18 +1010,30 @@
+@@ -1003,18 +1023,30 @@
  				std::string FBE_contents, FBE_filenames;
  				FBE_contents = FBE.substr(0, colon_loc);
  				FBE_filenames = FBE.substr(colon_loc + 1);
@@ -74,7 +87,7 @@
  					property_set("metadata.contents", META.c_str());
  					property_set("metadata.filenames", "");
  					LOGINFO("Metadata contents '%s', filenames ''\n", META.c_str());
-@@ -1023,6 +1042,7 @@
+@@ -1023,6 +1055,7 @@
  				std::string META_contents, META_filenames;
  				META_contents = META.substr(0, colon_loc);
  				META_filenames = META.substr(colon_loc + 1);
@@ -82,7 +95,7 @@
  				property_set("metadata.contents", META_contents.c_str());
  				property_set("metadata.filenames", META_filenames.c_str());
  				LOGINFO("Metadata contents '%s', filenames '%s'\n", META_contents.c_str(), META_filenames.c_str());
-@@ -1377,9 +1397,9 @@
+@@ -1377,9 +1410,9 @@
  		}
  	}
  	ExcludeAll(Mount_Point + "/media");
@@ -94,7 +107,7 @@
  	}
  #endif
  }
-@@ -1611,6 +1631,15 @@
+@@ -1611,6 +1644,15 @@
  	test_path = Mount_Point + "/../.";
  	if (stat(test_path.c_str(), &st2) != 0)  return false;
  
@@ -110,7 +123,7 @@
  	// Compare the device IDs -- if they match then we're (probably) using tmpfs instead of an actual device
  	int ret = (st1.st_dev != st2.st_dev) ? true : false;
  
-@@ -1636,6 +1665,7 @@
+@@ -1636,6 +1678,7 @@
  		return false;
  	}
  
@@ -118,7 +131,7 @@
  	Find_Actual_Block_Device();
  
  	// Check the current file system before mounting
-@@ -1774,6 +1804,33 @@
+@@ -1774,6 +1817,33 @@
  	}
  
  exit:
@@ -152,7 +165,7 @@
  	if (Removable)
  		Update_Size(Display_Error);
  
-@@ -1781,11 +1838,51 @@
+@@ -1781,11 +1851,51 @@
  		if (!Bind_Mount(false))
  			return false;
  	}
@@ -204,7 +217,7 @@
  		if (mount(Symlink_Path.c_str(), Symlink_Mount_Point.c_str(), "", MS_BIND, NULL) < 0) {
  			return false;
  		}
-@@ -1804,17 +1901,28 @@
+@@ -1804,17 +1914,28 @@
  		if (Is_Storage && MTP_Storage_ID > 0)
  			PartitionManager.Remove_MTP_Storage(MTP_Storage_ID);
  
@@ -236,7 +249,7 @@
  			}
  			if (Display_Error)
  				gui_msg(Msg(msg::kError, "fail_unmount=Failed to unmount '{1}' ({2})")(Mount_Point)(strerror(errno)));
-@@ -1822,6 +1930,19 @@
+@@ -1822,6 +1943,19 @@
  				LOGINFO("Unable to unmount '%s'\n", Mount_Point.c_str());
  			return false;
  		} else {
@@ -256,14 +269,15 @@
  			return true;
  		}
  	} else {
-@@ -2242,6 +2363,14 @@
+@@ -2242,6 +2376,15 @@
  	if (TWFunc::Block_Operations_Until_Reboot())
  		return false;
  
 +	// Fox: on multi-device /data only the stock-mirror Format Data knows the
 +	// full geometry (zoned/exp set from the stock fstab). Raw crypto wipe here
-+	// would build a broken fs — refuse, point at Format Data.
-+	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
++	// would build a broken fs — refuse, point at Format Data. DFE/plaintext
++	// units (no live crypto stack) keep their rm-rf-flavored paths.
++	if (Mount_Point == "/data" && FoxDataIsMultiDevice() && FoxCryptoStackLive(this)) {
 +		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
 +		return false;
 +	}
@@ -271,12 +285,13 @@
  #if defined(OF_FORCE_DATA_FORMAT_F2FS)
  	the_wipe_fs = "f2fs";
  #elif defined(OF_FORCE_DATA_FORMAT_EXT4)
-@@ -2471,6 +2600,12 @@
+@@ -2471,6 +2614,13 @@
  	if (!UnMount(true))
  		return false;
  
-+	// Fox: multi-device /data refusal (see Wipe_Encryption).
-+	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
++	// Fox: multi-device /data refusal (see Wipe_Encryption); DFE/plaintext
++	// units keep their rm-rf-flavored paths.
++	if (Mount_Point == "/data" && FoxDataIsMultiDevice() && FoxCryptoStackLive(this)) {
 +		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
 +		return false;
 +	}
@@ -284,12 +299,13 @@
  	Find_Actual_Block_Device();
  	if (!Is_Present) {
  		LOGINFO("Block device not present, cannot wipe %s.\n", Display_Name.c_str());
-@@ -2624,6 +2759,12 @@
+@@ -2624,6 +2774,13 @@
  	if (!UnMount(true))
  		return false;
  
-+	// Fox: multi-device /data refusal (see Wipe_Encryption).
-+	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
++	// Fox: multi-device /data refusal (see Wipe_Encryption); DFE/plaintext
++	// units keep their rm-rf-flavored paths.
++	if (Mount_Point == "/data" && FoxDataIsMultiDevice() && FoxCryptoStackLive(this)) {
 +		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
 +		return false;
 +	}
@@ -297,7 +313,7 @@
  	/*
  	* This function now supports casefolding and project id quota.
  	* Your device tree should include this:
-@@ -2677,9 +2818,30 @@
+@@ -2677,9 +2834,30 @@
  	if (Needs_Fs_Compress)
  		f2fs_command += " -O compression,extra_attr";
  
@@ -330,7 +346,7 @@
  		f2fs_command += " && sload_f2fs -t /data " + Actual_Block_Device;
  	}
  
-@@ -2704,7 +2866,7 @@
+@@ -2704,7 +2882,7 @@
  		}
  	#endif
  
@@ -339,7 +355,7 @@
  	if (TWFunc::Path_Exists("/dev/block/mapper/userdata")) {
  		LOGINFO("OrangeFox: running dmctl before formatting...\n");
  		TWFunc::Exec_Cmd("dmctl delete userdata", false);
-@@ -2919,7 +3081,17 @@
+@@ -2919,7 +3097,17 @@
  		}
  	}
  	tar.part_settings = part_settings;
@@ -358,7 +374,7 @@
  	tar.setdir(Backup_Path);
  	tar.setfn(Full_FileName);
  	tar.setsize(Backup_Size);
-@@ -3022,8 +3194,10 @@
+@@ -3022,8 +3210,10 @@
  		goto exit;
  	}
  
@@ -370,7 +386,7 @@
  
  	while (Remain > 0) {
  		if (Remain < RW_Block_Size)
-@@ -3071,8 +3245,10 @@
+@@ -3071,8 +3261,10 @@
  	   gui_msg(Msg("backing_up=Backing up {1}...")(Backup_Display_Name));
  	}
  
@@ -382,7 +398,7 @@
  
  	Backup_FileName = Backup_Name + "." + Current_File_System + ".win";
  	Full_FileName = part_settings->Backup_Folder + "/" + Backup_FileName;
-@@ -3178,7 +3354,10 @@
+@@ -3178,7 +3370,10 @@
  	if (!Password.empty())
  		tar.setpassword(Password);
  #endif
@@ -394,7 +410,7 @@
  	if (tar.extractTarFork() != 0)
  		ret = false;
  	else
-@@ -3242,6 +3421,7 @@
+@@ -3242,6 +3437,7 @@
  
  bool TWPartition::Update_Size(bool Display_Error) {
  	bool ret = false, Was_Already_Mounted = false, ro = false;
@@ -402,7 +418,7 @@
  
  	Find_Actual_Block_Device();
  
-@@ -3573,6 +3753,7 @@
+@@ -3573,6 +3769,7 @@
  	gui_msg(Msg("flashing=Flashing {1}...")(Display_Name));
  	if (progress) {
  		file_size = (unsigned long long)(TWFunc::Get_File_Size(Filename));
