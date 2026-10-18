@@ -5824,6 +5824,26 @@ static bool FoxRemoveDataMappings(const FoxDataDevices& dd) {
 	if (!dd.valid || !dd.has_exp)
 		return true;  // legacy single/zoned-only: untouched
 	std::vector<std::string> names = FoxDmNames(dd);
+	// Safety net: fstab is the primary truth (immune to DFE/snapshots),
+	// but a live mapper node not in the parsed set (late ueventd, alias
+	// drift) must not survive either — union with the live scan.
+	DIR* d = opendir("/dev/block/mapper");
+	if (d != NULL) {
+		struct dirent* de;
+		while ((de = readdir(d)) != NULL) {
+			std::string n = de->d_name ? de->d_name : "";
+			if (n != "zoned_device" && n.compare(0, 12, "userdata_exp") != 0)
+				continue;
+			bool known = false;
+			for (size_t i = 0; i < names.size() && !known; i++)
+				known = (names[i] == n);
+			if (!known) {
+				LOGINFO("FoxTeardown: live mapper %s not in fstab set, adding\n", n.c_str());
+				names.push_back(n);
+			}
+		}
+		closedir(d);
+	}
 	for (size_t i = 0; i < names.size(); i++) {
 		std::string mp = "/dev/block/mapper/" + names[i];
 		if (access(mp.c_str(), F_OK) != 0) {
