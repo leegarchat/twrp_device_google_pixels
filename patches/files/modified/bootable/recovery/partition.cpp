@@ -41,6 +41,11 @@
 
 #include "cutils/properties.h"
 #include "libblkid/include/blkid.h"
+// Fox: multi-device /data detector (partitionmanager.cpp). True when the
+// stock first-stage fstab declares a user_devices set for /data (zoned/exp).
+// Guards below refuse raw mkfs paths on such units: only the stock-mirror
+// Format Data knows the full geometry.
+bool FoxDataIsMultiDevice(void);
 #include "variables.h"
 #include "twcommon.h"
 #include "partitions.hpp"
@@ -2358,6 +2363,14 @@ bool TWPartition::Wipe_Encryption() {
 	if (TWFunc::Block_Operations_Until_Reboot())
 		return false;
 
+	// Fox: on multi-device /data only the stock-mirror Format Data knows the
+	// full geometry (zoned/exp set from the stock fstab). Raw crypto wipe here
+	// would build a broken fs — refuse, point at Format Data.
+	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
+		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
+		return false;
+	}
+
 #if defined(OF_FORCE_DATA_FORMAT_F2FS)
 	the_wipe_fs = "f2fs";
 #elif defined(OF_FORCE_DATA_FORMAT_EXT4)
@@ -2587,6 +2600,12 @@ bool TWPartition::Wipe_EXT4() {
 	if (!UnMount(true))
 		return false;
 
+	// Fox: multi-device /data refusal (see Wipe_Encryption).
+	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
+		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
+		return false;
+	}
+
 	Find_Actual_Block_Device();
 	if (!Is_Present) {
 		LOGINFO("Block device not present, cannot wipe %s.\n", Display_Name.c_str());
@@ -2739,6 +2758,12 @@ bool TWPartition::Wipe_F2FS() {
 
 	if (!UnMount(true))
 		return false;
+
+	// Fox: multi-device /data refusal (see Wipe_Encryption).
+	if (Mount_Point == "/data" && FoxDataIsMultiDevice()) {
+		gui_err("format_data_disabled=Formatting /data this way is disabled on this device; use Format Data.");
+		return false;
+	}
 
 	/*
 	* This function now supports casefolding and project id quota.

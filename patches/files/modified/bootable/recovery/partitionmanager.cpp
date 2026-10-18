@@ -68,6 +68,7 @@
 #include <liblp/builder.h>
 #include <libsnapshot/snapshot.h>
 #include <private/android_filesystem_config.h> /* for AID_SYSTEM */
+#include "bootloader_message/include/bootloader_message/bootloader_message.h"
 #include "variables.h"
 #include "twcommon.h"
 #include "partitions.hpp"
@@ -2256,6 +2257,14 @@ int TWPartitionManager::Format_Data(void) {
 		metadata->UnMount(false);
 
 	if (dat != NULL) {
+		if (!fox_dd.devices.empty()) {
+			// Fox: multi-device /data (zoned/exp set parsed from the stock
+			// fstab): stock-mirror path, recovery never builds the f2fs.
+			// The decrypted stack is already torn down above; /data stays
+			// unmounted and unmapped here — vold formats it on next boot.
+			ret = FoxFormatDataStock(dat, metadata);
+			dat->Can_Be_Mounted = false;
+		} else {
 		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
 		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
 		#endif
@@ -2270,6 +2279,7 @@ int TWPartitionManager::Format_Data(void) {
 				return false;
 		}
 		ret = dat->Wipe_Encryption();
+		}
 	} else {
 		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/data"));
 		return false;
@@ -5786,6 +5796,180 @@ static bool FoxTeardownDecryptedData(const FoxDataDevices& dd) {
 			return false;
 	}
 	return true;
+}
+
+// Fox: stock-mirror userdata erase (discard + blank verification). Only ever
+// the raw userdata partition itself: realpath must resolve to
+// /dev/block/by-name/userdata and never under /dev/block/dm-. discard is
+// BLKSECDISCARD first, plain BLKDISCARD + zeroed first 4 KiB when the device
+// cannot do that; *blank reports whether the first 4 KiB read back (past
+// the page cache, O_DIRECT) as zeros — that blank prefix is what tells
+// Android's vold to format the multi-device set on the next boot.
+static bool FoxEraseUserdata(const std::string& device, bool* blank) {
+	*blank = false;
+	std::string path;
+	struct stat st, userdata_st;
+	if (!android::base::Realpath(device, &path) || stat(path.c_str(), &st) != 0
+			|| !S_ISBLK(st.st_mode) || path.compare(0, 15, "/dev/block/dm-") == 0
+			|| stat("/dev/block/by-name/userdata", &userdata_st) != 0
+			|| !S_ISBLK(userdata_st.st_mode) || st.st_rdev != userdata_st.st_rdev) {
+		LOGERR("FoxFormat: %s is not the raw userdata device. Nothing was erased.\n",
+			device.c_str());
+		return false;
+	}
+	int fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
+	uint64_t size = 0;
+	if (fd < 0 || ioctl(fd, BLKGETSIZE64, &size) != 0 || size < 4096) {
+		LOGERR("FoxFormat: unable to open %s. Nothing was erased.\n", path.c_str());
+		if (fd >= 0)
+			close(fd);
+		return false;
+	}
+	uint64_t range[2] = {0, size};
+	if (ioctl(fd, BLKSECDISCARD, &range) != 0) {
+		LOGINFO("FoxFormat: secure discard failed, used discard instead\n");
+		range[0] = 0;
+		range[1] = size;
+		if (ioctl(fd, BLKDISCARD, &range) != 0) {
+			LOGERR("FoxFormat: unable to discard %s.\n", path.c_str());
+			close(fd);
+			return false;
+		}
+		const char zeros[4096] = {};
+		if (::pwrite(fd, zeros, sizeof(zeros), 0) != (ssize_t)sizeof(zeros)
+				|| ::fsync(fd) != 0) {
+			close(fd);
+			return true;  // discarded, but blank is unverified
+		}
+	}
+	int dfd = open(path.c_str(), O_RDONLY | O_DIRECT | O_CLOEXEC);
+	void* buf = NULL;
+	bool zeros_ok = false;
+	if (dfd >= 0 && posix_memalign(&buf, 4096, 4096) == 0) {
+		zeros_ok = (::pread(dfd, buf, 4096, 0) == 4096);
+		uint8_t* bytes = static_cast<uint8_t*>(buf);
+		for (int i = 0; zeros_ok && i < 4096; i++)
+			zeros_ok = (bytes[i] == 0);
+		free(buf);
+	}
+	if (dfd >= 0)
+		close(dfd);
+	close(fd);
+	*blank = zeros_ok;
+	return true;
+}
+
+// Fox: wipe the Trusty secure-storage partition (KeyMint/Gatekeeper leftovers,
+// stale fingerprint enrollments confuse the HAL on next setup). Absent node
+// (older families) is a clean skip, not an error.
+static bool FoxWipeTrustyUserdata(void) {
+	const char* path = "/dev/block/by-name/trusty_userdata";
+	int fd = open(path, O_WRONLY | O_CLOEXEC);
+	if (fd < 0) {
+		if (errno == ENOENT) {
+			LOGINFO("FoxFormat: %s does not exist, skip wiping trusty_userdata\n", path);
+			return true;
+		}
+		LOGERR("FoxFormat: failed to open %s: %s\n", path, strerror(errno));
+		return false;
+	}
+	uint64_t size = 0;
+	bool ok = (ioctl(fd, BLKGETSIZE64, &size) == 0);
+	if (ok) {
+		uint64_t range[2] = {0, size};
+		if (ioctl(fd, BLKSECDISCARD, &range) != 0 && ioctl(fd, BLKDISCARD, &range) != 0)
+			ok = false;
+	}
+	if (!ok)
+		LOGERR("FoxFormat: failed to wipe %s\n", path);
+	else
+		LOGINFO("FoxFormat: wiped Trusty user data successfully\n");
+	close(fd);
+	return ok;
+}
+
+// Fox: clear the two Pixel bootloader flags in misc vendor space the stock
+// wipe clears: dark theme (10 bytes at vendor offset) and preferred display
+// mode (32 bytes at +456), so the next boot starts neutral.
+static bool FoxClearMiscFlags(void) {
+	std::string err;
+	const std::string misc = get_misc_blk_device(&err);
+	if (misc.empty()) {
+		LOGERR("FoxFormat: unable to find misc: %s\n", err.c_str());
+		return false;
+	}
+	const char theme[10] = {};
+	const char display_mode[32] = {};
+	bool ok = true;
+	if (!write_misc_partition(theme, sizeof(theme), misc, VENDOR_SPACE_OFFSET_IN_MISC, &err)) {
+		LOGERR("FoxFormat: failed to clear the dark theme flag: %s\n", err.c_str());
+		ok = false;
+	}
+	if (!write_misc_partition(display_mode, sizeof(display_mode), misc,
+			VENDOR_SPACE_OFFSET_IN_MISC + 456, &err)) {
+		LOGERR("FoxFormat: failed to clear the preferred resolution: %s\n", err.c_str());
+		ok = false;
+	}
+	return ok;
+}
+
+// Fox: stock-mirror Format Data for multi-device /data. Recovery never builds
+// the f2fs here: once the start of userdata is blank, Android's vold formats
+// every device of the multi-device set on the next boot, as after a stock
+// factory reset. Unmap above is trivially clean (teardown removed the stack,
+// the sweep skip guards strays); merge check still runs like stock.
+static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata) {
+	if (metadata == NULL) {
+		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/metadata"));
+		return false;
+	}
+	LOGINFO("FoxFormat: stock-style format for multi-device /data\n");
+	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+#ifndef TW_EXCLUDE_APEX
+		twrpApex apex;
+		apex.Unmount();
+#endif
+		metadata->Mount(true);
+		if (!Check_Pending_Merges())
+			return false;
+	}
+	// /metadata formats past the point of no return: it must be unmountable.
+	if (!metadata->UnMount(true)) {
+		LOGERR("FoxFormat: cannot unmount /metadata\n");
+		return false;
+	}
+	LOGINFO("FoxFormat: erasing /data...\n");
+	bool blank = false;
+	if (!FoxEraseUserdata(dat->Primary_Block_Device, &blank))
+		return false;
+	// Nothing below can be undone: every step runs, failures reported at end.
+	bool success = blank;
+	if (!blank)
+		LOGERR("FoxFormat: start of userdata did not read back blank, Android may not set up /data.\n");
+	LOGINFO("FoxFormat: formatting /metadata...\n");
+	if (!PartitionManager.Wipe_By_Path("/metadata")) {
+		LOGERR("FoxFormat: /metadata wipe failed\n");
+		success = false;
+	}
+	std::string err;
+	if (!WriteMiscMemtagMessage({}, &err)) {
+		LOGERR("FoxFormat: failed to reset the memtag message: %s\n", err.c_str());
+		success = false;
+	}
+	// Titan M nuke is phase 2 (dedicated daemon subcommand); not required for boot.
+	LOGINFO("FoxFormat: Titan M wipe deferred (phase 2)\n");
+	if (!FoxWipeTrustyUserdata())
+		success = false;
+	if (!FoxClearMiscFlags())
+		success = false;
+	return success;
+}
+
+// Fox: multi-device /data detector for other translation units (partition.cpp
+// mkfs guards). Fresh parse per call: one small file, no stale-state risk.
+bool FoxDataIsMultiDevice(void) {
+	FoxDataDevices dd = FoxParseStockDataDevices();
+	return dd.valid && !dd.devices.empty();
 }
 
 bool TWPartitionManager::Unmap_Super_Devices() {
