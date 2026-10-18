@@ -2232,6 +2232,7 @@ static void Update_Encryption_Props_Before_Format() {
 struct FoxDataDevices {
 	bool valid = false;   // a /data fstab line was found
 	bool is_zoned = false;
+	bool has_exp = false; // any non-zoned member: true multi-device set
 	std::vector<std::string> devices;  // access()-checked user_devices
 	std::vector<int> aliased;          // 1 for exp_alias entries
 };
@@ -2257,7 +2258,7 @@ int TWPartitionManager::Format_Data(void) {
 		metadata->UnMount(false);
 
 	if (dat != NULL) {
-		if (!fox_dd.devices.empty()) {
+		if (fox_dd.valid && fox_dd.has_exp) {
 			// Fox: multi-device /data (zoned/exp set parsed from the stock
 			// fstab): stock-mirror path, recovery never builds the f2fs.
 			// The decrypted stack is already torn down above; /data stays
@@ -5689,7 +5690,9 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 			}
 			if (kind == "zoned")
 				out.is_zoned = true;
-			else if (kind != "exp" && kind != "exp_alias")
+			else
+				out.has_exp = true;
+			if (kind != "zoned" && kind != "exp" && kind != "exp_alias")
 				LOGINFO("FoxFstab: unknown device kind '%s', keeping as plain\n", kind.c_str());
 			out.devices.push_back(dev);
 			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
@@ -5712,6 +5715,8 @@ static FoxDataDevices FoxParseStockDataDevices(void) {
 				continue;
 			if (kind == "zoned")
 				out.is_zoned = true;
+			else
+				out.has_exp = true;
 			out.devices.push_back(dev);
 			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
 		}
@@ -5771,8 +5776,8 @@ static bool FoxUnmountDataStack(const std::vector<std::string>& dm_srcs) {
 // still held fails here, before the point of no return, so a half-torn
 // stack is impossible.
 static bool FoxTeardownDecryptedData(const FoxDataDevices& dd) {
-	if (!dd.valid || dd.devices.empty())
-		return true;  // legacy single-device: untouched
+	if (!dd.valid || !dd.has_exp)
+		return true;  // legacy single/zoned-only: untouched
 	std::vector<std::string> dm_srcs;
 	dm_srcs.push_back("/dev/block/mapper/userdata");
 	for (size_t i = 0; i < dd.devices.size(); i++) {
@@ -5969,7 +5974,7 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata) {
 // mkfs guards). Fresh parse per call: one small file, no stale-state risk.
 bool FoxDataIsMultiDevice(void) {
 	FoxDataDevices dd = FoxParseStockDataDevices();
-	return dd.valid && !dd.devices.empty();
+	return dd.valid && dd.has_exp;
 }
 
 bool TWPartitionManager::Unmap_Super_Devices() {

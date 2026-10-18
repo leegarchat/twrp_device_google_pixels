@@ -32,8 +32,9 @@ On units whose stock `fstab` declares a `/data` device set (`device=zoned|exp|ex
 malibu/laguna families), recovery never builds the f2fs — it mirrors the stock
 factory reset. The live geometry is parsed at Format time from the booted slot's
 `/first_stage_ramdisk/system/etc/fstab.<family>` (vendor DFE edits and our
-snapshots are bypassed); missing nodes are skipped, an empty set keeps the
-legacy single-device path untouched.
+snapshots are bypassed); missing nodes are skipped, and without exp members
+(empty set, or a lone zoned companion) the legacy single-device path stays
+untouched.
 
 Stages in `/tmp/recovery.log`:
 1. `FoxFstab: parsing ...` + `/data set: N device(s)` — what was found;

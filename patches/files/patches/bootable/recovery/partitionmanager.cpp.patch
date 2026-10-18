@@ -394,7 +394,7 @@
  			if (!Backup_Partition(&part_settings))
  				return false;
  		} else {
-@@ -1955,9 +2220,36 @@
+@@ -1955,9 +2220,37 @@
  	}
  }
  
@@ -410,6 +410,7 @@
 +struct FoxDataDevices {
 +	bool valid = false;   // a /data fstab line was found
 +	bool is_zoned = false;
++	bool has_exp = false; // any non-zoned member: true multi-device set
 +	std::vector<std::string> devices;  // access()-checked user_devices
 +	std::vector<int> aliased;          // 1 for exp_alias entries
 +};
@@ -431,11 +432,11 @@
  	TWPartition* dat = Find_Partition_By_Path("/data");
  	TWPartition* metadata = Find_Partition_By_Path("/metadata");
  	bool ret = false;
-@@ -1965,6 +2257,14 @@
+@@ -1965,6 +2258,14 @@
  		metadata->UnMount(false);
  
  	if (dat != NULL) {
-+		if (!fox_dd.devices.empty()) {
++		if (fox_dd.valid && fox_dd.has_exp) {
 +			// Fox: multi-device /data (zoned/exp set parsed from the stock
 +			// fstab): stock-mirror path, recovery never builds the f2fs.
 +			// The decrypted stack is already torn down above; /data stays
@@ -446,7 +447,7 @@
  		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
  		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
  		#endif
-@@ -1979,6 +2279,7 @@
+@@ -1979,6 +2280,7 @@
  				return false;
  		}
  		ret = dat->Wipe_Encryption();
@@ -454,7 +455,7 @@
  	} else {
  		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/data"));
  		return false;
-@@ -2087,6 +2388,16 @@
+@@ -2087,6 +2389,16 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -471,7 +472,7 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2505,10 @@
+@@ -2194,7 +2506,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -483,7 +484,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2648,20 @@
+@@ -2334,6 +2649,20 @@
  #endif
  }
  
@@ -504,7 +505,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2724,17 @@
+@@ -2396,6 +2725,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -522,7 +523,7 @@
  
  			return 0;
  		} else {
-@@ -2859,17 +3198,102 @@
+@@ -2859,17 +3199,102 @@
    return true;
  }
  
@@ -625,7 +626,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3323,22 @@
+@@ -2899,8 +3324,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -649,7 +650,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3428,13 @@
+@@ -2990,6 +3429,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -663,7 +664,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -4662,7 +5107,12 @@
+@@ -4662,7 +5108,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -677,7 +678,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5290,688 @@
+@@ -4840,6 +5291,692 @@
  	}
  }
  
@@ -1080,7 +1081,9 @@
 +			}
 +			if (kind == "zoned")
 +				out.is_zoned = true;
-+			else if (kind != "exp" && kind != "exp_alias")
++			else
++				out.has_exp = true;
++			if (kind != "zoned" && kind != "exp" && kind != "exp_alias")
 +				LOGINFO("FoxFstab: unknown device kind '%s', keeping as plain\n", kind.c_str());
 +			out.devices.push_back(dev);
 +			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
@@ -1103,6 +1106,8 @@
 +				continue;
 +			if (kind == "zoned")
 +				out.is_zoned = true;
++			else
++				out.has_exp = true;
 +			out.devices.push_back(dev);
 +			out.aliased.push_back(kind == "exp_alias" ? 1 : 0);
 +		}
@@ -1162,8 +1167,8 @@
 +// still held fails here, before the point of no return, so a half-torn
 +// stack is impossible.
 +static bool FoxTeardownDecryptedData(const FoxDataDevices& dd) {
-+	if (!dd.valid || dd.devices.empty())
-+		return true;  // legacy single-device: untouched
++	if (!dd.valid || !dd.has_exp)
++		return true;  // legacy single/zoned-only: untouched
 +	std::vector<std::string> dm_srcs;
 +	dm_srcs.push_back("/dev/block/mapper/userdata");
 +	for (size_t i = 0; i < dd.devices.size(); i++) {
@@ -1360,13 +1365,13 @@
 +// mkfs guards). Fresh parse per call: one small file, no stale-state risk.
 +bool FoxDataIsMultiDevice(void) {
 +	FoxDataDevices dd = FoxParseStockDataDevices();
-+	return dd.valid && !dd.devices.empty();
++	return dd.valid && dd.has_exp;
 +}
 +
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +5989,13 @@
+@@ -4857,13 +5994,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1382,7 +1387,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6014,39 @@
+@@ -4882,9 +6019,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
