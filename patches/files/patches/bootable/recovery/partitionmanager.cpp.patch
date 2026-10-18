@@ -446,7 +446,7 @@
  	TWPartition* dat = Find_Partition_By_Path("/data");
  	TWPartition* metadata = Find_Partition_By_Path("/metadata");
  	bool ret = false;
-@@ -1965,6 +2272,20 @@
+@@ -1965,6 +2272,33 @@
  		metadata->UnMount(false);
  
  	if (dat != NULL) {
@@ -458,16 +458,29 @@
 +			// any check; the destructive dm removal runs inside
 +			// FoxFormatDataStock only after the merge check passed.
 +			// /data stays unmounted and unmapped after this — vold formats
-+			// the set on the next boot.
++			// the set on the next boot. MTP state is saved/restored: route B
++			// needs the holders gone, but must not flip a deliberately
++			// disabled MTP back on (security builds keep it off).
++#ifdef TW_HAS_MTP
++			bool mtp_was_on = Is_MTP_Enabled();
++			if (mtp_was_on)
++				Disable_MTP();
++#else
 +			Disable_MTP();
++#endif
 +			ret = FoxQuiesceDataStack(fox_dd) && FoxFormatDataStock(dat, metadata, fox_dd);
 +			dat->Can_Be_Mounted = false;
++#ifdef TW_HAS_MTP
++			if (mtp_was_on)
++				Enable_MTP();
++#else
 +			Enable_MTP();
++#endif
 +		} else {
  		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
  		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
  		#endif
-@@ -1979,6 +2300,7 @@
+@@ -1979,6 +2313,7 @@
  				return false;
  		}
  		ret = dat->Wipe_Encryption();
@@ -475,7 +488,7 @@
  	} else {
  		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/data"));
  		return false;
-@@ -2087,6 +2409,16 @@
+@@ -2087,6 +2422,16 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -492,7 +505,7 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2526,10 @@
+@@ -2194,7 +2539,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -504,7 +517,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2669,20 @@
+@@ -2334,6 +2682,20 @@
  #endif
  }
  
@@ -525,7 +538,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2745,17 @@
+@@ -2396,6 +2758,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -543,7 +556,7 @@
  
  			return 0;
  		} else {
-@@ -2859,17 +3219,102 @@
+@@ -2859,17 +3232,102 @@
    return true;
  }
  
@@ -646,7 +659,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3344,22 @@
+@@ -2899,8 +3357,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -670,7 +683,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3449,13 @@
+@@ -2990,6 +3462,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -684,7 +697,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -4662,7 +5128,12 @@
+@@ -4662,7 +5141,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -698,7 +711,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5311,828 @@
+@@ -4840,6 +5324,828 @@
  	}
  }
  
@@ -1527,7 +1540,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6150,13 @@
+@@ -4857,13 +6163,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1543,7 +1556,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6175,39 @@
+@@ -4882,9 +6188,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;

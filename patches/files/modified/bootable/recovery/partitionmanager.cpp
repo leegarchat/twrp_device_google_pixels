@@ -2280,11 +2280,24 @@ int TWPartitionManager::Format_Data(void) {
 			// any check; the destructive dm removal runs inside
 			// FoxFormatDataStock only after the merge check passed.
 			// /data stays unmounted and unmapped after this — vold formats
-			// the set on the next boot.
+			// the set on the next boot. MTP state is saved/restored: route B
+			// needs the holders gone, but must not flip a deliberately
+			// disabled MTP back on (security builds keep it off).
+#ifdef TW_HAS_MTP
+			bool mtp_was_on = Is_MTP_Enabled();
+			if (mtp_was_on)
+				Disable_MTP();
+#else
 			Disable_MTP();
+#endif
 			ret = FoxQuiesceDataStack(fox_dd) && FoxFormatDataStock(dat, metadata, fox_dd);
 			dat->Can_Be_Mounted = false;
+#ifdef TW_HAS_MTP
+			if (mtp_was_on)
+				Enable_MTP();
+#else
 			Enable_MTP();
+#endif
 		} else {
 		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
 		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
