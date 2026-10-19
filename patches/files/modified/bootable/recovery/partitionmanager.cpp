@@ -2243,7 +2243,8 @@ struct FoxDataDevices {
 static FoxDataDevices FoxParseStockDataDevices(void);
 static bool FoxQuiesceDataStack(const FoxDataDevices& dd);
 static bool FoxRemoveDataMappings(const FoxDataDevices& dd);
-static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd);
+static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd,
+	bool dm_live, bool* went_stock_route);
 
 int TWPartitionManager::Format_Data(void) {
 	if (TWFunc::Block_Operations_Until_Reboot())
@@ -2274,15 +2275,15 @@ int TWPartitionManager::Format_Data(void) {
 	if (dat != NULL) {
 		if (fox_dd.has_exp) {
 			// Fox: multi-device /data (zoned/exp set parsed from the stock
-			// fstab): stock-mirror path, recovery never builds the f2fs.
-			// Attach is dm mappings first, mount last; detach runs in
-			// reverse: quiesce (reversible unmounts) happens here, before
-			// any check; the destructive dm removal runs inside
-			// FoxFormatDataStock only after the merge check passed.
-			// /data stays unmounted and unmapped after this — vold formats
-			// the set on the next boot. MTP state is saved/restored: route B
-			// needs the holders gone, but must not flip a deliberately
-			// disabled MTP back on (security builds keep it off).
+			// fstab). Decrypted (live dm stack) = route (a-dm), exactly
+			// like the legacy Pixel-8 flow: mkfs through the live crypto
+			// stack, keys survive in /metadata, /data stays usable
+			// in-session. Locked/DFE (no stack) = route (b): discard + key
+			// wipe, vold provisions on next boot. Either way the user
+			// sees success; the log shows which route built /data.
+			// MTP state is saved/restored: the routes need the holders
+			// gone, but must not flip a deliberately disabled MTP back
+			// on (security builds keep it off).
 #ifdef TW_HAS_MTP
 			bool mtp_was_on = is_MTP_Enabled();
 			if (mtp_was_on)
@@ -2290,8 +2291,12 @@ int TWPartitionManager::Format_Data(void) {
 #else
 			Disable_MTP();
 #endif
-			ret = FoxQuiesceDataStack(fox_dd) && FoxFormatDataStock(dat, metadata, fox_dd);
-			dat->Can_Be_Mounted = false;
+			bool dm_live = dat->FoxHasLiveCryptoStack();
+			bool went_stock_route = false;
+			ret = FoxQuiesceDataStack(fox_dd)
+				&& FoxFormatDataStock(dat, metadata, fox_dd, dm_live, &went_stock_route);
+			if (went_stock_route)
+				dat->Can_Be_Mounted = false;
 #ifdef TW_HAS_MTP
 			if (mtp_was_on)
 				Enable_MTP();
@@ -6069,8 +6074,11 @@ static bool FoxWipeTitanM(void) {
 // NO sector count for multi-device sets, NO sload. Built over RAW by-name
 // nodes (stock-recovery-identical); the next-boot vold reformat through
 // the fresh dm stack stays authoritative.
+// use_mapper=false: raw by-name nodes (stock recovery context).
+// use_mapper=true:  live dm-crypt nodes (vold context — exact vold args,
+// primary included). Superblock stores the paths as passed.
 static bool FoxBuildMkfsCommand(const FoxDataDevices& dd, const std::string& primary,
-		std::string& out) {
+		bool use_mapper, std::string& out) {
 	out = "/system/bin/make_f2fs -g android";
 	out += " -O project_quota,extra_attr";
 	if (android::base::GetBoolProperty("external_storage.casefold.enabled", false))
@@ -6084,12 +6092,11 @@ static bool FoxBuildMkfsCommand(const FoxDataDevices& dd, const std::string& pri
 	if (dd.is_zoned)
 		out += " -m";
 	for (size_t i = 0; i < dd.devices.size(); i++) {
-		std::string dn = dd.devices[i];
+		std::string leaf = dd.devices[i].substr(dd.devices[i].find_last_of('/') + 1);
+		std::string dn = use_mapper ? ("/dev/block/mapper/" + leaf) : dd.devices[i];
 		out += " -c ";
-		if (i < dd.aliased.size() && dd.aliased[i]) {
-			std::string leaf = dn.substr(dn.find_last_of('/') + 1);
+		if (i < dd.aliased.size() && dd.aliased[i])
 			dn += "@" + leaf;
-		}
 		out += dn;
 	}
 	out += " " + primary;
@@ -6099,13 +6106,14 @@ static bool FoxBuildMkfsCommand(const FoxDataDevices& dd, const std::string& pri
 // Fox: route (a) — build the fs in recovery, verify by mounting it right
 // here, unmount. The kernel opens the stored by-name paths (all present),
 // no dm nodes needed. Returns true only if mkfs+mount+unmount all succeed.
-static bool FoxMkfsAndVerify(const FoxDataDevices& dd, const std::string& primary) {
+static bool FoxMkfsAndVerify(const FoxDataDevices& dd, const std::string& primary,
+		bool via_mapper) {
 	if (!TWFunc::Path_Exists("/system/bin/make_f2fs")) {
 		LOGERR("FoxFormat: no make_f2fs, route (a) unavailable\n");
 		return false;
 	}
 	std::string cmd;
-	FoxBuildMkfsCommand(dd, primary, cmd);
+	FoxBuildMkfsCommand(dd, primary, via_mapper, cmd);
 	LOGINFO("FoxFormat: mkfs cmd: %s\n", cmd.c_str());
 	if (TWFunc::Exec_Cmd(cmd) != 0) {
 		LOGERR("FoxFormat: mkfs failed, falling back\n");
@@ -6127,15 +6135,17 @@ static bool FoxMkfsAndVerify(const FoxDataDevices& dd, const std::string& primar
 	return ok;
 }
 
-static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd) {
+static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd,
+	bool dm_live, bool* went_stock_route) {
+	*went_stock_route = false;
 	if (metadata == NULL) {
 		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/metadata"));
 		return false;
 	}
 	LOGINFO("FoxFormat: stock-style format for multi-device /data\n");
 	// Read-only preflight first: merge check runs on the quiesced
-	// (unmounted but still mapped) stack. Destructive dm removal only
-	// after it passed.
+	// (unmounted but still mapped) stack. Unmap never touches crypto dm
+	// nodes (sweep skips userdata*/zoned wholly now).
 	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 #ifndef TW_EXCLUDE_APEX
 		twrpApex apex;
@@ -6145,8 +6155,21 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const Fo
 		if (!PartitionManager.Check_Pending_Merges())
 			return false;
 	}
-	// First destructive step: remove the dm mappings top-down. Keys still
-	// live in /metadata, so a reboot recreates the stack via decrypt.
+	if (dm_live) {
+		// Route (a-dm): exactly like the legacy Pixel-8 flow — mkfs through
+		// the live crypto stack (vold-exact args, mapper paths + @alias),
+		// keys survive in /metadata, /data stays usable in-session. No
+		// metadata wipe, no Titan nuke — same security posture as legacy.
+		if (FoxMkfsAndVerify(dd, "/dev/block/mapper/userdata", true)) {
+			LOGINFO("FoxFormat: route (a-dm) complete, fs verified by mount\n");
+			return true;
+		}
+		LOGINFO("FoxFormat: route (a-dm) failed, falling back to (b)\n");
+	}
+	// Route (b): discard + key wipe, vold provisions on next boot. First
+	// destructive step: remove the dm mappings top-down. Keys still live
+	// in /metadata, so a reboot recreates the stack via decrypt.
+	*went_stock_route = true;
 	if (!FoxRemoveDataMappings(dd))
 		return false;
 	// TWRP must never again resolve /data to the dead mapper: mirror the
@@ -6158,40 +6181,31 @@ static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const Fo
 		return false;
 	}
 	LOGINFO("FoxFormat: erasing /data...\n");
-	// Route (a) first: exact-geometry mkfs + mount verify, all in recovery.
-	// On any failure the half-built fs is discarded and route (b) takes over
-	// silently (discard + vold provisioning on next boot); the user sees
-	// success either way, the log shows which route built /data.
+	bool success = false;
+	LOGINFO("FoxFormat: route (b): discard + vold provisioning\n");
+	bool blank = false;
 	// Slotless by-name node on every family (SlotSelect is never set for
 	// /data); EraseUserdata re-validates the realpath before touching it.
-	bool success = false;
-	if (FoxMkfsAndVerify(dd, "/dev/block/by-name/userdata")) {
-		LOGINFO("FoxFormat: route (a) complete, fs verified by mount\n");
-		success = true;
-	} else {
-		LOGINFO("FoxFormat: route (b): discard + vold provisioning\n");
-		bool blank = false;
-		if (!FoxEraseUserdata("/dev/block/by-name/userdata", &blank))
-			return false;
-		// Discard every companion LU of the set (zoned is provisioned by the
-		// vold mkfs, never discarded here). Crypto-erasure itself is already
-		// complete via the /metadata wipe below; this removes stale
-		// superblocks/Data that could confuse the next-boot assembly.
-		for (size_t i = 0; i < dd.devices.size(); i++) {
-			if (i < dd.zoned.size() && dd.zoned[i]) {
-				// Zoned companions are provisioned by the vold mkfs, never
-				// pre-discarded here (BLKDISCARD is not their API).
-				LOGINFO("FoxFormat: leaving zoned device %s to vold provisioning\n",
-					dd.devices[i].c_str());
-				continue;
-			}
-			if (!FoxDiscardDevice(dd.devices[i].c_str()))
-				return false;
+	if (!FoxEraseUserdata("/dev/block/by-name/userdata", &blank))
+		return false;
+	// Discard every companion LU of the set (zoned is provisioned by the
+	// vold mkfs, never discarded here). Crypto-erasure itself is already
+	// complete via the /metadata wipe below; this removes stale
+	// superblocks/Data that could confuse the next-boot assembly.
+	for (size_t i = 0; i < dd.devices.size(); i++) {
+		if (i < dd.zoned.size() && dd.zoned[i]) {
+			// Zoned companions are provisioned by the vold mkfs, never
+			// pre-discarded here (BLKDISCARD is not their API).
+			LOGINFO("FoxFormat: leaving zoned device %s to vold provisioning\n",
+				dd.devices[i].c_str());
+			continue;
 		}
-		success = blank;
-		if (!blank)
-			LOGERR("FoxFormat: header kill unverified (first 4K did not read back zero); Android may not set up /data.\n");
+		if (!FoxDiscardDevice(dd.devices[i].c_str()))
+			return false;
 	}
+	success = blank;
+	if (!blank)
+		LOGERR("FoxFormat: header kill unverified (first 4K did not read back zero); Android may not set up /data.\n");
 	// Nothing below can be undone: every step runs, failures reported at end.
 	LOGINFO("FoxFormat: formatting /metadata...\n");
 	if (!PartitionManager.Wipe_By_Path("/metadata")) {
@@ -6264,7 +6278,13 @@ bool TWPartitionManager::Unmap_Super_Devices() {
 			if (de->d_type == DT_LNK) {
 				std::string partition = de->d_name;
 				if (strcmp(partition.c_str(),"userdata") != 0
-					&& partition.compare(0, 12, "userdata_exp") != 0) {
+					&& partition.compare(0, 12, "userdata_exp") != 0
+					&& partition.compare("zoned_device") != 0) {
+					// Fox: crypto dm nodes are Fox-managed (teardown /
+					// explicit removal), never LP leftovers: skipping them
+					// here also unbreaks legacy format on zoned-present
+					// decrypted units, where the sweep used to die EBUSY
+					// on the still-mounted zoned mapper.
 					// Fox (malibu Format Data, grizzly exp nodes): skip
 					// userdata_exp.* alongside userdata. They are vold
 					// crypto (fstab device=exp*) dm devices, not LP super
