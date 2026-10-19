@@ -225,3 +225,18 @@
  #else
    gui_msg(Msg("fox_platform=* Platform:   {1}")(DataManager::GetStrValue(FOX_COMPATIBILITY_DEVICE).c_str()));
  #endif
+@@ -5003,7 +5165,13 @@
+ 	std::string dir = "/data/media/0";
+ 	LOGINFO("Recreating %s...\n", dir.c_str());
+ 	TWFunc::Recursive_Mkdir(dir, false);
+-	chmod(dir.c_str(), 0770);
++	// Stock shape is 02770 media_rw:media_rw (vold prepare_dir_with_policy).
++	// Recursive_Mkdir runs as root: without this chown the FUSE daemon
++	// (non-root media context) cannot traverse the dir and EVERY client
++	// (system, apps, shell, MTP) gets EACCES on /sdcard — field case on
++	// shiba/zuma after Format Data (vold did not repair it).
++	chown(dir.c_str(), AID_MEDIA_RW, AID_MEDIA_RW);
++	chmod(dir.c_str(), 02770);
+ 	PartitionManager.Add_MTP_Storage("/data/media");
+ 	// bind mount: this can be problematic for encryption
+ 	LOGINFO("Bind mounting /data/media/0 to /sdcard after formatting\n");
