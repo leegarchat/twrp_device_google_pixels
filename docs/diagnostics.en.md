@@ -40,20 +40,24 @@ nodes refuses the format loudly (fail closed) instead of guessing.
 Stages in `/tmp/recovery.log`:
 1. `FoxFstab: parsing ...` + `/data set: N device(s)` — what was found;
 2. quiesce: MTP off + `FoxTeardown: unmounted ...` (reversible unmounts);
-3. merge check (Unmap runs on the unmounted stack), then dm removal top-down
-   (`FoxTeardown: removing dm mapping ...`) — past this, a reboot recreates
-   the stack via decrypt, keys are still in `/metadata`;
-4. route (a): exact-geometry `mkfs` (fs_mgr_format mirror: `-m` iff zoned,
-   `-c` per device with `@alias`, no sector count, no sload) over the raw
-   by-name nodes + mount-verify (`fresh fs mounts cleanly`). On any failure
-   the half-built fs is discarded and route (b) takes over silently:
-   userdata discard with header-kill verification, per-companion discards
-   (zoned is left to vold provisioning). Either way the tail runs:
+3. merge check (Unmap runs on the unmounted stack; the sweep skips all
+   crypto dm nodes now), then the route decision on the live stack;
+4. decrypted (live dm stack) = route (a-dm), like the legacy flow: `mkfs`
+   through the live crypto dm (vold-exact args, mapper paths + `@alias`)
+   + mount-verify right there; keys survive, `/data` stays usable
+   in-session, no metadata wipe, no Titan nuke. Locked/DFE (no stack) =
+   route (b): dm removal top-down (`FoxTeardown: removing dm mapping ...`;
+   past this, a reboot recreates the stack via decrypt, keys are still in
+   `/metadata`), userdata discard with header-kill verification,
+   per-companion discards (zoned is left to vold provisioning). (a-dm)
+   failure falls back to (b) inside the same call. Tail on (b) only:
    `/metadata` wipe, memtag reset, Titan M nuke (`titan-wipe`), wipe of
-   `trusty_userdata`, misc flags. `Can_Be_Mounted=false`: the next-boot vold
-   reformat through the fresh dm stack stays authoritative.
+   `trusty_userdata`, misc flags; `Can_Be_Mounted=false` on (b) only.
+   The next-boot vold reformat through the fresh dm stack stays
+   authoritative.
    Header verify proves the 4K header kill only, never the whole wipe;
-   crypto-erasure is complete via the `/metadata` wipe + Titan nuke.
+   crypto-erasure on route (b) is complete via the `/metadata` wipe +
+   Titan nuke.
 
 `EBUSY` at teardown = something still holds `/data`: reboot recovery
 cleanly and retry; nothing is destroyed before that point. `EINVAL`/`EBUSY`

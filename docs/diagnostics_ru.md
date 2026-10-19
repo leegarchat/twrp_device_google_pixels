@@ -40,18 +40,21 @@ exp-сет с нулём живых нод — громкий отказ (fail c
 Стадии в `/tmp/recovery.log`:
 1. `FoxFstab: parsing ...` + `/data set: N device(s)` — что нашлось;
 2. quiesce: MTP off + `FoxTeardown: unmounted ...` (обратимые анмаунты);
-3. merge-check (Unmap уже по отмонтированному стеку), затем снос dm
-   сверху вниз (`FoxTeardown: removing dm mapping ...`) — после этого ребут
-   пересоздаст стек через расшифровку, ключи ещё в `/metadata`;
-4. маршрут (a): точный `mkfs` (зеркало fs_mgr_format: `-m` iff zoned,
-   `-c` на девайс с `@alias`, без sector count, без sload) по raw by-name
-   нодам + проверка маунтом (`fresh fs mounts cleanly`). При любом провале
-   недособранное сносится и молча включается маршрут (b): discard userdata
-   с проверкой header-kill, discard компаньонов (zoned отдаётся на provision
-   vold). Дальше хвост в обоих случаях: вайп `/metadata`, сброс memtag,
-   Titan M nuke (`titan-wipe`), вайп `trusty_userdata`, misc-флаги.
-   `Can_Be_Mounted=false`: авторитетен reformat vold при следующей загрузке
-   через свежий dm-стек. Проверка header доказывает только убийство
+3. merge-check (Unmap уже по отмонтированному стеку, крипто-ноды свип
+   теперь скипает все), затем выбор маршрута по живому стеку;
+4. расшифровано (dm-стек жив) = маршрут (a-dm), как легаси-поток: `mkfs`
+   через живой крипто-dm (vold-точные аргументы, мэппер-пути + `@alias`)
+   + проверка маунтом тут же; ключи живут дальше, `/data` пригодна
+   в сессии, без вайпа `/metadata` и без nuking Титана. Залочено/DFE
+   (стека нет) = маршрут (b): снос dm сверху вниз
+   (`FoxTeardown: removing dm mapping ...`; после этого ребут пересоздаст
+   стек через расшифровку, ключи ещё в `/metadata`), discard userdata
+   с проверкой header-kill, discard компаньонов (zoned отдаётся на
+   provision vold). Провал (a-dm) внутри того же вызова уводит в (b).
+   Хвост только на (b): вайп `/metadata`, сброс memtag, Titan nuke
+   (`titan-wipe`), вайп `trusty_userdata`, misc-флаги;
+   `Can_Be_Mounted=false` тоже только там. Авторитетен reformat vold
+   при следующей загрузке через свежий dm-стек. Проверка header доказывает только убийство
    заголовка, не весь вайп; крипто-стирание завершают вайп `/metadata`
    + nuke Титана.
 
