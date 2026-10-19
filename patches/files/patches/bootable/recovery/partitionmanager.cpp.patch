@@ -711,7 +711,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5324,827 @@
+@@ -4840,6 +5324,903 @@
  	}
  }
  
@@ -1453,6 +1453,71 @@
 +	return true;
 +}
 +
++// Fox: exact-geometry mkfs mirror of AOSP fs_mgr_format::format_f2fs
++// (recovery context): -g android, project_quota/casefold/compress flags
++// (+packed_ssa when the prop says so), -w/-b pagesize, -m iff a zoned
++// companion is present, -c per user_device with @alias for exp_alias,
++// NO sector count for multi-device sets, NO sload. Built over RAW by-name
++// nodes (stock-recovery-identical); the next-boot vold reformat through
++// the fresh dm stack stays authoritative.
++static bool FoxBuildMkfsCommand(const FoxDataDevices& dd, const std::string& primary,
++		std::string& out) {
++	out = "/system/bin/make_f2fs -g android";
++	out += " -O project_quota,extra_attr";
++	if (android::base::GetBoolProperty("external_storage.casefold.enabled", false))
++		out += " -O casefold -C utf8";
++	if (android::base::GetBoolProperty("vold.has_compress", false))
++		out += " -O compression,extra_attr";
++	if (android::base::GetBoolProperty("external_storage.packedssa.enabled", false))
++		out += " -O packed_ssa";
++	const std::string blk = std::to_string(getpagesize());
++	out += " -w " + blk + " -b " + blk;
++	if (dd.is_zoned)
++		out += " -m";
++	for (size_t i = 0; i < dd.devices.size(); i++) {
++		std::string dn = dd.devices[i];
++		out += " -c ";
++		if (i < dd.aliased.size() && dd.aliased[i]) {
++			std::string leaf = dn.substr(dn.find_last_of('/') + 1);
++			dn += "@" + leaf;
++		}
++		out += dn;
++	}
++	out += " " + primary;
++	return true;
++}
++
++// Fox: route (a) — build the fs in recovery, verify by mounting it right
++// here, unmount. The kernel opens the stored by-name paths (all present),
++// no dm nodes needed. Returns true only if mkfs+mount+unmount all succeed.
++static bool FoxMkfsAndVerify(const FoxDataDevices& dd, const std::string& primary) {
++	if (!TWFunc::Path_Exists("/system/bin/make_f2fs")) {
++		LOGERR("FoxFormat: no make_f2fs, route (a) unavailable\n");
++		return false;
++	}
++	std::string cmd;
++	FoxBuildMkfsCommand(dd, primary, cmd);
++	LOGINFO("FoxFormat: mkfs cmd: %s\n", cmd.c_str());
++	if (TWFunc::Exec_Cmd(cmd) != 0) {
++		LOGERR("FoxFormat: mkfs failed, falling back\n");
++		return false;
++	}
++	const char* mnt = "/tmp/fox_mnt_verify";
++	mkdir(mnt, 0755);
++	bool ok = false;
++	if (::mount(primary.c_str(), mnt, "f2fs", 0, "") == 0) {
++		LOGINFO("FoxFormat: fresh fs mounts cleanly — geometry verified\n");
++		ok = (::umount2(mnt, 0) == 0);
++		if (!ok)
++			LOGERR("FoxFormat: cannot unmount verify mount: %s\n", strerror(errno));
++	} else {
++		LOGERR("FoxFormat: fresh fs failed to mount (%s) — geometry rejected, falling back\n",
++			strerror(errno));
++	}
++	rmdir(mnt);
++	return ok;
++}
++
 +static bool FoxFormatDataStock(TWPartition* dat, TWPartition* metadata, const FoxDataDevices& dd) {
 +	if (metadata == NULL) {
 +		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/metadata"));
@@ -1484,30 +1549,41 @@
 +		return false;
 +	}
 +	LOGINFO("FoxFormat: erasing /data...\n");
-+	bool blank = false;
++	// Route (a) first: exact-geometry mkfs + mount verify, all in recovery.
++	// On any failure the half-built fs is discarded and route (b) takes over
++	// silently (discard + vold provisioning on next boot); the user sees
++	// success either way, the log shows which route built /data.
 +	// Slotless by-name node on every family (SlotSelect is never set for
 +	// /data); EraseUserdata re-validates the realpath before touching it.
-+	if (!FoxEraseUserdata("/dev/block/by-name/userdata", &blank))
-+		return false;
-+	// Discard every companion LU of the set (zoned is provisioned by the
-+	// vold mkfs, never discarded here). Crypto-erasure itself is already
-+	// complete via the /metadata wipe below; this removes stale
-+	// superblocks/Data that could confuse the next-boot assembly.
-+	for (size_t i = 0; i < dd.devices.size(); i++) {
-+		if (i < dd.zoned.size() && dd.zoned[i]) {
-+			// Zoned companions are provisioned by the vold mkfs, never
-+			// pre-discarded here (BLKDISCARD is not their API).
-+			LOGINFO("FoxFormat: leaving zoned device %s to vold provisioning\n",
-+				dd.devices[i].c_str());
-+			continue;
-+		}
-+		if (!FoxDiscardDevice(dd.devices[i].c_str()))
++	bool success = false;
++	if (FoxMkfsAndVerify(dd, "/dev/block/by-name/userdata")) {
++		LOGINFO("FoxFormat: route (a) complete, fs verified by mount\n");
++		success = true;
++	} else {
++		LOGINFO("FoxFormat: route (b): discard + vold provisioning\n");
++		bool blank = false;
++		if (!FoxEraseUserdata("/dev/block/by-name/userdata", &blank))
 +			return false;
++		// Discard every companion LU of the set (zoned is provisioned by the
++		// vold mkfs, never discarded here). Crypto-erasure itself is already
++		// complete via the /metadata wipe below; this removes stale
++		// superblocks/Data that could confuse the next-boot assembly.
++		for (size_t i = 0; i < dd.devices.size(); i++) {
++			if (i < dd.zoned.size() && dd.zoned[i]) {
++				// Zoned companions are provisioned by the vold mkfs, never
++				// pre-discarded here (BLKDISCARD is not their API).
++				LOGINFO("FoxFormat: leaving zoned device %s to vold provisioning\n",
++					dd.devices[i].c_str());
++				continue;
++			}
++			if (!FoxDiscardDevice(dd.devices[i].c_str()))
++				return false;
++		}
++		success = blank;
++		if (!blank)
++			LOGERR("FoxFormat: header kill unverified (first 4K did not read back zero); Android may not set up /data.\n");
 +	}
 +	// Nothing below can be undone: every step runs, failures reported at end.
-+	bool success = blank;
-+	if (!blank)
-+		LOGERR("FoxFormat: header kill unverified (first 4K did not read back zero); Android may not set up /data.\n");
 +	LOGINFO("FoxFormat: formatting /metadata...\n");
 +	if (!PartitionManager.Wipe_By_Path("/metadata")) {
 +		LOGERR("FoxFormat: /metadata wipe failed\n");
@@ -1539,7 +1615,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6162,13 @@
+@@ -4857,13 +6238,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1555,7 +1631,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6187,39 @@
+@@ -4882,9 +6263,39 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
