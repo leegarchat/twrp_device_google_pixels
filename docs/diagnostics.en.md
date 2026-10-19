@@ -29,8 +29,8 @@ adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 ## Format Data on multi-device /data
 
 On units whose stock `fstab` declares a `/data` device set (`device=zoned|exp|exp_alias`,
-malibu/laguna families), recovery never builds the f2fs — it mirrors the stock
-factory reset. The live geometry is parsed at Format time from the booted slot's
+malibu/laguna families), recovery mirrors the stock factory reset. The live geometry
+is parsed at Format time from the booted slot's
 `/first_stage_ramdisk/system/etc/fstab.<family>` (vendor DFE edits and our
 snapshots are bypassed); missing nodes are skipped, and without exp members
 (empty set, or a lone zoned companion) the legacy single-device path stays
@@ -43,11 +43,15 @@ Stages in `/tmp/recovery.log`:
 3. merge check (Unmap runs on the unmounted stack), then dm removal top-down
    (`FoxTeardown: removing dm mapping ...`) — past this, a reboot recreates
    the stack via decrypt, keys are still in `/metadata`;
-4. `FoxFormat: erasing /data...` — userdata discard with header-kill
-   verification, per-companion discards (zoned is left to vold provisioning),
-   then `/metadata` wipe, memtag reset, Titan M nuke (`titan-wipe`), wipe of
-   `trusty_userdata`, misc flags. `Can_Be_Mounted=false`: vold formats the
-   set on the next Android boot («Android sets up /data on its next boot»).
+4. route (a): exact-geometry `mkfs` (fs_mgr_format mirror: `-m` iff zoned,
+   `-c` per device with `@alias`, no sector count, no sload) over the raw
+   by-name nodes + mount-verify (`fresh fs mounts cleanly`). On any failure
+   the half-built fs is discarded and route (b) takes over silently:
+   userdata discard with header-kill verification, per-companion discards
+   (zoned is left to vold provisioning). Either way the tail runs:
+   `/metadata` wipe, memtag reset, Titan M nuke (`titan-wipe`), wipe of
+   `trusty_userdata`, misc flags. `Can_Be_Mounted=false`: the next-boot vold
+   reformat through the fresh dm stack stays authoritative.
    Header verify proves the 4K header kill only, never the whole wipe;
    crypto-erasure is complete via the `/metadata` wipe + Titan nuke.
 

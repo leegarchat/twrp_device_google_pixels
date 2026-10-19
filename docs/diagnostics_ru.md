@@ -29,8 +29,8 @@ adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 ## Format Data на мультидевайсной /data
 
 На аппаратах, чей стоковый `fstab` декларирует сет девайсов `/data`
-(`device=zoned|exp|exp_alias`, семьи malibu/laguna), рекавери не строит f2fs —
-повторяет стоковый factory reset. Живая геометрия парсится в момент Format
+(`device=zoned|exp|exp_alias`, семьи malibu/laguna), рекавери повторяет
+стоковый factory reset. Живая геометрия парсится в момент Format
 из `/first_stage_ramdisk/system/etc/fstab.<family>` загруженного слота
 (вендорные DFE-правки и наши снапшоты обходятся); отсутствующие ноды
 скипаются, а без exp-участников (пустой сет или одинокий zoned) легаси-путь
@@ -43,13 +43,17 @@ exp-сет с нулём живых нод — громкий отказ (fail c
 3. merge-check (Unmap уже по отмонтированному стеку), затем снос dm
    сверху вниз (`FoxTeardown: removing dm mapping ...`) — после этого ребут
    пересоздаст стек через расшифровку, ключи ещё в `/metadata`;
-4. `FoxFormat: erasing /data...` — discard userdata с проверкой header-kill,
-   затем discard компаньонов (zoned отдаётся на provision vold),
-   вайп `/metadata`, сброс memtag, Titan M nuke (`titan-wipe`), вайп
-   `trusty_userdata`, misc-флаги. `Can_Be_Mounted=false`: vold форматирует
-   сет при следующей загрузке Android. Проверка header доказывает только
-   убийство заголовка, не весь вайп; крипто-стирание завершают вайп
-   `/metadata` + nuke Титана.
+4. маршрут (a): точный `mkfs` (зеркало fs_mgr_format: `-m` iff zoned,
+   `-c` на девайс с `@alias`, без sector count, без sload) по raw by-name
+   нодам + проверка маунтом (`fresh fs mounts cleanly`). При любом провале
+   недособранное сносится и молча включается маршрут (b): discard userdata
+   с проверкой header-kill, discard компаньонов (zoned отдаётся на provision
+   vold). Дальше хвост в обоих случаях: вайп `/metadata`, сброс memtag,
+   Titan M nuke (`titan-wipe`), вайп `trusty_userdata`, misc-флаги.
+   `Can_Be_Mounted=false`: авторитетен reformat vold при следующей загрузке
+   через свежий dm-стек. Проверка header доказывает только убийство
+   заголовка, не весь вайп; крипто-стирание завершают вайп `/metadata`
+   + nuke Титана.
 
 `EBUSY` на teardown = что-то держит `/data`: чистый ребут в рекавери и
 повтор; до этой точки ничего не уничтожается.
