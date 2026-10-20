@@ -1,0 +1,30 @@
+[package]
+name = "payload-hs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "High-speed OTA probe: local-file payload.bin manifest parser + parallel partition fetch (test harness for recovery-pixel-boot install_rom). Offline build, zero C deps."
+
+[[bin]]
+name = "payload-hs"
+path = "src/main.rs"
+
+[lib]
+name = "payload_hs"
+path = "src/lib.rs"
+
+[dependencies]
+rayon = "1.12"
+lzma-rust2 = "0.20"
+ruzstd = "0.8"
+sha2 = "0.10"
+bzip2-rs = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
