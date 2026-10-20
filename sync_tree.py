@@ -19,15 +19,17 @@ Modes:
   -e, --except   smart-scanner exclusion management UI
   -j, --jobs N   repo sync thread count
   -y, --yes      non-interactive mode (auto-confirm all prompts)
-  --ofox-sync    use the official OrangeFox update flow instead of plain repo sync:
-                 sync all manifest projects except manual OFOX clones
-                 (bootable/recovery), then `git pull` bootable/recovery,
-                 vendor/recovery and external/se_omapi (official update_fox.sh
-                 scheme; android_bootable_recovery checkout errors are expected
-                 and skipped by design)
+  --ofox-sync    use the official OrangeFox update flow instead of plain repo sync
+                 (auto-detects the checkout type, same as update_fox.sh):
+                 16.0 complete manifest (owns bootable/recovery AND
+                 vendor/recovery) -> plain `repo sync`, no `git pull`
+                 (detached HEADs), errors are fatal; legacy 14.1/12.1
+                 minimal manifest -> repo sync except manual OFOX clones,
+                 then `git pull` bootable/recovery + vendor/recovery
+                 (+ external/se_omapi if present).
   --ofox-setup   OrangeFox sync configuration UI (sync tools dir, branch
-                 14.1/12.1, default flow); stored in bakFiles/ofox_sync.json
-  --ofox-tools PATH / --ofox-branch {14.1,12.1}
+                 16.0/14.1/12.1, default flow); stored in bakFiles/ofox_sync.json
+  --ofox-tools PATH / --ofox-branch {16.0,14.1,12.1}
                  one-shot config overrides (also saved)
 
 bakFiles/ layout:
@@ -718,25 +720,30 @@ def run_repo_sync(jobs: int, force: bool = False) -> int:
 # ============================================================
 # 9b. OrangeFox sync flow (official OFOX update scheme)
 # ============================================================
-# Mirrors OrangeFox sync/update_fox.sh and the OFOX wiki:
-#   repo sync            (android_bootable_recovery errors are EXPECTED
-#                         and must be ignored)
-#   git pull             bootable/recovery
-#   git pull             vendor/recovery (+ external/se_omapi if present)
-# In OFOX trees bootable/recovery is a manual git clone of the OFOX
-# Recovery repo (real .git dir, e.g. branch fox_14.1), while the repo
-# manifest declares nebrassy/android_bootable_recovery@android-14.
-# `repo sync` therefore always fails that project with
-# "unsupported checkout state". We implement the documented "ignore"
-# deterministically: repo-sync every manifest project EXCEPT the manual
-# OFOX clones, then `git pull` the manual clones (official order).
+# Mirrors OrangeFox sync/update_fox.sh and the OFOX wiki. The flow is chosen
+# at runtime from the EFFECTIVE manifest (same check as update_fox.sh):
+#   * 16.0 complete manifest (owns BOTH bootable/recovery AND
+#     vendor/recovery, e.g. Manifest.git @ fox_16.0): plain
+#     `repo sync -c --no-clone-bundle --no-tags` over everything.
+#     Recovery/vendor sit on detached HEADs — NO `git pull`, and sync
+#     errors are FATAL (never ignored on this route).
+#   * legacy 14.1/12.1 minimal manifests: bootable/recovery is a manual
+#     git clone of the OFOX Recovery repo (real .git dir, e.g. branch
+#     fox_14.1), while the repo manifest declares
+#     nebrassy/android_bootable_recovery@android-14. `repo sync` therefore
+#     always fails that project with "unsupported checkout state". The
+#     documented "ignore" is implemented deterministically: repo-sync
+#     every manifest project EXCEPT the manual OFOX clones, then `git pull`
+#     the manual clones (official order).
 OFOX_CONFIG_FILE = BAK_ROOT / "ofox_sync.json"
-OFOX_SUPPORTED_BRANCHES = ["14.1", "12.1"]
+OFOX_SUPPORTED_BRANCHES = ["16.0", "14.1", "12.1"]
 OFOX_SYNC_REPO_HTTPS = "https://gitlab.com/OrangeFox/sync.git"
 OFOX_SYNC_REPO_SSH = "git@gitlab.com:OrangeFox/sync.git"
-# Manifest paths that are manual OFOX git clones, not repo checkouts.
+# Manifest paths that are manual OFOX git clones, not repo checkouts
+# (LEGACY 14.1/12.1 minimal manifests only; unused on the 16.0 route).
 OFOX_MANUAL_PROJECTS = ["bootable/recovery"]
-# Tree-relative dirs updated via `git pull`, in official order.
+# Tree-relative dirs updated via `git pull`, in official order
+# (LEGACY route only — 16.0 checkouts sit on detached HEADs: no pulls).
 OFOX_GIT_PULL_REQUIRED = ["bootable/recovery"]
 OFOX_GIT_PULL_OPTIONAL = ["vendor/recovery", "external/se_omapi"]
 
@@ -767,18 +774,53 @@ def save_ofox_config(cfg: dict, uid: int, gid: int):
 
 
 def detect_ofox_branch() -> Optional[str]:
-    """Guess the OFOX branch (14.1/12.1) from the bootable/recovery git branch."""
+    """Guess the OFOX branch (16.0/14.1/12.1).
+
+    Order: bootable/recovery git branch -> effective manifest markers
+    (.repo/manifests) -> manifest ownership of both OFOX projects
+    (complete 16.0 manifest owns bootable/recovery + vendor/recovery).
+    """
     rec = ROOT_DIR / "bootable" / "recovery"
-    if not (rec / ".git").exists():
-        return None
-    res = subprocess.run(["git", "branch", "--show-current"],
-                         cwd=rec, capture_output=True, text=True)
-    if res.returncode == 0:
-        branch = res.stdout.strip()
-        for supported in OFOX_SUPPORTED_BRANCHES:
-            if supported in branch:
-                return supported
+    if (rec / ".git").exists():
+        res = subprocess.run(["git", "branch", "--show-current"],
+                             cwd=rec, capture_output=True, text=True)
+        if res.returncode == 0:
+            branch = res.stdout.strip()
+            for supported in OFOX_SUPPORTED_BRANCHES:
+                if supported in branch or f"fox_{supported}" in branch:
+                    return supported
+        res = subprocess.run(["git", "remote", "-v"],
+                             cwd=rec, capture_output=True, text=True)
+        if res.returncode == 0:
+            for supported in OFOX_SUPPORTED_BRANCHES:
+                if f"fox_{supported}" in res.stdout:
+                    return supported
+    manifests_dir = ROOT_DIR / ".repo" / "manifests"
+    if manifests_dir.is_dir():
+        try:
+            blob = "".join(
+                p.read_text(encoding="utf-8", errors="replace")
+                for p in manifests_dir.glob("*.xml"))
+            for supported in OFOX_SUPPORTED_BRANCHES:
+                if f"fox_{supported}" in blob:
+                    return supported
+        except Exception:
+            pass
+    if manifest_owns_ofox_projects():
+        return "16.0"
     return None
+
+
+def manifest_owns_ofox_projects() -> Optional[bool]:
+    """Same check as update_fox.sh: does the effective manifest own BOTH
+    bootable/recovery AND vendor/recovery (complete 16.0 manifest)?
+    None when `repo list` itself fails."""
+    res = subprocess.run(["repo", "list", "--all", "--path-only"],
+                         cwd=ROOT_DIR, capture_output=True, text=True)
+    if res.returncode != 0:
+        return None
+    paths = {norm_rel(l) for l in res.stdout.splitlines() if l.strip()}
+    return "bootable/recovery" in paths and "vendor/recovery" in paths
 
 
 def default_ofox_tools_dir() -> Optional[Path]:
@@ -833,7 +875,8 @@ def ensure_ofox_tools_dir(cfg: dict, uid: int, gid: int, interactive: bool) -> O
 def ofox_setup_ui(cfg: dict, uid: int, gid: int):
     console.print(Panel(
         "[bold cyan]🦊 OrangeFox sync configuration[/bold cyan]\n"
-        "[dim]Official scheme: repo sync (android_bootable_recovery errors are expected\n"
+        "[dim]16.0 complete manifest: plain repo sync (no git pulls, errors fatal).\n"
+        "Legacy 14.1/12.1: repo sync (android_bootable_recovery errors expected\n"
         "and ignored) + git pull in bootable/recovery and vendor/recovery.[/dim]",
         expand=False))
     console.print(f"  Current tools dir: [white]{cfg.get('sync_tools_dir') or '-'}[/white]")
@@ -843,9 +886,9 @@ def ofox_setup_ui(cfg: dict, uid: int, gid: int):
     ensure_ofox_tools_dir(cfg, uid, gid, interactive=True)
 
     detected = detect_ofox_branch()
-    current = cfg.get("branch") or detected or "14.1"
+    current = cfg.get("branch") or detected or "16.0"
     if current not in OFOX_SUPPORTED_BRANCHES:
-        current = "14.1"
+        current = "16.0"
     try:
         branch = Prompt.ask("OFOX branch", choices=OFOX_SUPPORTED_BRANCHES,
                             default=current)
@@ -863,7 +906,40 @@ def ofox_setup_ui(cfg: dict, uid: int, gid: int):
 
 
 def run_ofox_sync(jobs: int, force: bool = False) -> int:
-    """OFOX update flow: repo-sync managed projects, then git-pull manual clones."""
+    """OFOX update flow, chosen from the effective manifest (update_fox.sh).
+
+    Complete 16.0 manifest (owns bootable/recovery + vendor/recovery):
+    plain `repo sync -c --no-clone-bundle --no-tags` over everything
+    (official route; `--force-sync` added only in -f mode), no `git pull`,
+    any error is fatal. Legacy minimal manifests: repo-sync managed
+    projects except manual OFOX clones, then `git pull` the manual clones.
+    """
+    owned = manifest_owns_ofox_projects()
+    if owned is None:
+        console.print("[yellow]! `repo list` failed — cannot tell complete vs legacy "
+                      "manifest; running legacy-tolerant plain repo sync, "
+                      "android_bootable_recovery errors (if any) will be tolerated "
+                      "via follow-up pulls.[/yellow]")
+    if owned is True:
+        console.print("[bold cyan]🦊 OFOX 16.0 flow: complete manifest owns recovery "
+                      "+ vendor — plain repo sync, no git pulls.[/bold cyan]")
+        cmd = ["repo", "sync", "-c", "--no-clone-bundle", "--no-tags"]
+        if force:
+            cmd.append("--force-sync")
+        else:
+            cmd.append("--prune")
+        cmd.append(f"-j{jobs}")
+        console.print(f"\n[bold cyan]>>> {' '.join(cmd)}[/bold cyan]")
+        rc = subprocess.run(cmd, cwd=ROOT_DIR).returncode
+        if rc != 0:
+            console.print("\n[bold red]❌ repo sync failed on the 16.0 complete "
+                          "manifest — resolve the error before rerunning "
+                          "(ignoring sync errors is NOT supported here).[/bold red]")
+        return rc
+    if owned is False:
+        console.print("[yellow]OFOX flow: legacy minimal manifest (recovery and/or "
+                      "vendor are manual clones) — using the legacy "
+                      "repo-sync-except-manual + git-pull scheme.[/yellow]")
     projects = list_repo_projects()
     base = ["repo", "sync", "-c", "--force-sync", "--no-clone-bundle", "--no-tags"]
     if not force:
@@ -922,7 +998,7 @@ def do_tree_sync(args, uid: int, gid: int, interactive: bool) -> int:
     use_ofox = bool(getattr(args, "ofox_sync", False) or cfg.get("use_ofox_flow"))
     if use_ofox:
         if not cfg.get("branch"):
-            cfg["branch"] = detect_ofox_branch() or "14.1"
+            cfg["branch"] = detect_ofox_branch() or "16.0"
             save_ofox_config(cfg, uid, gid)
         ensure_ofox_tools_dir(cfg, uid, gid, interactive)
         console.print(Panel(f"[bold cyan]🦊 OrangeFox sync flow[/bold cyan] "
@@ -1212,15 +1288,17 @@ def main():
     parser.add_argument("-y", "--yes", action="store_true",
                         help="Non-interactive mode (auto-confirm)")
     parser.add_argument("--ofox-sync", dest="ofox_sync", action="store_true",
-                        help="Use the official OrangeFox update flow: repo sync all projects "
-                             "except manual OFOX clones (bootable/recovery), then git pull "
+                        help="Use the official OrangeFox update flow: on 16.0 complete "
+                             "manifests plain repo sync (no git pulls, errors fatal); "
+                             "on legacy 14.1/12.1 repo sync all projects except manual "
+                             "OFOX clones (bootable/recovery), then git pull "
                              "bootable/recovery + vendor/recovery")
     parser.add_argument("--ofox-setup", dest="ofox_setup", action="store_true",
                         help="Configure OFOX sync (tools dir, branch, default flow). "
                              "Exits unless combined with a sync mode")
     parser.add_argument("--ofox-tools", type=Path, default=None,
                         help="Path to OrangeFox sync tools dir (with orangefox_sync.sh); saved to config")
-    parser.add_argument("--ofox-branch", choices=["14.1", "12.1"], default=None,
+    parser.add_argument("--ofox-branch", choices=["16.0", "14.1", "12.1"], default=None,
                         help="OFOX manifest branch; saved to config")
     args = parser.parse_args()
 
