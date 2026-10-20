@@ -10,6 +10,7 @@
 //!   recovery-pixel-boot torch on|off# LM3644 flashlight (Fox OF_FL_PATH hook)
 //!   recovery-pixel-boot dm-state  # refresh /tmp/fox_dm_state once + print
 //!   recovery-pixel-boot dm-watch  # dm truth watch daemon (snapshot-only)
+//!   recovery-pixel-boot install-rom <args>  # high-speed OTA engine entry
 //!
 //! Only std + libc. Exit 0 ok / skip (monolithic kernel), 1 fatal.
 
@@ -18,6 +19,7 @@ mod config;
 mod dm;
 mod i2c;
 mod init;
+mod install;
 mod ko_picker;
 mod props;
 mod stage;
@@ -64,7 +66,8 @@ fn usage() -> ! {
          \x20 recovery-pixel-boot setup-temp\n\
          \x20 recovery-pixel-boot torch on|off\n\
          \x20 recovery-pixel-boot dm-state\n\
-         \x20 recovery-pixel-boot dm-watch\n"
+         \x20 recovery-pixel-boot dm-watch\n\
+         \x20 recovery-pixel-boot install-rom <fox-hsinstall args>\n"
     );
     std::process::exit(1);
 }
@@ -99,6 +102,10 @@ fn main() -> ExitCode {
         "dm-watch" => {
             // Snapshot-only daemon; the `!` coerces to ExitCode.
             dm::run_dm_watch()
+        }
+        "install-rom" => {
+            // Thin entry to the high-speed engine; forwards exit code.
+            install::run_install_rom(&args[2..])
         }
         _ => usage(),
     }
