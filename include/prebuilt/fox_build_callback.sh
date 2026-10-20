@@ -928,6 +928,8 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM] ERROR: bootsmasher prebuilt missing: include/prebuilt/bootsmasher-install-arm64"
             return 1
         fi
+        # High-speed OTA engine is cargo-built Rust (hs-install-v2),
+        # ships as a prebuilt static binary in recovery/root.
         # --- recovery.wipe swap kit ---
         # Same layout as the fstab kit: the live system/etc/recovery.wipe
         # is the aio placeholder, every family's file ships as
