@@ -1,0 +1,74 @@
+// Soong build for the high-speed OTA installer engine (recovery only).
+//
+// Static C++ replacement for the cargo-built fox-hsinstall prototype:
+// same wire protocol and exit contract. LP metadata edits go through
+// forked /system/bin/siw (baseband_guard silently drops raw super
+// writes from any other binary); payload parsing through
+// update_metadata-protos; XZ through the vendored 7-Zip unpacker
+// (src/xz7z: in-tree xz-embedded cannot decode OTA xz streams),
+// BZ/ZSTD through libbz/libzstd.
+cc_library_static {
+    name: "fox-xz7z",
+    recovery: true,
+    srcs: [
+        "src/xz7z/Xz.c",
+        "src/xz7z/XzDec.c",
+        "src/xz7z/XzCrc64.c",
+        "src/xz7z/XzCrc64Opt.c",
+        "src/xz7z/7zCrc.c",
+        "src/xz7z/Lzma2Dec.c",
+        "src/xz7z/LzmaDec.c",
+        "src/xz7z/Bra.c",
+        "src/xz7z/Bra86.c",
+        "src/xz7z/BraIA64.c",
+        "src/xz7z/Delta.c",
+        "src/xz7z/Alloc.c",
+        "src/xz7z/CpuArch.c",
+        "src/xz7z/Sha256.c",
+    ],
+    cflags: [
+        "-Wno-error",
+        "-D_7ZIP_ST",
+        "-D_FILE_OFFSET_BITS=64",
+    ],
+    local_include_dirs: ["src/xz7z"],
+    export_include_dirs: ["src/xz7z"],
+}
+
+cc_binary {
+    name: "fox-hsinstall",
+    recovery: true,
+    srcs: [
+        "src/main.cpp",
+        "src/util.cpp",
+        "src/ota.cpp",
+        "src/plan.cpp",
+        "src/lp.cpp",
+        "src/extract.cpp",
+        "src/backup.cpp",
+        "src/sha256.cpp",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wno-unused-parameter",
+        "-D_FILE_OFFSET_BITS=64",
+    ],
+    static_libs: [
+        "fox-xz7z",
+        "libbz",
+        "libdm",
+        "update_metadata-protos",
+    ],
+    shared_libs: [
+        "libbase",
+        "liblog",
+        "liblp",
+        "libfs_mgr",
+        "libz",
+        "libziparchive",
+        "libzstd",
+        "libprotobuf-cpp-lite",
+    ],
+}

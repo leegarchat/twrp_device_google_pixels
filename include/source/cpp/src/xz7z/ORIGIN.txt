@@ -1,0 +1,4 @@
+# Vendored from external/lzma/C (7-Zip public domain) for the HS installer XZ path.
+# Upstream: xz-embedded in this tree cannot decode OTA xz streams; full liblzma
+# is unavailable in the recovery link set, so the self-contained 7-Zip XZ
+# unpacker (XzUnpacker, one-call full decode) is compiled in.
