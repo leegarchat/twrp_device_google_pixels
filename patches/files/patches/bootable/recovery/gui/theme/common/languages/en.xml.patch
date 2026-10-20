@@ -1,0 +1,10 @@
+--- a/bootable/recovery/gui/theme/common/languages/en.xml
++++ b/bootable/recovery/gui/theme/common/languages/en.xml
+@@ -61,6 +61,7 @@
+ 		<string name="file">File</string>
+ 		<string name="zip_sig_chk">ZIP signature verification</string>
+ 		<string name="inject_twrp_chk">Inject OrangeFox after install</string>
++		<string name="high_speed_flash_chk">High-speed flash (Experimental)</string>
+ 		<string name="install_reboot_chk">Reboot after installation is complete</string>
+ 		<string name="options_hdr">Options</string>
+ 		<string name="zip_queue">Queue</string>
