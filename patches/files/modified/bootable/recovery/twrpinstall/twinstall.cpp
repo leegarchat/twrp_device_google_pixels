@@ -316,6 +316,19 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 	if (DataManager::GetIntValue("tw_high_speed_flash") == 0)
 		return FoxHighSpeedResult::kNotApplicable;
 
+	// ADB sideload serves /sideload/package.zip as an on-demand FUSE
+	// stream (single-block cache, every miss is a host round-trip).
+	// The engine needs thousands of random preads over gigabytes,
+	// which either stalls for hours or ends in EIO -> hard abort.
+	// The stock update_engine_sideload path is designed for exactly
+	// this stream (single seek + sequential read), so decline before
+	// fork() and let it through. Same prefix style as the digest
+	// skip in TWinstall_zip below.
+	if (package.compare(0, 9, "/sideload") == 0) {
+		LOGINFO("hs: sideload package, stock update_engine path\n");
+		return FoxHighSpeedResult::kNotApplicable;
+	}
+
 	// Stock AB pre-ROM environment (mounts, bind sh, pre script,
 	// recovery-overwrite baseline) BEFORE any destructive write —
 	// same order and same calls as the stock branch below. The engine

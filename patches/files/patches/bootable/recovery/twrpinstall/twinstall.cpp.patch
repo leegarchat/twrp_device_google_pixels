@@ -1,6 +1,6 @@
 --- a/bootable/recovery/twrpinstall/twinstall.cpp
 +++ b/bootable/recovery/twrpinstall/twinstall.cpp
-@@ -282,6 +282,174 @@
+@@ -282,6 +282,187 @@
  	return INSTALL_SUCCESS;
  }
  
@@ -37,6 +37,19 @@
 +static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 +	if (DataManager::GetIntValue("tw_high_speed_flash") == 0)
 +		return FoxHighSpeedResult::kNotApplicable;
++
++	// ADB sideload serves /sideload/package.zip as an on-demand FUSE
++	// stream (single-block cache, every miss is a host round-trip).
++	// The engine needs thousands of random preads over gigabytes,
++	// which either stalls for hours or ends in EIO -> hard abort.
++	// The stock update_engine_sideload path is designed for exactly
++	// this stream (single seek + sequential read), so decline before
++	// fork() and let it through. Same prefix style as the digest
++	// skip in TWinstall_zip below.
++	if (package.compare(0, 9, "/sideload") == 0) {
++		LOGINFO("hs: sideload package, stock update_engine path\n");
++		return FoxHighSpeedResult::kNotApplicable;
++	}
 +
 +	// Stock AB pre-ROM environment (mounts, bind sh, pre script,
 +	// recovery-overwrite baseline) BEFORE any destructive write —
@@ -175,7 +188,7 @@
  int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
  {
    int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
-@@ -433,6 +601,16 @@
+@@ -433,6 +614,16 @@
  		ZipEntry64 ab_binary_entry;
  		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
  			LOGINFO("AB zip\n");
@@ -192,7 +205,7 @@
  			gui_msg(Msg(msg::kHighlight, "flash_ab_inactive=Flashing A/B zip to inactive slot: {1}")(PartitionManager.Get_Active_Slot_Display()=="A"?"B":"A"));
  			// We need this so backuptool can do its magic
  			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
-@@ -467,6 +645,7 @@
+@@ -467,6 +658,7 @@
  				gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
  			}
  			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
