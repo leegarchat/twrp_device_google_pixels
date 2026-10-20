@@ -139,7 +139,11 @@
    mConst.SetValue(FOX_SURVIVAL_FOLDER_VAR, FOX_SURVIVAL_FOLDER);
    mConst.SetValue(FOX_SURVIVAL_BACKUP_NAME, FOX_SURVIVAL_BACKUP);
    mConst.SetValue(FOX_ACTUAL_BUILD_VAR, FOX_BUILD);
-@@ -1250,7 +1333,7 @@
+@@ -1247,10 +1330,11 @@
+ 
+   mPersist.SetValue(TW_INSTALL_REBOOT_VAR, "0");
+   mPersist.SetValue(TW_SIGNED_ZIP_VERIFY_VAR, "0");
++  mPersist.SetValue(TW_HIGH_SPEED_FLASH_VAR, "0");
    mPersist.SetValue(TW_DISABLE_FREE_SPACE_VAR, "0");
    mPersist.SetValue(TW_FORCE_DIGEST_CHECK_VAR, "0");
    mPersist.SetValue(TW_USE_COMPRESSION_VAR, "0");
@@ -148,7 +152,7 @@
    mPersist.SetValue(TW_RM_RF_VAR, "0");
    mPersist.SetValue(TW_SKIP_DIGEST_CHECK_VAR, "0");
    mPersist.SetValue(TW_SKIP_DIGEST_GENERATE_VAR, "0");
-@@ -1319,7 +1402,7 @@
+@@ -1319,7 +1403,7 @@
    mConst.SetValue("tw_screen_timeout_secs", "0");
    mConst.SetValue("tw_no_screen_timeout", "1");
  #else
@@ -157,7 +161,7 @@
    mPersist.SetValue("tw_no_screen_timeout", "0");
  #endif
  
-@@ -1377,11 +1460,29 @@
+@@ -1377,11 +1461,29 @@
        mConst.SetValue("tw_has_brightnesss_file", "1");
        mConst.SetValue("tw_brightness_file", findbright);
        string maxBrightness;
@@ -187,7 +191,7 @@
        // Attempt to locate the max_brightness file
        string maxbrightpath =
  	findbright.insert(findbright.rfind('/') + 1, "max_");
-@@ -1406,6 +1507,7 @@
+@@ -1406,6 +1508,7 @@
  	  maxVal << 255;
  	  maxBrightness = maxVal.str();
  	}
