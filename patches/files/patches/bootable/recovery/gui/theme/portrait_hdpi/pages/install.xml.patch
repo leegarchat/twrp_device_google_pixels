@@ -1,0 +1,24 @@
+--- a/bootable/recovery/gui/theme/portrait_hdpi/pages/install.xml
++++ b/bootable/recovery/gui/theme/portrait_hdpi/pages/install.xml
+@@ -76,6 +76,10 @@
+ 					<condition var1="tw_has_injecttwrp" var2="1"/>
+ 					<data variable="tw_inject_after_zip"/>
+ 				</listitem>
++				<listitem name="{@high_speed_flash_chk}">
++					<condition var1="tw_has_boot_slots" var2="1"/>
++					<data variable="tw_high_speed_flash"/>
++				</listitem>
+ 			</listbox>
+ 
+ 			<button style="btn_raised">
+@@ -247,6 +251,10 @@
+ 					<condition var1="tw_has_injecttwrp" var2="1"/>
+ 					<data variable="tw_inject_after_zip"/>
+ 				</listitem>
++				<listitem name="{@high_speed_flash_chk}">
++					<condition var1="tw_has_boot_slots" var2="1"/>
++					<data variable="tw_high_speed_flash"/>
++				</listitem>
+ 			</listbox>
+ 
+ 			<text style="caption">

@@ -1,0 +1,202 @@
+--- a/bootable/recovery/twrpinstall/twinstall.cpp
++++ b/bootable/recovery/twrpinstall/twinstall.cpp
+@@ -282,6 +282,174 @@
+ 	return INSTALL_SUCCESS;
+ }
+ 
++// ---- Fox high-speed install (outer layer, AB branch of TWinstall_zip) ----
++// Independent /system/bin/fox-hsinstall (Rust, static musl, no cargo).
++// Single live stream: child stdout+stderr are duped into the status pipe
++// (reflash_twrp.sh pattern) and relayed per line to the GUI console.
++// Progress lines are absolute (peridot parity): the engine's `progress`
++// is ignored, `set_progress` maps to DataManager::SetProgress (capped
++// at 0.99, 1.0 only after the slot switch below).
++// Exit contract:
++//   0 ok (pre-ROM env + baseline run before the engine; slot switched
++//     below via PartitionManager, never by the engine)
++//   2 not a full OTA -> stock path
++//   5 live super unusable -> stock path
++//   else hard error (4 = device mismatch, 3 = no fit, 1 = failed, 6 = usage).
++static constexpr const char* HS_ENGINE = "/system/bin/fox-hsinstall";
++static constexpr int HS_EXIT_NOT_FULL = 2;
++static constexpr int HS_EXIT_NO_HELPERS = 5;
++
++// Stock A/B fallback: a declined/unticked HS install takes the normal
++// update_engine path (same as peridot: toggle off == NotApplicable).
++
++enum class FoxHighSpeedResult { kNotApplicable, kAborted, kSucceeded };
++
++static std::string HsTargetSlot() {
++	char slot[PROPERTY_VALUE_MAX];
++	property_get("ro.boot.slot_suffix", slot, "");
++	if (strcmp(slot, "_b") == 0)
++		return "a";
++	return "b";
++}
++
++static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
++	if (DataManager::GetIntValue("tw_high_speed_flash") == 0)
++		return FoxHighSpeedResult::kNotApplicable;
++
++	// Stock AB pre-ROM environment (mounts, bind sh, pre script,
++	// recovery-overwrite baseline) BEFORE any destructive write —
++	// same order and same calls as the stock branch below. The engine
++	// replaces Run_Update_Binary; everything else is identical.
++	bool hs_system_mounted = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
++	bool hs_vendor_mounted = PartitionManager.Is_Mounted_By_Path("/vendor");
++	PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
++	PartitionManager.Mount_By_Path("/vendor", false);
++	TWFunc::copy_file("/system/bin/sh", "/tmp/sh", 0755);
++	mount("/tmp/sh", "/system/bin/sh", "auto", MS_BIND, NULL);
++	usleep(32);
++	if (TWFunc::Path_Exists(FOX_PRE_ROM_FLASH_SCRIPT))
++		TWFunc::RunFoxScript(FOX_PRE_ROM_FLASH_SCRIPT, package);
++	TWFunc::IsRecoveryOverwritten(true);
++	auto hs_cleanup_mounts = [&]() {
++		umount("/system/bin/sh");
++		unlink("/tmp/sh");
++		if (!hs_vendor_mounted)
++			PartitionManager.UnMount_By_Path("/vendor", false);
++		if (!hs_system_mounted)
++			PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
++	};
++
++	int pipe_fd[2];
++	if (pipe(pipe_fd) != 0) {
++		LOGERR("hs: pipe failed: %s\n", strerror(errno));
++		hs_cleanup_mounts();
++		return FoxHighSpeedResult::kAborted;
++	}
++
++	pid_t pid = fork();
++	if (pid == -1) {
++		LOGERR("hs: fork failed: %s\n", strerror(errno));
++		close(pipe_fd[0]);
++		close(pipe_fd[1]);
++		hs_cleanup_mounts();
++		return FoxHighSpeedResult::kAborted;
++	}
++	if (pid == 0) {
++		// Merge stdout+stderr into the status pipe: one live stream.
++		dup2(pipe_fd[1], STDOUT_FILENO);
++		dup2(pipe_fd[1], STDERR_FILENO);
++		close(pipe_fd[0]);
++		execl(HS_ENGINE, "fox-hsinstall",
++			"--zip", package.c_str(), (char*)nullptr);
++		printf("E:hs: can't execute '%s': %s\n", HS_ENGINE, strerror(errno));
++		_exit(-1);
++	}
++	close(pipe_fd[1]);
++
++	// Reset the bar: engine fractions are absolute (0..1 of the whole
++	// install, peridot-style). The engine's own `progress` line is
++	// ignored below — a stale ShowProgress portion would pin every
++	// later _SetProgress to zero.
++	DataManager::SetProgress(0);
++	char buffer[1024];
++	FILE* child_data = fdopen(pipe_fd[0], "r");
++	while (fgets(buffer, sizeof(buffer), child_data) != NULL) {
++		char* command = strtok(buffer, " \n");
++		if (command == NULL)
++			continue;
++		if (strcmp(command, "progress") == 0) {
++			// Ignored on purpose (see above); keep a trace in the log.
++			LOGINFO("hs: engine progress line ignored\n");
++		} else if (strcmp(command, "set_progress") == 0) {
++			char* fraction_char = strtok(NULL, " \n");
++			if (fraction_char) {
++				float frac = strtof(fraction_char, NULL);
++				// Withhold 100% until the slot switch below succeeds.
++				if (frac > 0.99f)
++					frac = 0.99f;
++				DataManager::SetProgress(frac);
++			}
++		} else if (strcmp(command, "ui_print") == 0) {
++			char* display_value = strtok(NULL, "\n");
++			if (display_value) {
++				gui_print("hs: %s\n", display_value);
++				LOGINFO("hs: %s\n", display_value);
++			}
++		} else if (strcmp(command, "log") == 0) {
++			char* display_value = strtok(NULL, "\n");
++			if (display_value)
++				LOGINFO("hs-engine: %s\n", display_value);
++		} else {
++			// Human-readable engine output: relay live to the GUI
++			// console (reflash_twrp.sh pattern) + log it.
++			size_t len = strlen(buffer);
++			while (len > 0 &&
++			       (buffer[len - 1] == '\n' || buffer[len - 1] == '\r'))
++				buffer[--len] = '\0';
++			if (len > 0)
++				gui_print("%s\n", buffer);
++			LOGINFO("hs: %s\n", buffer);
++		}
++	}
++	fclose(child_data);
++	int status;
++	waitpid(pid, &status, 0);
++	int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
++	LOGINFO("hs: engine exit %d\n", code);
++
++	if (code == 0) {
++		// Engine wrote the target slot; restore the pre-ROM mount
++		// state first (stock order), then switch the slot through
++		// the partition manager so tw_active_slot + system details
++		// update and the reboot menu shows the truth immediately.
++		hs_cleanup_mounts();
++		std::string target = HsTargetSlot();
++		std::string slot_up = (target == "b") ? "B" : "A";
++		PartitionManager.Set_Active_Slot(slot_up);
++		if (PartitionManager.Get_Active_Slot_Display() != slot_up) {
++			gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
++			return FoxHighSpeedResult::kAborted;
++		}
++		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
++			PartitionManager.Unlock_Block_Partitions();
++			PartitionManager.Prepare_All_Super_Volumes();
++			gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
++		}
++		gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
++		DataManager::SetProgress(1.0f);
++		LOGINFO("hs: wrote slot %s and switched to it\n", target.c_str());
++		return FoxHighSpeedResult::kSucceeded;
++	}
++	if (code == HS_EXIT_NOT_FULL || code == HS_EXIT_NO_HELPERS) {
++		LOGINFO("hs: declined (%d), stock update_engine path\n", code);
++		hs_cleanup_mounts();
++		return FoxHighSpeedResult::kNotApplicable;
++	}
++	hs_cleanup_mounts();
++	gui_err("hs_failed=High-speed install failed. See the log for details.");
++	return FoxHighSpeedResult::kAborted;
++}
++
+ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
+ {
+   int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
+@@ -433,6 +601,16 @@
+ 		ZipEntry64 ab_binary_entry;
+ 		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
+ 			LOGINFO("AB zip\n");
++			// Fox high-speed branch (outer layer): the toggle + payload
++			// probe run inside; kNotApplicable = stock path below, untouched.
++			FoxHighSpeedResult hs_res = FoxTryHighSpeedInstall(path);
++			if (hs_res == FoxHighSpeedResult::kSucceeded) {
++				DataManager::SetValue(FOX_ZIP_INSTALLER_CODE, 1); // mark as custom ROM install
++				run_rom_scripts = true;
++				ret_val = INSTALL_SUCCESS;
++			} else if (hs_res == FoxHighSpeedResult::kAborted) {
++				ret_val = INSTALL_ERROR;
++			} else {
+ 			gui_msg(Msg(msg::kHighlight, "flash_ab_inactive=Flashing A/B zip to inactive slot: {1}")(PartitionManager.Get_Active_Slot_Display()=="A"?"B":"A"));
+ 			// We need this so backuptool can do its magic
+ 			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
+@@ -467,6 +645,7 @@
+ 				gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
+ 			}
+ 			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
++			}
+ 		} else {
+ 			std::string binary_name("ui.xml");
+ 			ZipEntry64 binary_entry;
