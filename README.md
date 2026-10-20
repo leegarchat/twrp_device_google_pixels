@@ -29,34 +29,36 @@ generations (left to right), rows are features (top to bottom).
 | `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
 
 > 🟢 = works (confirmed) · 🔴 = broken ·
+
 > 🟡 = not tested yet · 🔵 = should work, not verified in detail ·
+
 > 🟠 = flaky.
 
 | Feature | G1 | G2 | G3 | G4 | G5 | G6 |
 |---|---|---|---|---|---|---|
-| Data decryption | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| ROM flashing | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| OTG | 🟠 | 🟡 | 🟢 | 🟢 | 🟡 | 🟡 |
-| Flashlight | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
-| Vibration | 🟢 | 🟡 | 🟢 | 🟡 | 🟡 | 🟡 |
-| Reboot to Android | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Touchscreen | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Recovery boots | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Backup / restore | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Brightness control | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| ADB sideload | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Data decryption | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| MTP + ADB | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| ROM flashing | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🔵 |
+| OTG | 🟠 | 🔵 | 🟢 | 🟢 | 🟡 | 🟡 |
+| Flashlight | 🟢 | 🔵 | 🟢 | 🟢 | 🟡 | 🟢 |
+| Vibration | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Reboot to Android | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Touchscreen | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Recovery boots | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Backup / restore | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🔵 |
+| Brightness control | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| ADB sideload | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Self-reflash | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Reboot menu | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| PIN unlock | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Slot switch | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Fastbootd | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Reboot menu | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟠 |
+| PIN unlock | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Slot switch | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Fastbootd | 🔵 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Files + terminal | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | OTA survival | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Charging | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Format data | 🔵 | 🔵 | 🟢 | 🔵 | 🔵 | 🔵 |
-| Touch (broken super) | 🔵 | 🔵 | 🟢 | 🔵 | 🔵 | 🔵 |
-| Vibration (broken super) | 🟡 | 🟡 | 🔴 | 🟡 | 🟡 | 🟡 |
+| Format data | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🔵 |
+| Touch (broken super) | 🔵 | 🔵 | 🟢 | 🟢 | 🔵 | 🔵 |
+| Vibration (broken super) | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
 
 > Broken-super footnote: with `super` unreadable, touch keeps working
 > because its modules come from the OFOX per-device package (verified
