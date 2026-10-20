@@ -2001,7 +2001,15 @@ bool TWPartition::Wipe(string New_File_System) {
 		}
 	}
 
-	if (Has_Data_Media && Current_File_System == New_File_System) {
+	DataManager::GetValue(TW_RM_RF_VAR, check);
+	// Fox: explicit rm-rf (checkbox) on /data means a FULL file wipe —
+	// same result as mkfs, different method. It must not fall into the
+	// media-preserving branch below (which additionally keeps /data/data
+	// via the OF_WORKAROUND_BACKUP_BUG skip), otherwise Format Data
+	// silently keeps user files.
+	bool fox_full_rmrf = (Mount_Point == "/data" && (check != 0 || Use_Rm_Rf));
+
+	if (Has_Data_Media && Current_File_System == New_File_System && !fox_full_rmrf) {
 		wiped = Wipe_Data_Without_Wiping_Media();
 
 		if (Mount_Point == "/data" && TWFunc::get_log_dir() == DATA_LOGS_DIR) {
@@ -2011,8 +2019,6 @@ bool TWPartition::Wipe(string New_File_System) {
 		}
 		recreate_media = false;
 	} else {
-		DataManager::GetValue(TW_RM_RF_VAR, check);
-
 		if (Mount_Point == "/storage")
 		  {
 	   	    LOGINFO("DEBUG - OrangeFox: wiping /storage with \"rm -rf\" ... \n");
@@ -2387,6 +2393,8 @@ bool TWPartition::Wipe_Encryption() {
 	bool Save_Data_Media = Has_Data_Media;
 	bool ret = false;
 	std::string the_wipe_fs;
+	int fox_rm_rf_check = 0;
+	bool fox_wipe_live = false;
 
 	if (TWFunc::Block_Operations_Until_Reboot())
 		return false;
@@ -2419,19 +2427,30 @@ bool TWPartition::Wipe_Encryption() {
 		return false;
 	}
 
+	// Fox: rm-rf flavor wipes the live mount — it must run BEFORE any
+	// unmount, otherwise the remount targets the raw block device while
+	// the stale crypto mapper still holds it (EBUSY) or the raw
+	// ciphertext is unmountable on its own (EINVAL). mkfs flavor keeps
+	// the unmount-first order. (Declarations live at function top:
+	// a goto above must not bypass their initialization.)
+	DataManager::GetValue(TW_RM_RF_VAR, fox_rm_rf_check);
+	fox_wipe_live = (Mount_Point == "/data" && (fox_rm_rf_check != 0 || Use_Rm_Rf));
+
+	if (!fox_wipe_live) {
 #ifdef TW_INCLUDE_CRYPTO
-	if (!UnMount(true))
-		return false;
-	if (Is_Decrypted && !Decrypted_Block_Device.empty()) {
-//		if (delete_crypto_blk_dev((char*)("userdata")) != 0) {
-//			LOGERR("Error deleting crypto block device, continuing anyway.\n");
-//		}
-	}
+		if (!UnMount(true))
+			return false;
+		if (Is_Decrypted && !Decrypted_Block_Device.empty()) {
+//			if (delete_crypto_blk_dev((char*)("userdata")) != 0) {
+//				LOGERR("Error deleting crypto block device, continuing anyway.\n");
+//			}
+		}
 #endif
-	Has_Data_Media = false;
-	Decrypted_Block_Device = "";
-	Is_Decrypted = false;
-	Is_Encrypted = false;
+		Has_Data_Media = false;
+		Decrypted_Block_Device = "";
+		Is_Decrypted = false;
+		Is_Encrypted = false;
+	}
 
 #ifdef OF_DISPLAY_FORMAT_FILESYSTEMS_DEBUG_INFO
 	gui_print("DEBUG: Fstab_File_System=%s\n", Fstab_File_System.c_str());

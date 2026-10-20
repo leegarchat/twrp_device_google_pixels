@@ -69,6 +69,18 @@ paths — there is nothing to unbind. Plain `mkfs` on a multi-device set
 stays unsupported everywhere: tick the rm -rf checkbox for `/data`
 wipe/restore, never plain-format.
 
+Ordering rule (legacy `/data`): the rm-rf flavor wipes the live mount
+before any unmount; the mkfs flavor unmounts first. Unmounting before an
+rm-rf wipe breaks the remount — the stale crypto mapper still holds the
+raw device (`EBUSY`), or the raw ciphertext is unmountable on its own
+(`EINVAL`).
+
+Checked rm-rf on `/data` means a FULL file wipe (same result as mkfs,
+different method, internal storage included): it bypasses the
+media-preserving branch, which would otherwise keep `/data/media` and —
+via the `OF_WORKAROUND_BACKUP_BUG` skip — `/data/data`. Unchecked keeps
+the preserving behavior (factory-reset style).
+
 Honest label: this Format Data is crypto-erasure (kills keys in
 `/metadata` + Titan M, discards the set). It does not guarantee physical
 zeroing of every UFS block.
