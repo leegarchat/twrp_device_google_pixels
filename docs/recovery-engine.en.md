@@ -17,6 +17,7 @@ external binaries** — the only fork point is invoking
 | `otg-auto` | `patch_dwc3=1` trigger | VBUS host/device daemon, always resident; Laguna restores dual-role and sink preference |
 | `setup-temp` | `exec` on `on init` + refresh from `boot` | `/dev/thermal_cpu` symlink: exact → `soc_therm` → auto → zone0 |
 | `torch on\|off` | `OF_FL_PATH1=cmd:/system/bin/recovery-pixel-boot torch` from GUI | LM3644: I2C discovery + GPIO (v1 uAPI) + devicetree, native ioctls |
+| `install-rom <args>` | Legacy entry point (kept as alias) | Forwards to `/system/bin/fox-hsinstall` (cargo-built Rust, see below); the installer calls the engine directly now. |
 
 ## Modules (`src/`)
 
@@ -58,3 +59,49 @@ TWRP / lptools) mappings are used read-only. The `otg-patch` oneshot
 only mounts existing nodes: it creates nothing, removes nothing.
 Stock `runatboot.sh` is an empty OFox hook (invoked by
 `twrp.cpp`); an extension point for addons.
+
+## High-speed install (`fox-hsinstall` + installer branch)
+
+Opt-in (`tw_high_speed_flash` checkbox on the flash-confirm page, A/B
+devices only, default off). `twinstall` detects a payload-based OTA and
+runs `recovery-pixel-boot install-rom <zip>` over the same updater pipe
+protocol (`progress`/`set_progress`/`ui_print`); stock `update_engine`
+stays the fallback.
+
+Engine (`rust_projects/hs-install`, static musl arm64 prebuilt):
+probe zip → `pre-device` vs `ro.product.device` (hard mismatch error,
+never falls back) → full-OTA verdict (incremental → exit 2, stock path)
+→ helpers `siw`+`lptools_new` present (else exit 5, stock path) →
+`siw info -f json` live state → phase-2 fit ladder
+(`FITS_AS_IS → KILL_ONE → KILL_TWO → WIPE_ALL → IMPOSSIBLE`, kills from
+the current slot largest-first) → backup critical weights 2+4 to `/tmp`
+(super/modem excluded by design) → single-threaded group rebuild via
+`siw` (unmap, remove + create in both metadata slots, map writable) →
+batches 1→2→3→4 with LPT order, per-thread sha256 validation and a
+barrier per batch → on failure finish the batch, roll back, exit 1
+(slot never switched by the engine) → `fsync` + `sync`.
+
+On engine exit 0 the installer switches the slot (`bootctl
+setActiveBootSlot`) and completes normally. The engine never formats
+`/data`: the downgrade-format trigger is deliberately not copied.
+
+## High-speed engine `fox-hsinstall` (Rust, static musl)
+
+Cargo-built `hs-install` (`include/source/`, outside Soong), shipped as
+a static prebuilt in `recovery/root` (same mechanism as `siw`).
+LP surgery goes through forked `/system/bin/siw` — the kernel guard
+silently drops raw super writes from any other binary, so direct
+`liblp` writes are impossible by design. Manifest parsing is pure Rust.
+Codecs: `lzma-rust2` + `ruzstd` + `crabz2` (pure Rust, no C).
+Update flow: probe → device gate (`pre-device`) → full-OTA verdict
+(+ `minor_version` delta signal, exact-tiling check) → live super
+(`siw info` JSON) → fit ladder → backup critical weights 2+4 →
+unmap of target + stale nodes (live slot untouched) → group rebuild
+→ op-level thread pool (auto `min(ncpu,8)` + RAM cap) with per-op
+input hashes → barrier per batch → `fsync`, re-read sha256 vs
+`new_partition_info.hash` (optional `--readback` re-verifies from
+storage) → rollback ledger on weights 2/3/4 failure only → `sync`,
+`/tmp` cleanup.
+Reports progress over stdout (updater pipe protocol: staged user
+lines, `set_progress`, `log` diagnostics) for the twinstall loop,
+which relays it live to the GUI console (reflash pattern).

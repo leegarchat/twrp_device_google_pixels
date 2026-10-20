@@ -16,6 +16,7 @@
 | `otg-auto` | триггер `patch_dwc3=1` | VBUS-демон host/device, живёт всегда; Laguna возвращает dual-role и sink preference |
 | `setup-temp` | `exec` на `on init` + рефреш из `boot` | Симлинк `/dev/thermal_cpu`: exact → `soc_therm` → auto → zone0 |
 | `torch on\|off` | `OF_FL_PATH1=cmd:/system/bin/recovery-pixel-boot torch` из GUI | LM3644: дискавери I2C + GPIO (v1 uAPI) + devicetree, нативные ioctl |
+| `install-rom <args>` | Legacy-вход (оставлен как алиас) | Проброс в `/system/bin/fox-hsinstall` (cargo Rust, см. ниже); установщик дёргает движок напрямую. |
 
 ## Модули (`src/`)
 
@@ -58,3 +59,48 @@ mount готового → `siw map` → `lptools_new map` → прямое чт
 ноды: ничего не создаёт, ничего не удаляет.
 Стоковый `runatboot.sh` — пустой хук OFox (дёргает `twrp.cpp`); точка
 для аддонов.
+
+## Быстрая установка (`fox-hsinstall` + ветка установщика)
+
+Opt-in (галка `tw_high_speed_flash` на confirm-странице, только A/B,
+дефолт выкл). `twinstall` детектит payload-OTA и гонит
+`recovery-pixel-boot install-rom <zip>` по тому же пайп-протоколу
+апдейтера (`progress`/`set_progress`/`ui_print`); стоковый
+`update_engine` остаётся фолбэком.
+
+Движок (`rust_projects/hs-install`, static musl arm64 пребилт):
+проба zip → `pre-device` vs `ro.product.device` (несовпадение — жёсткая
+ошибка без фолбэка) → full-вердикт (инкремент → exit 2, стоковый путь) →
+хелперы `siw`+`lptools_new` на месте (иначе exit 5, стоковый путь) →
+живое состояние `siw info -f json` → лесенка фазы 2
+(`FITS_AS_IS → KILL_ONE → KILL_TWO → WIPE_ALL → IMPOSSIBLE`, жертвы из
+текущего слота от больших) → бэкап критического (веса 2+4) в `/tmp`
+(super/модем исключены осознанно) → однопоточный ребилд группы через
+`siw` (unmap, remove + create в обоих метада-слотах, map writable) →
+пачки 1→2→3→4 с LPT-порядком, sha256-валидация на поток и барьер на
+пачку → при провале дождаться пачки, откатить, exit 1 (слот движок не
+переключает никогда) → `fsync` + `sync`.
+
+При exit 0 установщик переключает слот (`bootctl setActiveBootSlot`) и
+завершает штатно. Движок никогда не форматирует `/data`: триггер
+формата на даунгрейд осознанно не копируется.
+
+## Движок быстрой установки `fox-hsinstall` (Rust, static musl)
+
+Сборка cargo (`hs-install`, `include/source/`, вне Soong), поставка
+статическим пребилтом в `recovery/root` (механизм как у `siw`).
+Работа с LP — через форк `/system/bin/siw`: ядерный гард молча режет
+сырые записи в super от любого другого бинаря, поэтому прямые записи
+через `liblp` невозможны by design. Парсинг манифеста — чистый Rust.
+Кодеки: `lzma-rust2` + `ruzstd` + `crabz2` (чистый Rust, без Си).
+Поток: проба → гейт девайса (`pre-device`) → full-вердикт (плюс
+дельта-сигнал `minor_version`, проверка точного тайлинга) → живое super
+(`siw info` JSON) → лесенка fit → бэкап критического (веса 2+4) →
+анмап таргета + stale-нод (живой слот не трогаем) → ребилд группы →
+пул потоков уровня опкодов (авто `min(ncpu,8)` + RAM-кэп) с per-op
+хешами входа → барьер на пачку → `fsync`, перечитка sha256 против
+`new_partition_info.hash` (опциональный `--readback` перепроверяет с
+носителя) → откат только при падении весов 2/3/4 → `sync`, чистка `/tmp`.
+Прогресс идёт в stdout (протокол апдейтера: стейджи для юзера,
+`set_progress`, диагностика в `log`) для цикла twinstall, который
+ретранслирует его живьём в GUI-консоль (паттерн reflash).
