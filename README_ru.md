@@ -20,14 +20,15 @@
 Проверенное в поле состояние перед первым релизом. Столбцы —
 поколения Tensor (слева направо), строки — функции (сверху вниз).
 
-| Семейство | SoC | Устройства |
-|---|---|---|
-| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
-| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
-| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
-| `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
-| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
-| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
+
+| Семейство | SoC       | Устройства                                                                        |
+| ------------------ | --------- | ------------------------------------------------------------------------------------------- |
+| `gs101`            | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a)                                                     |
+| `gs201`            | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet)                   |
+| `zuma`             | Tensor G3 | shiba (8), husky (8 Pro), akita (8a)                                                        |
+| `zumapro`          | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
+| `laguna`           | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold)                     |
+| `malibu`           | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold)                         |
 
 > 🟢 = работает (подтверждено) · 🔴 = сломано ·
 >
@@ -35,31 +36,32 @@
 >
 > 🟠 = возможны перебои.
 
-| Функция | G1 | G2 | G3 | G4 | G5 | G6 |
-|---|---|---|---|---|---|---|
-| Расшифровка data | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Прошивка ROM | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| OTG | 🟠 | 🔵 | 🟢 | 🟢 | 🟡 | 🟡 |
-| Фонарик | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 |
-| Вибрация | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Перезагрузка в Android | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Тачскрин | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Загрузка рекавери | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+
+| Функция                            | G1 | G2 | G3 | G4 | G5 | G6 |
+| ----------------------------------------- | -- | -- | -- | -- | -- | -- |
+| Расшифровка data               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| MTP + ADB                                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Прошивка ROM                      | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| OTG                                       | 🟠 | 🔵 | 🟢 | 🟢 | 🟡 | 🟡 |
+| Фонарик                            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 |
+| Вибрация                          | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Перезагрузка в Android       | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Тачскрин                          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Загрузка рекавери         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Бэкап / восстановление | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Яркость экрана | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| ADB sideload | 🟢 | 🟠 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Самоперепрошивка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Меню перезагрузки | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| PIN-разблокировка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Слоты A/B | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Fastbootd | 🔵 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Файлы + терминал | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| OTA | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Зарядка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Форматирование data | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Тачскрин (битый super) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Вибрация (битый super) | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
+| Яркость экрана               | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| ADB sideload                              | 🟢 | 🟠 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Самоперепрошивка          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Меню перезагрузки         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| PIN-разблокировка            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Слоты A/B                            | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Fastbootd                                 | 🔵 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Файлы + терминал             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTA                                       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Зарядка                            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Форматирование data         | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Тачскрин (битый super)       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Вибрация (битый super)       | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
 
 > Сноска про битый super: при нечитаемом `super` тач работает, т.к.
 > модули едут из OFOX-пакета девайса (проверено вживую на G3: stock
@@ -101,21 +103,22 @@ OTG-стек принудительно переключает питание VB
 Корень — для быстрого старта. Глубина — в `docs/`, каждый файл отвечает
 на один вопрос «как это работает и от чего зависит»:
 
-| Документ | Вопрос |
-|---|---|
-| [`docs/tree-guide_ru.md`](docs/tree-guide_ru.md) | Что за файл, зачем нужен, кто его читает |
-| [`docs/build-system_ru.md`](docs/build-system_ru.md) | Как собирается пейлоад: `build.sh`, cpio + installer zip, флаги |
-| [`docs/kernel-profiles_ru.md`](docs/kernel-profiles_ru.md) | Почему kernel-профилей нет: стоковое ядро сохраняется |
-| [`docs/device-config_ru.md`](docs/device-config_ru.md) | `pixel.json`: тач, пути, пропсы, фолды и letterbox |
-| [`docs/recovery-engine_ru.md`](docs/recovery-engine_ru.md) | Rust-движок `recovery-pixel-boot`: init, модули, OTG, фонарик |
-| [`docs/boot-chain_ru.md`](docs/boot-chain_ru.md) | Цепочка загрузки и init-стаб |
-| [`docs/decrypt_ru.md`](docs/decrypt_ru.md) | Расшифровка data: keymint, weaver, vold, multi-device |
-| [`docs/ramdisk_ru.md`](docs/ramdisk_ru.md) | Содержимое рамдиска: rc-файлы, скрипты, reflash |
-| [`docs/patches_ru.md`](docs/patches_ru.md) | Патч-система: original / modified / .patch |
-| [`docs/families-devices_ru.md`](docs/families-devices_ru.md) | Как добавить девайс или новый SoC |
-| [`docs/diagnostics_ru.md`](docs/diagnostics_ru.md) | Диагностика на девайсе: что смотреть, если не грузится |
-| [`docs/FOX_FLAGS.ru.md`](docs/FOX_FLAGS.ru.md) | Все 70+ флагов сборки OFox |
-| [`docs/credits_ru.md`](docs/credits_ru.md) | Что заимствовано и откуда |
+
+| Документ                                             | Вопрос                                                                                        |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| [`docs/tree-guide_ru.md`](docs/tree-guide_ru.md)             | Что за файл, зачем нужен, кто его читает                             |
+| [`docs/build-system_ru.md`](docs/build-system_ru.md)         | Как собирается пейлоад:`build.sh`, cpio + installer zip, флаги             |
+| [`docs/kernel-profiles_ru.md`](docs/kernel-profiles_ru.md)   | Почему kernel-профилей нет: стоковое ядро сохраняется       |
+| [`docs/device-config_ru.md`](docs/device-config_ru.md)       | `pixel.json`: тач, пути, пропсы, фолды и letterbox                               |
+| [`docs/recovery-engine_ru.md`](docs/recovery-engine_ru.md)   | Rust-движок`recovery-pixel-boot`: init, модули, OTG, фонарик                     |
+| [`docs/boot-chain_ru.md`](docs/boot-chain_ru.md)             | Цепочка загрузки и init-стаб                                                    |
+| [`docs/decrypt_ru.md`](docs/decrypt_ru.md)                   | Расшифровка data: keymint, weaver, vold, multi-device                                    |
+| [`docs/ramdisk_ru.md`](docs/ramdisk_ru.md)                   | Содержимое рамдиска: rc-файлы, скрипты, reflash                       |
+| [`docs/patches_ru.md`](docs/patches_ru.md)                   | Патч-система: original / modified / .patch                                               |
+| [`docs/families-devices_ru.md`](docs/families-devices_ru.md) | Как добавить девайс или новый SoC                                          |
+| [`docs/diagnostics_ru.md`](docs/diagnostics_ru.md)           | Диагностика на девайсе: что смотреть, если не грузится |
+| [`docs/FOX_FLAGS.ru.md`](docs/FOX_FLAGS.ru.md)               | Все 70+ флагов сборки OFox                                                           |
+| [`docs/credits_ru.md`](docs/credits_ru.md)                   | Что заимствовано и откуда                                                     |
 
 ## Три принципа, на которых всё держится
 

@@ -58,7 +58,7 @@ generations (left to right), rows are features (top to bottom).
 | Files + terminal         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | OTA survival             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Charging                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Format data              | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Format data              | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Touch (broken super)     | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Vibration (broken super) | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
 
