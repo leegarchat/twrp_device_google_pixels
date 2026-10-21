@@ -9,3 +9,17 @@
  
  # Darth9
  #
+@@ -736,10 +736,12 @@
+ # Ship the terminfo database so terminal apps (vi/htop/less/...) work in the
+ # in-UI terminal, which advertises TERM=xterm-256color (see gui/terminal.cpp).
+ # This is independent of the nano editor; copy it whenever the source exists.
++# NOTE: no rm -rf here on purpose — nano_twrp's rule copies the same tree
++# into the same dir in parallel; a deleter here turns its cp into ENOENT
++# spam (ninja failure). cp -rf merge is idempotent, no cleanup needed.
+ ifneq ($(wildcard external/libncurses/lib/terminfo),)
+ 	LOCAL_POST_INSTALL_CMD += \
+ 	mkdir -p $(TARGET_RECOVERY_ROOT_OUT)/system/etc/; \
+-	rm -rf $(TARGET_RECOVERY_ROOT_OUT)/system/etc/terminfo; \
+ 	cp -rf external/libncurses/lib/terminfo $(TARGET_RECOVERY_ROOT_OUT)/system/etc/;
+ endif
+ 
