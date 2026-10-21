@@ -119,8 +119,13 @@ pub fn create_meta(
 /// only stale nodes), while TWRP itself holds the live nodes open and
 /// `siw unmap` (correctly) refuses busy ones. Unmapping live nodes would
 /// either fail the install or tear down mounts under a running recovery.
-/// Only names present in `live.target` plus stale mapper leftovers are
-/// unmapped; userdata dm etc. is left alone.
+/// Only names the super metadata knows about (live.target plus stale
+/// mapper leftovers of those same names) are unmapped: anything else in
+/// /dev/block/mapper (userdata dm-crypt on FBE boots, verity nodes, ...)
+/// is NOT a super resident and must never fail the install. With DFE
+/// there is no mapper/userdata node at all, which is why the missing
+/// exclusion only bites on encrypted userdata (open_count=1 while
+/// /data is mounted) — unmap must cover super only.
 /// Mounts are unmounted deepest-first (nested mountpoints like
 /// /vendor/firmware must go before /vendor); failures are best-effort.
 pub fn unmount_unmap_all(
@@ -155,10 +160,16 @@ pub fn unmount_unmap_all(
     // Live CURRENT-slot residents are skipped: they belong to the running
     // system/TWRP, siw refuses busy ones, and metadata writes do not need
     // them gone. A previous aborted run may leave mappings whose metadata
-    // entry is already gone, so the mapper dir is scanned too — but anything
-    // matching a live CURRENT resident is left alone.
+    // entry is already gone, so the mapper dir is scanned too — but only
+    // for names the super metadata knows about (both slots); anything
+    // else (userdata dm-crypt et al.) is left alone by design.
     // (LiveState keys are already full names with slot suffix.)
     let current: BTreeSet<String> = live.current.keys().cloned().collect();
+    let known: BTreeSet<String> = current
+        .iter()
+        .chain(live.target.keys())
+        .cloned()
+        .collect();
     let mut names: BTreeSet<String> = BTreeSet::new();
     for k in live.target.keys() {
         names.insert(k.clone());
@@ -166,7 +177,7 @@ pub fn unmount_unmap_all(
     if let Ok(rd) = std::fs::read_dir("/dev/block/mapper") {
         for e in rd.flatten() {
             if let Some(n) = e.file_name().to_str() {
-                if n != "by-uuid" && !current.contains(n) {
+                if n != "by-uuid" && !current.contains(n) && known.contains(n) {
                     names.insert(n.to_string());
                 }
             }
