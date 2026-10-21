@@ -702,7 +702,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -3730,6 +4214,235 @@
+@@ -3730,6 +4214,246 @@
  		Update_System_Details();
  }
  
@@ -928,8 +928,19 @@
 +
 +	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 +		Unlock_Block_Partitions();
-+		Prepare_All_Super_Volumes();
 +	}
++	// NOTE: no Prepare_All_Super_Volumes here on purpose. It ERASES
++	// volumes whose dm node is not (yet) mapped, and the erase path
++	// dereferences end() when the failed volume is last -> SIGSEGV
++	// right after the "unable to update logical partition" line
++	// (field crash). Mount materializes the dm nodes first (mount is
++	// what creates LP devices on demand), then the plain details
++	// refresh below resolves sizes without erasing anything; a still
++	// missing node just reads as size 0 and the post-flash reboot gate
++	// trips safely instead of killing recovery.
++	// Best-effort: backuptool and post-ROM scripts mount on demand anyway.
++	PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
++	PartitionManager.Mount_By_Path("/vendor", false);
 +	Update_System_Details();
 +	LOGINFO("Live_Switch_Slot %s done\n", Slot.c_str());
 +	return true;
@@ -938,7 +949,7 @@
  string TWPartitionManager::Get_Internal_Storage_Path() {
     std::string s = getenv("EXTERNAL_STORAGE");
     if (s == "") 
-@@ -4662,7 +5375,12 @@
+@@ -4662,7 +5386,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -952,7 +963,31 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5558,912 @@
+@@ -4704,14 +5433,21 @@
+ 	bool status = true;
+ 	std::vector<TWPartition*>::iterator iter;
+ 
+-	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
++	for (iter = Partitions.begin(); iter != Partitions.end();) {
+ 		if ((*iter)->Is_Super) {
+ 			if (!Prepare_Super_Volume(*iter)) {
+ 				status = false;
+-				Partitions.erase(iter--);
++				// Erase without touching the erased element: the old
++				// erase(iter--) + unconditional Output_Partition(*iter)
++				// dereferenced end() when the failed volume was last
++				// (field SIGSEGV). (No delete: callers may still hold
++				// the pointer; leak is safer than dangling here.)
++				iter = Partitions.erase(iter);
++				continue;
+ 			}
+ 			PartitionManager.Output_Partition(*iter);
+ 		}
++		++iter;
+ 	}
+ 	Update_System_Details();
+ 	return status;
+@@ -4840,6 +5576,912 @@
  	}
  }
  
@@ -1865,7 +1900,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6481,13 @@
+@@ -4857,13 +6499,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1881,7 +1916,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6506,45 @@
+@@ -4882,9 +6524,45 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;

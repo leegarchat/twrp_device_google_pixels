@@ -4436,8 +4436,19 @@ bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
 
 	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 		Unlock_Block_Partitions();
-		Prepare_All_Super_Volumes();
 	}
+	// NOTE: no Prepare_All_Super_Volumes here on purpose. It ERASES
+	// volumes whose dm node is not (yet) mapped, and the erase path
+	// dereferences end() when the failed volume is last -> SIGSEGV
+	// right after the "unable to update logical partition" line
+	// (field crash). Mount materializes the dm nodes first (mount is
+	// what creates LP devices on demand), then the plain details
+	// refresh below resolves sizes without erasing anything; a still
+	// missing node just reads as size 0 and the post-flash reboot gate
+	// trips safely instead of killing recovery.
+	// Best-effort: backuptool and post-ROM scripts mount on demand anyway.
+	PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
+	PartitionManager.Mount_By_Path("/vendor", false);
 	Update_System_Details();
 	LOGINFO("Live_Switch_Slot %s done\n", Slot.c_str());
 	return true;
@@ -5422,14 +5433,21 @@ bool TWPartitionManager::Prepare_All_Super_Volumes() {
 	bool status = true;
 	std::vector<TWPartition*>::iterator iter;
 
-	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
+	for (iter = Partitions.begin(); iter != Partitions.end();) {
 		if ((*iter)->Is_Super) {
 			if (!Prepare_Super_Volume(*iter)) {
 				status = false;
-				Partitions.erase(iter--);
+				// Erase without touching the erased element: the old
+				// erase(iter--) + unconditional Output_Partition(*iter)
+				// dereferenced end() when the failed volume was last
+				// (field SIGSEGV). (No delete: callers may still hold
+				// the pointer; leak is safer than dangling here.)
+				iter = Partitions.erase(iter);
+				continue;
 			}
 			PartitionManager.Output_Partition(*iter);
 		}
+		++iter;
 	}
 	Update_System_Details();
 	return status;
