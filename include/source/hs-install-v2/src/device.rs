@@ -20,17 +20,26 @@ pub fn booted_slot() -> Result<char, String> {
     }
 }
 
-/// Booted slot with override chain: explicit --booted-slot (TWRP passes
-/// the bootctrl-HAL truth, unspoofable by resetprop/bind-mounts) ->
-/// `bootctl get-current-slot` binary -> ro.boot.slot_suffix getprop.
-/// The flag/first two stay truthful after a live slot switch; getprop
-/// does not (it shows the spoofed session slot).
+/// Booted slot with override chain: explicit --booted-slot flag (TWRP passes
+/// the snapshot truth, see Get_Booted_Slot_*), then the /tmp snapshot file
+/// itself (same source, shared tmpfs), then `bootctl get-current-slot`
+/// binary, then ro.boot.slot_suffix getprop. NOTE: bootctl and getprop
+/// read the SPOOFED cmdline/props after a live switch (proven live:
+/// get-current-slot flips with no reboot), so they are only fallbacks
+/// for sessions predating the snapshot — never the primary source.
 pub fn booted_slot_resolved(forced: Option<char>) -> Result<char, String> {
     if let Some(b) = forced {
         return match b {
             'a' | 'b' => Ok(b),
             _ => Err(format!("--booted-slot unparsable: '{b}'")),
         };
+    }
+    if let Ok(s) = std::fs::read_to_string("/tmp/fox_booted_slot") {
+        match s.trim() {
+            "A" => return Ok('a'),
+            "B" => return Ok('b'),
+            _ => {}
+        }
     }
     if let Ok(out) = std::process::Command::new("/system/bin/bootctl")
         .args(["get-current-slot"])

@@ -329,9 +329,8 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 	}
 
 	// Live-slot guard: never flash the physically booted slot. Booted is
-	// read from bootctrl HAL (unspoofable by resetprop/bind-mounts, unlike
-	// ro.boot.*). Fail closed: without a readable booted slot there is no
-	// safe target, and the stock path below would hit the same wall.
+	// the /tmp snapshot truth (written once at startup; bootctl/getprop
+	// read the spoofed cmdline after a live switch). Fail closed.
 	// This is what makes back-to-back flashes without an interim reboot
 	// safe: the second install is refused with "reboot first" instead of
 	// nuking the running system.

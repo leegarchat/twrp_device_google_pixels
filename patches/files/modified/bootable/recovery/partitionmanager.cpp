@@ -236,6 +236,25 @@ TWPartitionManager::TWPartitionManager(void) {
 	if (strcmp(slot_suffix, "error") == 0)
 		property_get("ro.boot.slot", slot_suffix, "error");
 	Active_Slot_Display = "";
+	// Snapshot the PHYSICAL booted slot before anything can spoof it.
+	// bootctl get-current-slot reads the (spoofable) cmdline/props on
+	// this stack — after a live switch it reports the spoofed slot
+	// (proven live: current flips with no reboot). This file is the
+	// only unspoofable record; /tmp dies with reboot, so first write
+	// per boot always wins and always means "really booted here".
+	{
+		struct stat st;
+		if (stat("/tmp/fox_booted_slot", &st) != 0) {
+			FILE* bf = fopen("/tmp/fox_booted_slot", "w");
+			if (bf) {
+				if (strcmp(slot_suffix, "_b") == 0 || strcmp(slot_suffix, "b") == 0)
+					fputs("B", bf);
+				else
+					fputs("A", bf);
+				fclose(bf);
+			}
+		}
+	}
 	if (strcmp(slot_suffix, "_a") == 0 || strcmp(slot_suffix, "a") == 0)
 		Set_Active_Slot("A");
 	else
@@ -4215,10 +4234,23 @@ void TWPartitionManager::Set_Active_Slot(const string& Slot) {
 }
 
 string TWPartitionManager::Get_Booted_Slot_Suffix() {
-	// Physical booted slot via the bootctrl HAL binary. resetprop and
-	// /proc bind-mount spoofing cannot move it, so installers must use
-	// this (never ro.boot.*) to decide whether a target is the LIVE slot.
+	// Physical booted slot. Order matters: the /tmp snapshot (written
+	// once at startup, before any spoof) is the ONLY unspoofable
+	// source. bootctl get-current-slot reads the spoofable cmdline /
+	// props on this stack (proven live: it flips with no reboot), so it
+	// is only a fallback for sessions predating the snapshot.
 	// Fail-closed: "" means "unknown, refuse".
+	{
+		FILE* bf = fopen("/tmp/fox_booted_slot", "r");
+		if (bf) {
+			char b = (char)fgetc(bf);
+			fclose(bf);
+			if (b == 'A')
+				return "_a";
+			if (b == 'B')
+				return "_b";
+		}
+	}
 	FILE* p = popen("/system/bin/bootctl get-current-slot 2>/dev/null", "r");
 	if (!p)
 		return "";
