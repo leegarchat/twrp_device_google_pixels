@@ -40,10 +40,18 @@
 
 #include <string>
 #include <sstream>
+#include <fstream>
 #include "../partitions.hpp"
 #include "../twrp-functions.hpp"
 #include "../twrpRepacker.hpp"
 #include "../openrecoveryscript.hpp"
+#include "../fox_fifo/fox_command_dispatcher.hpp"
+#include "../fox_fifo/fox_fifo.hpp"
+#include "../orscmd/orscmd.h"
+
+#include "../data.hpp"
+#include "../gui.hpp"
+#include "gui.h"
 
 #include "twinstall/adb_install.h"
 
@@ -67,6 +75,7 @@ extern "C" {
 
 #include "rapidxml.hpp"
 #include "objects.hpp"
+#include "pages.hpp"
 #include "tw_atomic.hpp"
 
 GUIAction::mapFunc GUIAction::mf;
@@ -219,6 +228,7 @@ GUIAction::GUIAction(xml_node <> *node):GUIObject(node)
       ADD_ACTION_EX("addsubtract", compute);
       ADD_ACTION(setguitimezone);
       ADD_ACTION(overlay);
+      ADD_ACTION(toast);
       ADD_ACTION(queuezip);
       ADD_ACTION(cancelzip);
       ADD_ACTION(queueclear);
@@ -258,7 +268,8 @@ GUIAction::GUIAction(xml_node <> *node):GUIObject(node)
       ADD_ACTION(set_chmod);
       ADD_ACTION(setpassword);
       ADD_ACTION(passwordcheck);
- 
+
+
       // remember actions that run in the caller thread
       for (mapFunc::const_iterator it = mf.begin(); it != mf.end(); ++it)
 	setActionsRunningInCallerThread.insert(it->first);
@@ -281,12 +292,14 @@ GUIAction::GUIAction(xml_node <> *node):GUIObject(node)
       ADD_ACTION(installsu);
       ADD_ACTION(fixsu);
 
+
       ADD_ACTION(decrypt_backup);
       ADD_ACTION(repair);
       ADD_ACTION(resize);
       ADD_ACTION(changefilesystem);
       ADD_ACTION(flashimage);
       ADD_ACTION(twcmd);
+      ADD_ACTION(foxcmd);
       ADD_ACTION(setbootslot);
       ADD_ACTION(repackimage);
       ADD_ACTION(reflashtwrp);
@@ -296,11 +309,12 @@ GUIAction::GUIAction(xml_node <> *node):GUIObject(node)
       ADD_ACTION(wlfx);
       ADD_ACTION(calldeactivateprocess);
       ADD_ACTION(disable_replace);
-#ifdef FOX_USE_NANO_EDITOR
+#ifdef OF_USE_NANO_EDITOR
       ADD_ACTION(editfile);
 #endif
       ADD_ACTION(mergesnapshots);
       ADD_ACTION(disableAVB2);
+      ADD_ACTION(setvaluebyfile);
 
       //[f/d] Threaded actions
       ADD_ACTION(batch);
@@ -633,9 +647,10 @@ int GUIAction::doAction(Action action)
   mapFunc::const_iterator funcitr = mf.find(function);
   if (funcitr != mf.end())
     return (this->*funcitr->second) (arg);
-  
-  if (! Hide_Reboot_Kludge_Fix(function))
-  LOGERR("Unknown action '%s'\n", function.c_str());
+
+  if (!Hide_Reboot_Kludge_Fix(function))
+    LOGERR("Unknown action '%s'\n", function.c_str());
+
   return -1;
 }
 
@@ -1133,6 +1148,13 @@ int GUIAction::setguitimezone(std::string arg __unused)
 int GUIAction::overlay(std::string arg)
 {
   return gui_changeOverlay(arg);
+}
+
+int GUIAction::toast(std::string arg)
+{
+  // arg is already var/string-expanded by the dispatcher. ~3s at ~30fps.
+  gui_toast(arg, 90);
+  return 0;
 }
 
 int GUIAction::queuezip(std::string arg __unused)
@@ -2441,6 +2463,22 @@ int GUIAction::twcmd(std::string arg)
   return 0;
 }
 
+int GUIAction::foxcmd(std::string arg __unused)
+{
+  operation_start("FOX CLI Command");
+  int code = 0;
+  if (simulate)
+    simulate_progress_bar();
+  else
+    code = Fox_Fifo::Run_Command();
+  // Record the exit code for the active remote job, if any (no-op for the FIFO
+  // path). Done before the output FILE is flushed and closed.
+  Fox_Command_Dispatcher::CommandDone(code);
+  operation_end(0);
+  return 0;
+}
+
+
 int GUIAction::getKeyByName(std::string key)
 {
   if (key == "home")
@@ -2577,7 +2615,8 @@ int GUIAction::setbootslot(std::string arg)
 				umount2("/vendor", MNT_DETACH);
 			}
 		}
-		PartitionManager.Set_Active_Slot(arg);
+		if (!PartitionManager.Live_Switch_Slot(arg))
+			gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
 	} else {
 		simulate_progress_bar();
 	}
@@ -3022,7 +3061,7 @@ int GUIAction::unmapsuperdevices(std::string arg __unused) {
 	return 0;
 }
 
-#ifdef FOX_USE_NANO_EDITOR
+#ifdef OF_USE_NANO_EDITOR
 int GUIAction::editfile(std::string arg) {
 	if (term != NULL) {
 		for (uint8_t iter = 0; iter < arg.size(); iter++)
@@ -3088,4 +3127,57 @@ int GUIAction::disableAVB2(string arg __unused) {
 	operation_end(op_status);
 	return 0;
 }
+
+static std::string run_command_get_output(const std::string& cmd) {
+  FILE* fp = popen(cmd.c_str(), "r");
+  if (!fp)
+      return "";
+
+  std::string out;
+  char buf[512];
+
+  while (fgets(buf, sizeof(buf), fp) != nullptr) {
+      out += buf;
+  }
+
+  pclose(fp);
+
+  while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) {
+      out.pop_back();
+  }
+
+  return out;
+}
+
+static std::string read_file_to_string(const std::string& path) {
+  std::ifstream ifs(path.c_str(), std::ios::in);
+  if (!ifs.is_open()) {
+      return "";
+  }
+
+  std::stringstream ss;
+  ss << ifs.rdbuf();
+  std::string out = ss.str();
+
+  while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+      out.pop_back();
+
+  return out;
+}
+
+int GUIAction::setvaluebyfile(std::string arg) {
+  size_t pos = arg.find(',');
+  std::string var  = arg.substr(0, pos);
+  std::string file = arg.substr(pos + 1);
+  std::string info = read_file_to_string(file);
+  if (!info.empty()) {
+    DataManager::SetValue(var, info);
+    LOGINFO("setvaluebyfile: %s = %s\n", var.c_str(), info.c_str());
+  } else {
+    LOGINFO("setvaluebyfile: Error: empty file %s\n", file.c_str());
+  }
+  //gui_print("%s", info.c_str());
+  return 0;
+}
+
 //

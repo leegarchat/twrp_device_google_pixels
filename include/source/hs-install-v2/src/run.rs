@@ -11,6 +11,7 @@ pub struct Args {
     pub zip: String,
     pub status_fd: Option<i32>,
     pub slot: Option<char>,
+    pub booted_slot: Option<char>,
     pub sysroot: String,
     pub tmpdir: String,
     pub threads: usize,
@@ -53,7 +54,7 @@ pub fn run(a: Args) -> i32 {
     // forces the TARGET (host testing); it must never rewrite history
     // into live::query, or backup/fit/kill split current/target wrong
     // and a live slot gets overwritten.
-    let booted = match device::booted_slot() {
+    let booted = match device::booted_slot_resolved(a.booted_slot) {
         Ok(b) => b,
         Err(e) => return fail(&mut out, &e, crate::EXIT_FAIL),
     };

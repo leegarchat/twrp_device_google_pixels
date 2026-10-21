@@ -702,7 +702,243 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -4662,7 +5146,12 @@
+@@ -3730,6 +4214,235 @@
+ 		Update_System_Details();
+ }
+ 
++string TWPartitionManager::Get_Booted_Slot_Suffix() {
++	// Physical booted slot via the bootctrl HAL binary. resetprop and
++	// /proc bind-mount spoofing cannot move it, so installers must use
++	// this (never ro.boot.*) to decide whether a target is the LIVE slot.
++	// Fail-closed: "" means "unknown, refuse".
++	FILE* p = popen("/system/bin/bootctl get-current-slot 2>/dev/null", "r");
++	if (!p)
++		return "";
++	char buf[16] = {0};
++	bool ok = (fgets(buf, sizeof(buf), p) != nullptr);
++	pclose(p);
++	if (!ok)
++		return "";
++	string s(buf);
++	size_t end = s.find_last_not_of(" \t\r\n");
++	if (end == string::npos)
++		return "";
++	s.erase(end + 1);
++	if (s == "0")
++		return "_a";
++	if (s == "1")
++		return "_b";
++	return "";
++}
++
++string TWPartitionManager::Get_Booted_Slot_Display() {
++	string s = Get_Booted_Slot_Suffix();
++	if (s == "_a")
++		return "A";
++	if (s == "_b")
++		return "B";
++	return "";
++}
++
++// Forward declaration (defined further below next to Unmap_Super_Devices).
++static bool DestroyLogicalPartition_Retry(const std::string& name);
++
++// Spoof one slot-token file (/proc/cmdline, /proc/bootconfig) with a bind
++// mount. Edits always start from the pristine copy saved on the first
++// spoof, so switching back and forth never stacks edits.
++static bool Spoof_Slot_File(const string& path, const string& new_suffix) {
++	const char* slash = strrchr(path.c_str(), '/');
++	const string name = slash ? slash + 1 : path;
++	const string stage = "/tmp/fox_slotspoof";
++	mkdir(stage.c_str(), 0755);
++	const string orig = stage + "/orig_" + name;
++	const string edited = stage + "/new_" + name;
++	struct stat st;
++	string content;
++	if (stat(orig.c_str(), &st) == 0) {
++		FILE* f = fopen(orig.c_str(), "r");
++		if (!f)
++			return false;
++		char buf[8192];
++		size_t n = fread(buf, 1, sizeof(buf) - 1, f);
++		fclose(f);
++		buf[n] = '\0';
++		content = buf;
++	} else {
++		FILE* f = fopen(path.c_str(), "r");
++		if (!f) {
++			LOGINFO("Live_Switch_Slot: no %s, skipping spoof\n", path.c_str());
++			return true;
++		}
++		char buf[8192];
++		size_t n = fread(buf, 1, sizeof(buf) - 1, f);
++		fclose(f);
++		buf[n] = '\0';
++		content = buf;
++		FILE* o = fopen(orig.c_str(), "w");
++		if (!o)
++			return false;
++		fwrite(content.c_str(), 1, content.size(), o);
++		fclose(o);
++	}
++	static const char* pres[] = {
++		"androidboot.slot_suffix=",
++		"androidboot.slot=",
++		"androidboot.slot_suffix = \"",
++	};
++	bool changed = false;
++	for (size_t t = 0; t < sizeof(pres) / sizeof(pres[0]); t++) {
++		string pre(pres[t]);
++		size_t pos = 0;
++		while ((pos = content.find(pre, pos)) != string::npos) {
++			size_t v = pos + pre.size();
++			if (content.compare(v, 2, "_a") == 0 || content.compare(v, 2, "_b") == 0) {
++				if (content.compare(v, 2, new_suffix) != 0) {
++					content.replace(v, 2, new_suffix);
++					changed = true;
++				}
++				pos = v + 2;
++				continue;
++			}
++			pos = v;
++		}
++	}
++	if (!changed) {
++		LOGINFO("Live_Switch_Slot: no slot tokens in %s, skipping spoof\n", path.c_str());
++		return true;
++	}
++	FILE* o = fopen(edited.c_str(), "w");
++	if (!o)
++		return false;
++	fwrite(content.c_str(), 1, content.size(), o);
++	fclose(o);
++	if (mount(edited.c_str(), path.c_str(), nullptr, MS_BIND, nullptr) != 0) {
++		LOGERR("Live_Switch_Slot: bind mount %s failed: %s\n", path.c_str(), strerror(errno));
++		return false;
++	}
++	LOGINFO("Live_Switch_Slot: spoofed %s to %s\n", path.c_str(), new_suffix.c_str());
++	return true;
++}
++
++bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
++	if (Slot != "A" && Slot != "B") {
++		LOGERR("Live_Switch_Slot invalid slot '%s'\n", Slot.c_str());
++		return false;
++	}
++	string old_suffix = Get_Active_Slot_Suffix();
++	string new_suffix = (Slot == "A") ? "_a" : "_b";
++	LOGINFO("Live_Switch_Slot %s (session was %s)\n", Slot.c_str(), Active_Slot_Display.c_str());
++
++	Set_Active_Slot(Slot);
++	if (Get_Active_Slot_Display() != Slot) {
++		LOGERR("Live_Switch_Slot: display verify failed\n");
++		return false;
++	}
++
++	{
++		FILE* f = fopen("/proc/mounts", "r");
++		if (f) {
++			char line[1024];
++			std::vector<string> mnts;
++			while (fgets(line, sizeof(line), f)) {
++				char src[512], mnt[512];
++				if (sscanf(line, "%511s %511s", src, mnt) != 2)
++					continue;
++				string s(src), m(mnt);
++				bool is_mapper = (s.compare(0, 19, "/dev/block/mapper/") == 0);
++				bool is_dm = is_mapper || (s.compare(0, 8, "/dev/dm-") == 0);
++				if (!is_dm || m.empty() || m == "/")
++					continue;
++				auto starts_with = [](const string& v, const char* p) {
++					return v.compare(0, strlen(p), p) == 0;
++				};
++				if (m == "/tmp" || m == "/data" || m == "/sdcard" || m == "/persist" || m == "/cache"
++					|| starts_with(m, "/persist/") || starts_with(m, "/data/") || starts_with(m, "/sdcard/")
++					|| starts_with(m, "/usb-otg") || starts_with(m, "/external_sd") || starts_with(m, "/efs")
++					|| starts_with(m, "/dev/") || starts_with(m, "/proc/") || starts_with(m, "/sys/"))
++					continue;
++				if (is_mapper) {
++					size_t slash = s.find_last_of('/');
++					string base = (slash == string::npos) ? s : s.substr(slash + 1);
++					if (base.size() >= 2 && base.compare(base.size() - 2, 2, new_suffix) == 0)
++						continue;
++				}
++				mnts.push_back(m);
++			}
++			fclose(f);
++			sort(mnts.begin(), mnts.end(), [](const string& a, const string& b) { return a.size() > b.size(); });
++			mnts.erase(unique(mnts.begin(), mnts.end()), mnts.end());
++			for (size_t i = 0; i < mnts.size(); i++) {
++				if (umount(mnts[i].c_str()) == 0 || umount2(mnts[i].c_str(), MNT_DETACH) == 0)
++					LOGINFO("Live_Switch_Slot: unmounted %s\n", mnts[i].c_str());
++				else
++					LOGINFO("Live_Switch_Slot: keep %s (busy, harmless)\n", mnts[i].c_str());
++			}
++		}
++	}
++
++	{
++		DIR* d = opendir("/dev/block/mapper");
++		if (d) {
++			struct dirent* de;
++			while ((de = readdir(d)) != NULL) {
++				string n(de->d_name);
++				if (n == "." || n == ".." || n == "by-uuid")
++					continue;
++				if (n == "userdata" || n.compare(0, 12, "userdata_exp") == 0 || n == "zoned_device")
++					continue;
++				if (n.size() >= 2 && n.compare(n.size() - 2, 2, new_suffix) == 0)
++					continue;
++				string full = string("/dev/block/mapper/") + n;
++				char link[PATH_MAX];
++				ssize_t len = readlink(full.c_str(), link, sizeof(link) - 1);
++				if (len > 0) {
++					link[len] = '\0';
++					string tgt(link);
++					size_t slash = tgt.find_last_of('/');
++					string base = (slash == string::npos) ? tgt : tgt.substr(slash + 1);
++					if (base.compare(0, 3, "dm-") != 0) {
++						LOGINFO("Live_Switch_Slot: skip alias %s\n", n.c_str());
++						continue;
++					}
++				}
++				if (DestroyLogicalPartition_Retry(n))
++					LOGINFO("Live_Switch_Slot: unmapped stale %s\n", n.c_str());
++				else
++					LOGINFO("Live_Switch_Slot: keep %s (busy or foreign, harmless)\n", n.c_str());
++			}
++			closedir(d);
++		}
++	}
++
++	{
++		string cmd = string("/sbin/resetprop ro.boot.slot_suffix ") + new_suffix + " >/dev/null 2>&1";
++		int rc = system(cmd.c_str());
++		if (rc != 0) {
++			cmd = string("/system/bin/resetprop ro.boot.slot_suffix ") + new_suffix + " >/dev/null 2>&1";
++			rc = system(cmd.c_str());
++			if (rc != 0)
++				LOGERR("Live_Switch_Slot: resetprop missing/failed, props stay booted truth\n");
++		}
++		if (rc == 0)
++			LOGINFO("Live_Switch_Slot: spoofed ro.boot.slot_suffix=%s\n", new_suffix.c_str());
++		Spoof_Slot_File("/proc/cmdline", new_suffix);
++		Spoof_Slot_File("/proc/bootconfig", new_suffix);
++	}
++
++	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
++		Unlock_Block_Partitions();
++		Prepare_All_Super_Volumes();
++	}
++	Update_System_Details();
++	LOGINFO("Live_Switch_Slot %s done\n", Slot.c_str());
++	return true;
++}
++
+ string TWPartitionManager::Get_Internal_Storage_Path() {
+    std::string s = getenv("EXTERNAL_STORAGE");
+    if (s == "") 
+@@ -4662,7 +5375,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -716,7 +952,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4840,6 +5329,912 @@
+@@ -4840,6 +5558,912 @@
  	}
  }
  
@@ -1629,7 +1865,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6252,13 @@
+@@ -4857,13 +6481,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1645,7 +1881,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6277,45 @@
+@@ -4882,9 +6506,45 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;

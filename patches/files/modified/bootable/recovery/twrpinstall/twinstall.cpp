@@ -305,11 +305,10 @@ static constexpr int HS_EXIT_NO_HELPERS = 5;
 enum class FoxHighSpeedResult { kNotApplicable, kAborted, kSucceeded };
 
 static std::string HsTargetSlot() {
-	char slot[PROPERTY_VALUE_MAX];
-	property_get("ro.boot.slot_suffix", slot, "");
-	if (strcmp(slot, "_b") == 0)
-		return "a";
-	return "b";
+	// Opposite of the EFFECTIVE slot. Display tracks bootctrl active
+	// across live switches; ro.boot.* may be spoofed (session view) or
+	// stale, so neither is the right "inactive slot" definition here.
+	return PartitionManager.Get_Active_Slot_Display() == "A" ? "b" : "a";
 }
 
 static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
@@ -328,6 +327,25 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 		LOGINFO("hs: sideload package, stock update_engine path\n");
 		return FoxHighSpeedResult::kNotApplicable;
 	}
+
+	// Live-slot guard: never flash the physically booted slot. Booted is
+	// read from bootctrl HAL (unspoofable by resetprop/bind-mounts, unlike
+	// ro.boot.*). Fail closed: without a readable booted slot there is no
+	// safe target, and the stock path below would hit the same wall.
+	// This is what makes back-to-back flashes without an interim reboot
+	// safe: the second install is refused with "reboot first" instead of
+	// nuking the running system.
+	std::string hs_target = HsTargetSlot();
+	std::string hs_booted = PartitionManager.Get_Booted_Slot_Display();
+	if (hs_booted.empty()) {
+		gui_err("hs_no_booted_slot=Cannot read the booted slot. Refusing to flash.");
+		return FoxHighSpeedResult::kAborted;
+	}
+	if ((hs_target == "b") == (hs_booted == "B")) {
+		gui_err("slot_live_reboot_first=Target is the live booted slot. Reboot to the switched slot first, then flash.");
+		return FoxHighSpeedResult::kAborted;
+	}
+	std::string hs_booted_arg = std::string("--booted-slot=") + (char)tolower(hs_booted[0]);
 
 	// Stock AB pre-ROM environment (mounts, bind sh, pre script,
 	// recovery-overwrite baseline) BEFORE any destructive write —
@@ -373,7 +391,7 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 		dup2(pipe_fd[1], STDERR_FILENO);
 		close(pipe_fd[0]);
 		execl(HS_ENGINE, "fox-hsinstall",
-			"--zip", package.c_str(), (char*)nullptr);
+			"--zip", package.c_str(), hs_booted_arg.c_str(), (char*)nullptr);
 		printf("E:hs: can't execute '%s': %s\n", HS_ENGINE, strerror(errno));
 		_exit(-1);
 	}
@@ -438,14 +456,11 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 		hs_cleanup_mounts();
 		std::string target = HsTargetSlot();
 		std::string slot_up = (target == "b") ? "B" : "A";
-		PartitionManager.Set_Active_Slot(slot_up);
-		if (PartitionManager.Get_Active_Slot_Display() != slot_up) {
+		if (!PartitionManager.Live_Switch_Slot(slot_up)) {
 			gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
 			return FoxHighSpeedResult::kAborted;
 		}
 		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-			PartitionManager.Unlock_Block_Partitions();
-			PartitionManager.Prepare_All_Super_Volumes();
 			gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
 		}
 		gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
@@ -642,7 +657,23 @@ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
 
 			TWFunc::IsRecoveryOverwritten(true);
 
-			ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
+			std::string stock_target = (PartitionManager.Get_Active_Slot_Display()=="A")?"b":"a";
+		std::string stock_booted = PartitionManager.Get_Booted_Slot_Display();
+		bool stock_live_target = stock_booted.empty() || (stock_target == "b") == (stock_booted == "B");
+		if (stock_live_target) {
+			gui_err("slot_live_reboot_first=Target is the live booted slot. Reboot to the switched slot first, then flash.");
+			umount("/system/bin/sh");
+			unlink("/tmp/sh");
+			if (!vendor_mount_state)
+				PartitionManager.UnMount_By_Path("/vendor", false);
+			if (!system_mount_state)
+				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
+			ret_val = INSTALL_ERROR;
+		} else {
+		ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
+		}
+
+		if (!stock_live_target) {
 
 			DataManager::SetValue(FOX_ZIP_INSTALLER_CODE, 1); // mark as custom ROM install
 
@@ -652,12 +683,15 @@ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
 				PartitionManager.UnMount_By_Path("/vendor", false);
 			if (!system_mount_state)
 				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
-			if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-				PartitionManager.Unlock_Block_Partitions();
-				PartitionManager.Prepare_All_Super_Volumes();
-				gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
-			}
+		std::string stock_up = (stock_target == "b") ? "B" : "A";
+		if (!PartitionManager.Live_Switch_Slot(stock_up)) {
+			gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
+			ret_val = INSTALL_ERROR;
+		} else if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+			gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
+		}
 			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
+		}
 			}
 		} else {
 			std::string binary_name("ui.xml");

@@ -4,7 +4,7 @@ use hs_install::run;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: fox-hsinstall --zip PATH [--status-fd N] [--slot a|b]\n                          [--sysroot DIR] [--tmpdir DIR] [--threads N] [--readback]"
+        "usage: fox-hsinstall --zip PATH [--status-fd N] [--slot a|b] [--booted-slot a|b]\n                          [--sysroot DIR] [--tmpdir DIR] [--threads N] [--readback]"
     );
     // Distinct from the fallback codes 2/5: a broken invocation must be
     // loud, never masquerade as "not full OTA".
@@ -18,6 +18,12 @@ fn main() -> std::process::ExitCode {
     let slot = run::flag(&args, "--slot").and_then(|s| s.chars().next());
     if let Some(s) = slot {
         if s != 'a' && s != 'b' {
+            usage();
+        }
+    }
+    let booted_slot = run::flag(&args, "--booted-slot").and_then(|s| s.chars().next());
+    if let Some(b) = booted_slot {
+        if b != 'a' && b != 'b' {
             usage();
         }
     }
@@ -62,6 +68,7 @@ fn main() -> std::process::ExitCode {
         zip,
         status_fd,
         slot,
+        booted_slot,
         sysroot,
         tmpdir,
         threads,
