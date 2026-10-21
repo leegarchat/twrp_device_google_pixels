@@ -501,7 +501,7 @@ build_device_touch_cpios() {
                 lgz_manifest_entry file "$ramdisk_root/$_rel" "$_rel" >> "$manifest"
             done
             cluster=$(mktemp) || { rm -f "$manifest"; continue; }
-            if ! ( cd "$ramdisk_root" && "$lgz_bin" pack "$manifest" "$cluster" -l 0 -j "$jobs" --preserve-all ) >>"$manifest.log" 2>&1; then
+            if ! ( cd "$ramdisk_root" && "$lgz_bin" pack "$manifest" "$cluster" -l "${LGZ_LEVEL:-0}" -j "$jobs" --preserve-all ) >>"$manifest.log" 2>&1; then
                 echo "    [TOUCH] WARNING: lgz pack failed for $_dev (see build log)"
                 rm -f "$manifest" "$manifest.log" "$cluster"
                 continue
