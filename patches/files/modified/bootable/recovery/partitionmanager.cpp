@@ -4343,6 +4343,9 @@ bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
 		return false;
 	}
 
+	// Mounts taken down below, to remount after the new slot is mapped.
+	std::vector<string> unmounted_here;
+
 	{
 		FILE* f = fopen("/proc/mounts", "r");
 		if (f) {
@@ -4377,9 +4380,10 @@ bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
 			sort(mnts.begin(), mnts.end(), [](const string& a, const string& b) { return a.size() > b.size(); });
 			mnts.erase(unique(mnts.begin(), mnts.end()), mnts.end());
 			for (size_t i = 0; i < mnts.size(); i++) {
-				if (umount(mnts[i].c_str()) == 0 || umount2(mnts[i].c_str(), MNT_DETACH) == 0)
+				if (umount(mnts[i].c_str()) == 0 || umount2(mnts[i].c_str(), MNT_DETACH) == 0) {
 					LOGINFO("Live_Switch_Slot: unmounted %s\n", mnts[i].c_str());
-				else
+					unmounted_here.push_back(mnts[i]);
+				} else
 					LOGINFO("Live_Switch_Slot: keep %s (busy, harmless)\n", mnts[i].c_str());
 			}
 		}
@@ -4437,18 +4441,47 @@ bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
 	if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 		Unlock_Block_Partitions();
 	}
-	// NOTE: no Prepare_All_Super_Volumes here on purpose. It ERASES
-	// volumes whose dm node is not (yet) mapped, and the erase path
-	// dereferences end() when the failed volume is last -> SIGSEGV
-	// right after the "unable to update logical partition" line
-	// (field crash). Mount materializes the dm nodes first (mount is
-	// what creates LP devices on demand), then the plain details
-	// refresh below resolves sizes without erasing anything; a still
-	// missing node just reads as size 0 and the post-flash reboot gate
-	// trips safely instead of killing recovery.
-	// Best-effort: backuptool and post-ROM scripts mount on demand anyway.
-	PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
-	PartitionManager.Mount_By_Path("/vendor", false);
+	// Map the new slot's volumes via siw (the designated LP channel):
+	// Mount_By_Path would trigger FoxRescan first, which drops objects
+	// whose dm nodes do not exist yet — before mount can materialize
+	// them (field case: empty mapper + "Unable to find partition").
+	// siw maps dm nodes directly without touching TWRP objects; the
+	// details refresh below then resolves sizes. Best-effort per volume.
+	{
+		const char* siw_bin = access("/system/bin/siw", X_OK) == 0
+			? "/system/bin/siw" : "siw";
+		for (std::vector<TWPartition*>::iterator it = Partitions.begin();
+				it != Partitions.end(); ++it) {
+			if (!(*it)->Is_Super)
+				continue;
+			string bare = Get_Bare_Partition_Name((*it)->Get_Mount_Point());
+			string full = bare + new_suffix;
+			string cmd = string(siw_bin) + " map --partition " + full
+				+ " --force-writable /dev/block/by-name/super 2>&1";
+			FILE* sp = popen(cmd.c_str(), "r");
+			string out;
+			if (sp) {
+				char buf[256];
+				while (fgets(buf, sizeof(buf), sp))
+					out += buf;
+				int rc = pclose(sp);
+				if (rc == 0 || out.find("already mapped") != string::npos)
+					LOGINFO("Live_Switch_Slot: mapped %s\n", full.c_str());
+				else
+					LOGINFO("Live_Switch_Slot: map %s failed (%s)\n",
+						full.c_str(), out.c_str());
+			} else {
+				LOGINFO("Live_Switch_Slot: cannot run siw for %s\n", full.c_str());
+			}
+		}
+	}
+	// Restore the pre-switch mounts (now resolving to the new slot).
+	for (size_t i = 0; i < unmounted_here.size(); i++) {
+		if (PartitionManager.Mount_By_Path(unmounted_here[i], false))
+			LOGINFO("Live_Switch_Slot: remounted %s\n", unmounted_here[i].c_str());
+		else
+			LOGINFO("Live_Switch_Slot: keep %s unmounted (harmless)\n", unmounted_here[i].c_str());
+	}
 	Update_System_Details();
 	LOGINFO("Live_Switch_Slot %s done\n", Slot.c_str());
 	return true;
