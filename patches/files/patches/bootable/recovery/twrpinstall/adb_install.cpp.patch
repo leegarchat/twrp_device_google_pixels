@@ -1,0 +1,29 @@
+--- a/bootable/recovery/twrpinstall/adb_install.cpp
++++ b/bootable/recovery/twrpinstall/adb_install.cpp
+@@ -349,6 +349,26 @@
+     return INSTALL_ERROR;
+   }
+ 
++  // Sideload owns ffs.adb exclusively via minadbd. A stale "adb" set may
++  // still be queued behind our teardown (Disable_MTP() always ends with
++  // one) and resurrect regular adbd right as minadbd needs ep0 — two
++  // daemons on one endpoint, the loser retries forever. Cycle to none
++  // until it sticks, then stop adbd outright; the sideload config below
++  // binds UDC with minadbd as the only candidate, so no race by design.
++  // (The ADB UI toggle is irrelevant here: this path owns USB
++  // unconditionally for the duration of the sideload.)
++  for (int drain = 0; drain < 5; ++drain) {
++    if (!SetUsbConfig("none")) {
++      LOG(ERROR) << "Failed to clear USB config";
++      return INSTALL_ERROR;
++    }
++    usleep(200000);
++    if (android::base::GetProperty("sys.usb.state", "") == "none") {
++      break;
++    }
++  }
++  android::base::SetProperty("ctl.stop", "adbd");
++
+   int install_result = INSTALL_ERROR;
+   std::map<MinadbdCommand, CommandFunction> command_map{
+   { MinadbdCommand::kInstall, std::bind(&AdbInstallPackageHandler, &install_result) },
