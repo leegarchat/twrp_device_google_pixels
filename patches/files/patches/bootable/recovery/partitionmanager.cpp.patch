@@ -786,27 +786,27 @@
 +		"androidboot.slot=",
 +		"androidboot.slot_suffix = \"",
 +	};
-+	bool changed = false;
++	bool found = false;
 +	for (size_t t = 0; t < sizeof(pres) / sizeof(pres[0]); t++) {
 +		string pre(pres[t]);
 +		size_t pos = 0;
 +		while ((pos = content.find(pre, pos)) != string::npos) {
 +			size_t v = pos + pre.size();
 +			if (content.compare(v, 2, "_a") == 0 || content.compare(v, 2, "_b") == 0) {
-+				if (content.compare(v, 2, new_suffix) != 0) {
++				found = true;
++				if (content.compare(v, 2, new_suffix) != 0)
 +					content.replace(v, 2, new_suffix);
-+					changed = true;
-+				}
 +				pos = v + 2;
 +				continue;
 +			}
 +			pos = v;
 +		}
 +	}
-+	if (!changed) {
++	if (!found) {
 +		LOGINFO("Live_Switch_Slot: no slot tokens in %s, skipping spoof\n", path.c_str());
 +		return true;
 +	}
++	LOGINFO("Live_Switch_Slot: spoofing %s to %s\n", path.c_str(), new_suffix.c_str());
 +	FILE* o = fopen(edited.c_str(), "w");
 +	if (!o)
 +		return false;
