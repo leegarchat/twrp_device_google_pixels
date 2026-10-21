@@ -1,0 +1,11 @@
+--- a/bootable/recovery/Android.mk
++++ b/bootable/recovery/Android.mk
+@@ -721,7 +721,7 @@
+ LOCAL_REQUIRED_MODULES := file_contexts.bin
+ 
+ LOCAL_POST_INSTALL_CMD := \
+-     $(hide) cp ${SOONG_OUT_DIR}/.intermediates/system/sepolicy/file_contexts.concat.tmp/android_common/gen/file_contexts.concat.tmp $(TARGET_RECOVERY_ROOT_OUT)/file_contexts && cp $(PRODUCT_OUT)/obj/ETC/file_contexts.bin_intermediates/file_contexts.bin $(TARGET_RECOVERY_ROOT_OUT)/
++     $(hide) cp ${SOONG_OUT_DIR}/.intermediates/system/sepolicy/file_contexts.concat.tmp/android_common/gen/file_contexts.concat.tmp $(TARGET_RECOVERY_ROOT_OUT)/file_contexts && cp $(PRODUCT_OUT)/obj/ETC/file_contexts.bin_intermediates/file_contexts.bin $(TARGET_RECOVERY_ROOT_OUT)/ ; \
+ 
+ # Darth9
+ #
