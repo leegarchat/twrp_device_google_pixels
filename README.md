@@ -49,7 +49,7 @@ generations (left to right), rows are features (top to bottom).
 | Recovery boots           | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Backup / restore         | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Brightness control       | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| ADB sideload             | 🟢 | 🟠 | 🟢 | 🟢 | 🔵 | 🟢 |
+| ADB sideload             | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Self-reflash             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Reboot menu              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | PIN unlock               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
