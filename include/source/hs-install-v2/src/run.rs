@@ -514,6 +514,20 @@ pub fn run(a: Args) -> i32 {
                         }
                         drop(f);
                     } else {
+                        // Giant ops decode atomically (no progress while
+                        // crabz2 runs), then tick per 8 MiB of writes.
+                        // Announce them so a quiet bar tail is explained
+                        // instead of looking hung.
+                        if t.expanded > (64 << 20) {
+                            if let Ok(mut g) = out_mtx.lock() {
+                                g.ui_print(&format!(
+                                    "large op: {} op {} ({} MB), decoding",
+                                    t.part,
+                                    t.op_i,
+                                    t.expanded / 1_000_000
+                                ));
+                            }
+                        }
                         let plain =
                             payload_hs::extract::fetch_decode(&a.zip, layout.data_start, t.op)
                                 .map_err(|e| format!("{tag}: {e}"))?;
