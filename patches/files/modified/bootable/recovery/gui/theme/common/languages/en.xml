@@ -62,6 +62,7 @@
 		<string name="zip_sig_chk">ZIP signature verification</string>
 		<string name="inject_twrp_chk">Inject OrangeFox after install</string>
 		<string name="high_speed_flash_chk">High-speed flash (Experimental)</string>
+		<string name="live_switch_chk">Live switch slot (Experimental)</string>
 		<string name="install_reboot_chk">Reboot after installation is complete</string>
 		<string name="options_hdr">Options</string>
 		<string name="zip_queue">Queue</string>

@@ -55,3 +55,14 @@
  			</listbox>
  
  			<template name="base"/>
+@@ -921,6 +951,10 @@
+ 					<condition var1="tw_has_injecttwrp" var2="1"/>
+ 					<data variable="tw_inject_after_zip"/>
+ 				</listitem>
++				<listitem name="{@live_switch_chk}">
++					<condition var1="tw_has_boot_slots" var2="1"/>
++					<data variable="tw_live_switch"/>
++				</listitem>
+ 			</listbox>
+ 
+ 			<image>

@@ -63,6 +63,7 @@
 		<string name="zip_sig_chk">Проверка ZIP сигнатуры</string>
 		<string name="inject_twrp_chk">Интегрировать OrangeFox после установки</string>
 		<string name="high_speed_flash_chk">Быстрая прошивка (экспериментально)</string>
+		<string name="live_switch_chk">Живое переключение слота (экспериментально)</string>
 		<string name="install_reboot_chk">Перезагрузка по окончании</string>
 		<string name="options_hdr">Настройки</string>
 		<string name="zip_queue">Очередь</string>
