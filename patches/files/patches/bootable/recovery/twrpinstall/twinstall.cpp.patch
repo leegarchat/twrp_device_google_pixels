@@ -1,6 +1,6 @@
 --- a/bootable/recovery/twrpinstall/twinstall.cpp
 +++ b/bootable/recovery/twrpinstall/twinstall.cpp
-@@ -282,6 +282,225 @@
+@@ -282,6 +282,229 @@
  	return INSTALL_SUCCESS;
  }
  
@@ -50,13 +50,13 @@
 +		return FoxHighSpeedResult::kNotApplicable;
 +	}
 +
-+	// Live-slot guard: never flash the physically booted slot. Booted is
-+	// the /tmp snapshot truth (written once at startup; bootctl/getprop
-+	// read the spoofed cmdline after a live switch). Fail closed.
-+	// This is what makes back-to-back flashes without an interim reboot
-+	// safe: the second install is refused with "reboot first" instead of
-+	// nuking the running system.
-+	std::string hs_target = HsTargetSlot();
++	// Live-slot guard turned normalizer: never flash the physically booted
++	// slot. Booted is the /tmp snapshot truth (never ro.boot.* / bootctl,
++	// which show the spoofed slot after a live switch). On a trip, switch
++	// the session back to the booted slot and continue — the ROM always
++	// lands on the real opposite slot, no reboot required. Only an
++	// unreadable booted slot or a failed switch aborts (nothing flashed
++	// yet, so a plain return is safe).
 +	// External runtime switchers (DFE NEO-style zips, manual bootctl)
 +	// move bootctrl active behind TWRP's back. Reconcile first so the
 +	// target math below runs on the truth; no-op when already in sync.
@@ -71,14 +71,20 @@
 +			}
 +		}
 +	}
++	std::string hs_target = HsTargetSlot();
 +	std::string hs_booted = PartitionManager.Get_Booted_Slot_Display();
 +	if (hs_booted.empty()) {
 +		gui_err("hs_no_booted_slot=Cannot read the booted slot. Refusing to flash.");
 +		return FoxHighSpeedResult::kAborted;
 +	}
 +	if ((hs_target == "b") == (hs_booted == "B")) {
-+		gui_err("slot_live_reboot_first=Target is the live booted slot. Reboot to the switched slot first, then flash.");
-+		return FoxHighSpeedResult::kAborted;
++		gui_warn("slot_live_reswitch=Target is the live booted slot; switching back to it and continuing.");
++		std::string hs_back(1, hs_booted[0]);
++		if (!PartitionManager.Live_Switch_Slot(hs_back)) {
++			gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
++			return FoxHighSpeedResult::kAborted;
++		}
++		hs_target = HsTargetSlot();
 +	}
 +	std::string hs_booted_arg = std::string("--booted-slot=") + (char)tolower(hs_booted[0]);
 +
@@ -191,7 +197,7 @@
 +		// below — so even a failed switch leaves DFE pointing at the
 +		// freshly flashed slot, which then self-heals the session.
 +		// Single pair per boot by construction (a second flash in the
-+		// same session is refused by the guard above).
++		// same session re-normalizes to the same target first).
 +		LOGINFO("hs: source_slot: %s\n", hs_booted.c_str());
 +		LOGINFO("hs: target_slot: %s\n", hs_target == "b" ? "B" : "A");
 +		// Engine wrote the target slot; restore the pre-ROM mount
@@ -207,9 +213,7 @@
 +		}
 +		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 +			gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
-+		}
-+		gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
-+		DataManager::SetProgress(1.0f);
++		}		DataManager::SetProgress(1.0f);
 +		LOGINFO("hs: wrote slot %s and switched to it\n", target.c_str());
 +		return FoxHighSpeedResult::kSucceeded;
 +	}
@@ -226,42 +230,11 @@
  int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
  {
    int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
-@@ -433,40 +652,95 @@
+@@ -433,7 +656,53 @@
  		ZipEntry64 ab_binary_entry;
  		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
  			LOGINFO("AB zip\n");
 -			gui_msg(Msg(msg::kHighlight, "flash_ab_inactive=Flashing A/B zip to inactive slot: {1}")(PartitionManager.Get_Active_Slot_Display()=="A"?"B":"A"));
--			// We need this so backuptool can do its magic
--			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
--			bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
--			PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
--			PartitionManager.Mount_By_Path("/vendor", false);
--			TWFunc::copy_file("/system/bin/sh", "/tmp/sh", 0755);
--			mount("/tmp/sh", "/system/bin/sh", "auto", MS_BIND, NULL);
--
--			run_rom_scripts = true;
--			usleep(32);
--
--			if (run_rom_scripts && TWFunc::Path_Exists(FOX_PRE_ROM_FLASH_SCRIPT)) {
--				TWFunc::RunFoxScript(FOX_PRE_ROM_FLASH_SCRIPT, path);
--			}
--
--			TWFunc::IsRecoveryOverwritten(true);
--
--			ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
--
--			DataManager::SetValue(FOX_ZIP_INSTALLER_CODE, 1); // mark as custom ROM install
--
--			umount("/system/bin/sh");
--			unlink("/tmp/sh");
--			if (!vendor_mount_state)
--				PartitionManager.UnMount_By_Path("/vendor", false);
--			if (!system_mount_state)
--				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
--			if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
--				PartitionManager.Unlock_Block_Partitions();
--				PartitionManager.Prepare_All_Super_Volumes();
--				gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
 +			// Fox high-speed branch (outer layer): the toggle + payload
 +			// probe run inside; kNotApplicable = stock path below, untouched.
 +			FoxHighSpeedResult hs_res = FoxTryHighSpeedInstall(path);
@@ -272,12 +245,9 @@
 +			} else if (hs_res == FoxHighSpeedResult::kAborted) {
 +				ret_val = INSTALL_ERROR;
 +		} else {
-+			// Reconcile with bootctrl first: an external runtime switcher
++			// 0. reconcile with bootctrl: an external runtime switcher
 +			// (DFE NEO-style zip, manual bootctl) may have moved the
-+			// active slot behind TWRP's back. A failed reconcile aborts
-+			// the flash: the session is inconsistent and the guard below
-+			// could read a stale Display.
-+			bool stock_abort = false;
++			// active slot behind TWRP's back.
 +			{
 +				std::string boot_active = PartitionManager.Get_Bootctrl_Active_Slot();
 +				if (!boot_active.empty() && boot_active != PartitionManager.Get_Active_Slot_Display()) {
@@ -285,72 +255,51 @@
 +						boot_active.c_str(), PartitionManager.Get_Active_Slot_Display().c_str());
 +					if (!PartitionManager.Live_Switch_Slot(boot_active)) {
 +						gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
-+						ret_val = INSTALL_ERROR;
-+						stock_abort = true;
++						return INSTALL_ERROR;
 +					}
 +				}
++			}
++			// 1. live-slot guard turned normalizer: never flash the physically
++			// booted slot. Booted is the snapshot truth (/tmp/fox_booted_slot),
++			// so a stale or spoofed session cannot trick this branch. On trip,
++			// switch back to the booted slot and continue — the ROM always
++			// lands on the real opposite slot, no reboot required. Only an
++			// unreadable booted slot or a failed switch aborts (nothing
++			// flashed yet, so an early return is safe).
++			std::string stock_booted = PartitionManager.Get_Booted_Slot_Display();
++			if (stock_booted.empty()) {
++				gui_err("no_booted_slot=Cannot read the booted slot. Refusing to flash.");
++				return INSTALL_ERROR;
++			}
++			std::string stock_target = (PartitionManager.Get_Active_Slot_Display()=="A")?"b":"a";
++			if ((stock_target == "b") == (stock_booted == "B")) {
++				gui_warn("slot_live_reswitch=Target is the live booted slot; switching back to it and continuing.");
++				std::string stock_back(1, stock_booted[0]);
++				if (!PartitionManager.Live_Switch_Slot(stock_back)) {
++					gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
++					return INSTALL_ERROR;
++				}
++				stock_target = (PartitionManager.Get_Active_Slot_Display()=="A")?"b":"a";
++			}
++			gui_msg(Msg(msg::kHighlight, "flash_ab_inactive=Flashing A/B zip to inactive slot: {1}")(stock_target=="a"?"A":"B"));
+ 			// We need this so backuptool can do its magic
+ 			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
+ 			bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
+@@ -461,12 +730,14 @@
+ 				PartitionManager.UnMount_By_Path("/vendor", false);
+ 			if (!system_mount_state)
+ 				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
+-			if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+-				PartitionManager.Unlock_Block_Partitions();
+-				PartitionManager.Prepare_All_Super_Volumes();
++			std::string stock_up = (stock_target == "b") ? "B" : "A";
++			if (!PartitionManager.Live_Switch_Slot(stock_up)) {
++				gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
++				ret_val = INSTALL_ERROR;
++			} else if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+ 				gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
  			}
 -			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
-+			if (!stock_abort) {
-+				gui_msg(Msg(msg::kHighlight, "flash_ab_inactive=Flashing A/B zip to inactive slot: {1}")(PartitionManager.Get_Active_Slot_Display()=="A"?"B":"A"));
-+				// We need this so backuptool can do its magic
-+				bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
-+				bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
-+				PartitionManager.Mount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
-+				PartitionManager.Mount_By_Path("/vendor", false);
-+				TWFunc::copy_file("/system/bin/sh", "/tmp/sh", 0755);
-+				mount("/tmp/sh", "/system/bin/sh", "auto", MS_BIND, NULL);
-+
-+				run_rom_scripts = true;
-+				usleep(32);
-+
-+				if (run_rom_scripts && TWFunc::Path_Exists(FOX_PRE_ROM_FLASH_SCRIPT)) {
-+					TWFunc::RunFoxScript(FOX_PRE_ROM_FLASH_SCRIPT, path);
-+				}
-+
-+				TWFunc::IsRecoveryOverwritten(true);
-+
-+				// Live-slot guard: never flash the physically booted slot.
-+				// Booted is the snapshot truth (/tmp/fox_booted_slot via
-+				// Get_Booted_Slot_*), not ro.boot.* which may be spoofed.
-+				// Fail closed; no stock fallback exists past this point.
-+				std::string stock_target = (PartitionManager.Get_Active_Slot_Display()=="A")?"b":"a";
-+				std::string stock_booted = PartitionManager.Get_Booted_Slot_Display();
-+				bool stock_live_target = stock_booted.empty() || (stock_target == "b") == (stock_booted == "B");
-+				if (stock_live_target) {
-+					gui_err("slot_live_reboot_first=Target is the live booted slot. Reboot to the switched slot first, then flash.");
-+					umount("/system/bin/sh");
-+					unlink("/tmp/sh");
-+					if (!vendor_mount_state)
-+						PartitionManager.UnMount_By_Path("/vendor", false);
-+					if (!system_mount_state)
-+						PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
-+					ret_val = INSTALL_ERROR;
-+				} else {
-+					ret_val = Run_Update_Binary(path, wipe_cache, AB_OTA_ZIP_TYPE);
-+				}
-+
-+				if (!stock_live_target) {
-+					DataManager::SetValue(FOX_ZIP_INSTALLER_CODE, 1); // mark as custom ROM install
-+
-+					umount("/system/bin/sh");
-+					unlink("/tmp/sh");
-+					if (!vendor_mount_state)
-+						PartitionManager.UnMount_By_Path("/vendor", false);
-+					if (!system_mount_state)
-+						PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
-+					std::string stock_up = (stock_target == "b") ? "B" : "A";
-+					if (!PartitionManager.Live_Switch_Slot(stock_up)) {
-+						gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
-+						ret_val = INSTALL_ERROR;
-+					} else if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-+						gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
-+					}
-+					gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
-+				}
-+			} else {
-+				ret_val = INSTALL_ERROR;
-+			}
 +		}
  		} else {
  			std::string binary_name("ui.xml");
