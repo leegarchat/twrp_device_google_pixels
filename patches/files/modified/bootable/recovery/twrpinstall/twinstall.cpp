@@ -479,20 +479,26 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 		LOGINFO("hs: source_slot: %s\n", hs_booted.c_str());
 		LOGINFO("hs: target_slot: %s\n", hs_target == "b" ? "B" : "A");
 		// Engine wrote the target slot; restore the pre-ROM mount
-		// state first (stock order), then switch the slot through
-		// the partition manager so tw_active_slot + system details
-		// update and the reboot menu shows the truth immediately.
+		// state first (stock order). The session switch below runs
+		// only with the live-switch toggle on; with it off the
+		// session stays and the classic "reboot to switch" applies.
+		// Reconcile + guard normalization above always run.
 		hs_cleanup_mounts();
 		std::string target = HsTargetSlot();
 		std::string slot_up = (target == "b") ? "B" : "A";
-		if (!PartitionManager.Live_Switch_Slot(slot_up)) {
-			gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
-			return FoxHighSpeedResult::kAborted;
+		if (DataManager::GetIntValue("tw_live_switch") != 0) {
+			if (!PartitionManager.Live_Switch_Slot(slot_up)) {
+				gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
+				return FoxHighSpeedResult::kAborted;
+			}
+		} else {
+			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
 		}
 		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
 			gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
 		}		DataManager::SetProgress(1.0f);
-		LOGINFO("hs: wrote slot %s and switched to it\n", target.c_str());
+		LOGINFO("hs: wrote slot %s (live switch %s)\n", target.c_str(),
+			DataManager::GetIntValue("tw_live_switch") != 0 ? "on" : "off");
 		return FoxHighSpeedResult::kSucceeded;
 	}
 	if (code == HS_EXIT_NOT_FULL || code == HS_EXIT_NO_HELPERS) {
@@ -731,11 +737,15 @@ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
 			if (!system_mount_state)
 				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
 			std::string stock_up = (stock_target == "b") ? "B" : "A";
-			if (!PartitionManager.Live_Switch_Slot(stock_up)) {
-				gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
-				ret_val = INSTALL_ERROR;
-			} else if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-				gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
+			if (DataManager::GetIntValue("tw_live_switch") != 0) {
+				if (!PartitionManager.Live_Switch_Slot(stock_up)) {
+					gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
+					ret_val = INSTALL_ERROR;
+				} else if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+					gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
+				}
+			} else {
+				gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
 			}
 		}
 		} else {
