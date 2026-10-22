@@ -337,8 +337,14 @@ pub fn run(a: Args) -> i32 {
     }
 
     // --- 7. batches 1->2->3->4, barrier + per-thread validation ---
-    let total_out: u64 = parts.iter().map(|p| p.out_size(bs)).sum();
-    let mut done_out = 0u64;
+    // Per-stage progress bands: stage 1 fills the bar to 65%, stage 2
+    // to 75%, stage 3 to 85%, stage 4 to 95%; the post-processing
+    // tail (sync, slot switch) takes it to 100%. Bands keep small
+    // stages visible where a flat byte-proportional 5..95% buried them.
+    let batch_totals: HashMap<u8, u64> = batches
+        .iter()
+        .map(|(w, v)| (*w, v.iter().map(|p| p.out_size(bs)).sum()))
+        .collect();
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(a.threads)
         .build();
@@ -428,18 +434,48 @@ pub fn run(a: Args) -> i32 {
             }
         }
         // Live progress: atomic byte counter, GUI update on 0.5% steps
-        // (throttled; thousands of ops would spam the UI thread).
-        // High-water mark: only the thread that raises the ceiling
-        // emits. The previous compare_exchange(pct-1, pct) demanded
-        // strictly sequential +1 steps from zero, but the first op
-        // already lands at pct>=10 (0.05 base offset) and big ops skip
-        // whole units — so the CAS wedged forever and nothing was
-        // ever emitted mid-batch (bar jumped only at stage end).
-        let batch_base = done_out;
         let task_done = std::sync::atomic::AtomicU64::new(0);
         let next_pct = std::sync::atomic::AtomicU64::new(0);
+        // Op granularity forecast for the log: a huge max op here
+        // predicts a quiet bar tail (decode of one op is atomic).
+        {
+            let max_op = tasks.iter().map(|t| t.expanded).max().unwrap_or(0);
+            out.log(&format!(
+                "batch {w}: {} ops, max op {} MB",
+                tasks.len(),
+                max_op / 1_000_000
+            ));
+        }
+        let (lo, hi) = match *w {
+            1 => (0.05, 0.65),
+            2 => (0.65, 0.75),
+            3 => (0.75, 0.85),
+            _ => (0.85, 0.95),
+        };
+        let btotal = batch_totals.get(w).copied().unwrap_or(0).max(1);
         let out_mtx = std::sync::Mutex::new(&mut out);
-        let res: Vec<Result<(String, u64), String>> = pool.install(|| {
+        // Piecewise credit shared by every write site below (ZERO chunks,
+        // REPLACE pieces, end-of-task remainder): bytes are credited as
+        // actually written, so even a lone thread chewing one giant op
+        // ticks the bar instead of freezing it. Emission only on
+        // high-water-mark cross (0.5% bar steps), same gate as before.
+        let span = hi - lo;
+        let credit = |bytes: u64| {
+            if bytes == 0 {
+                return;
+            }
+            let dd = task_done
+                .fetch_add(bytes, std::sync::atomic::Ordering::Relaxed)
+                + bytes;
+            let fr = lo + dd as f64 / btotal as f64 * span;
+            let pc = (fr * 200.0) as u64;
+            if pc > next_pct.fetch_max(pc, std::sync::atomic::Ordering::Relaxed) {
+                if let Ok(mut g) = out_mtx.lock() {
+                    g.set_progress(fr.min(1.0));
+                }
+            }
+        };
+        let res: Vec<Result<(), String>> = pool.install(|| {
             use rayon::prelude::*;
             tasks
                 .par_iter()
@@ -448,6 +484,10 @@ pub fn run(a: Args) -> i32 {
                         "{} op {} type={} off={} len={}",
                         t.part, t.op_i, t.op.typ, t.op.off, t.op.len
                     );
+                    // Bytes credited as actually written (see `credit`
+                    // above); the bulk remainder at task end only covers
+                    // what piecewise sites have not.
+                    let mut credited = 0u64;
                     if t.op.typ == manifest::OP_ZERO {
                         let mu = node_fds.get(t.part).ok_or_else(|| {
                             format!("{tag}: node gone (internal error)")
@@ -468,6 +508,8 @@ pub fn run(a: Args) -> i32 {
                                     .map_err(|e| format!("{tag}: zero fill: {e}"))?;
                                 at += k as u64;
                                 n -= k as u64;
+                                credited += k as u64;
+                                credit(k as u64);
                             }
                         }
                         drop(f);
@@ -497,25 +539,25 @@ pub fn run(a: Args) -> i32 {
                             })?;
                             f.seek(SeekFrom::Start(sb * bs))
                                 .map_err(|e| format!("{tag}: oseek: {e}"))?;
-                            f.write_all(chunk)
-                                .map_err(|e| format!("{tag}: owrite: {e}"))?;
+                            // Piecewise credit (8 MiB pieces): a single giant
+                            // extent would otherwise hold its thread
+                            // silent for tens of seconds — the frozen tail
+                            // of the progress bar.
+                            for piece in chunk.chunks(8 << 20) {
+                                f.write_all(piece)
+                                    .map_err(|e| format!("{tag}: owrite: {e}"))?;
+                                let k = piece.len() as u64;
+                                credited += k;
+                                credit(k);
+                            }
                             pos += n;
                         }
                         drop(f);
                     }
-                    let d = task_done.fetch_add(t.expanded, std::sync::atomic::Ordering::Relaxed)
-                        + t.expanded;
-                    let frac = (batch_base + d) as f64 / total_out as f64 * 0.9 + 0.05;
-                    let pct = (frac * 200.0) as u64;
-                    if pct
-                        > next_pct
-                            .fetch_max(pct, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        if let Ok(mut g) = out_mtx.lock() {
-                            g.set_progress(frac.min(1.0));
-                        }
-                    }
-                    Ok((t.part.to_string(), t.expanded))
+                    // Remainder of the bulk credit (zero when piecewise
+                    // sites above already accounted every byte).
+                    credit(t.expanded.saturating_sub(credited));
+                    Ok(())
                 })
                 .collect()
         });
@@ -523,14 +565,10 @@ pub fn run(a: Args) -> i32 {
         // barrier: every op must validate, else finish batch and roll back.
         // collect() waits for all workers: the batch always drains fully.
         let mut failed: Option<String> = None;
-        let mut batch_bytes = 0u64;
         for r in res {
-            match r {
-                Ok((_, n)) => batch_bytes += n,
-                Err(e) => {
-                    if failed.is_none() {
-                        failed = Some(e);
-                    }
+            if let Err(e) = r {
+                if failed.is_none() {
+                    failed = Some(e);
                 }
             }
         }
@@ -545,8 +583,7 @@ pub fn run(a: Args) -> i32 {
                 crate::EXIT_FAIL,
             );
         }
-        done_out += batch_bytes;
-        out.set_progress(done_out as f64 / total_out as f64 * 0.9 + 0.05);
+        out.set_progress(hi);
         // fsync every node of the finished batch before validation: the
         // hash below must cover durable bytes, not page cache.
         for p in batch.iter() {
