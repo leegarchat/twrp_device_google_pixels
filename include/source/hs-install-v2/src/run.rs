@@ -429,6 +429,12 @@ pub fn run(a: Args) -> i32 {
         }
         // Live progress: atomic byte counter, GUI update on 0.5% steps
         // (throttled; thousands of ops would spam the UI thread).
+        // High-water mark: only the thread that raises the ceiling
+        // emits. The previous compare_exchange(pct-1, pct) demanded
+        // strictly sequential +1 steps from zero, but the first op
+        // already lands at pct>=10 (0.05 base offset) and big ops skip
+        // whole units — so the CAS wedged forever and nothing was
+        // ever emitted mid-batch (bar jumped only at stage end).
         let batch_base = done_out;
         let task_done = std::sync::atomic::AtomicU64::new(0);
         let next_pct = std::sync::atomic::AtomicU64::new(0);
@@ -501,15 +507,9 @@ pub fn run(a: Args) -> i32 {
                         + t.expanded;
                     let frac = (batch_base + d) as f64 / total_out as f64 * 0.9 + 0.05;
                     let pct = (frac * 200.0) as u64;
-                    if pct > next_pct.load(std::sync::atomic::Ordering::Relaxed)
-                        && next_pct
-                            .compare_exchange(
-                                pct - 1,
-                                pct,
-                                std::sync::atomic::Ordering::Relaxed,
-                                std::sync::atomic::Ordering::Relaxed,
-                            )
-                            .is_ok()
+                    if pct
+                        > next_pct
+                            .fetch_max(pct, std::sync::atomic::Ordering::Relaxed)
                     {
                         if let Ok(mut g) = out_mtx.lock() {
                             g.set_progress(frac.min(1.0));
