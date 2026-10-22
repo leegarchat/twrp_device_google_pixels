@@ -435,6 +435,7 @@ public:
 	bool Live_Switch_Slot(const string& Slot);                                // Full runtime slot switch: bootctrl + session reconcile (maps, mounts, props), no reboot
 	string Get_Booted_Slot_Suffix();                                          // Physical booted slot _a/_b via bootctrl (unspoofable); "" on error
 	string Get_Booted_Slot_Display();                                         // Physical booted slot A/B; "" on error
+	string Get_Bootctrl_Active_Slot();                                        // Fresh bootctrl HAL active slot A/B (bypasses cached Display); "" on error
 	string Get_Active_Slot_Suffix();                                          // Returns active slot _a or _b
 	string Get_Active_Slot_Display();                                         // Returns active slot A or B for display purposes
 	string Get_Android_Root_Path();                                           // Returns path of ANDROID_ROOT environment variable
