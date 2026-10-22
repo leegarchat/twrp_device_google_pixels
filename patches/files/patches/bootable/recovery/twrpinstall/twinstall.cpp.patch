@@ -1,6 +1,6 @@
 --- a/bootable/recovery/twrpinstall/twinstall.cpp
 +++ b/bootable/recovery/twrpinstall/twinstall.cpp
-@@ -282,6 +282,215 @@
+@@ -282,6 +282,225 @@
  	return INSTALL_SUCCESS;
  }
  
@@ -184,6 +184,16 @@
 +	LOGINFO("hs: engine exit %d\n", code);
 +
 +	if (code == 0) {
++		// DFE NEO compat: it greps recovery.log for the literal AOSP-style
++		// pair "source_slot: X" / "target_slot: Y" to resolve the
++		// both-slots-good ambiguity. Emitted on engine success (the flash
++		// really went booted->target), independent of the live switch
++		// below — so even a failed switch leaves DFE pointing at the
++		// freshly flashed slot, which then self-heals the session.
++		// Single pair per boot by construction (a second flash in the
++		// same session is refused by the guard above).
++		LOGINFO("hs: source_slot: %s\n", hs_booted.c_str());
++		LOGINFO("hs: target_slot: %s\n", hs_target == "b" ? "B" : "A");
 +		// Engine wrote the target slot; restore the pre-ROM mount
 +		// state first (stock order), then switch the slot through
 +		// the partition manager so tw_active_slot + system details
@@ -216,7 +226,7 @@
  int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
  {
    int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
-@@ -433,40 +642,95 @@
+@@ -433,40 +652,95 @@
  		ZipEntry64 ab_binary_entry;
  		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
  			LOGINFO("AB zip\n");

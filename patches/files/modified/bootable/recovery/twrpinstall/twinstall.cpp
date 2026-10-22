@@ -462,6 +462,16 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 	LOGINFO("hs: engine exit %d\n", code);
 
 	if (code == 0) {
+		// DFE NEO compat: it greps recovery.log for the literal AOSP-style
+		// pair "source_slot: X" / "target_slot: Y" to resolve the
+		// both-slots-good ambiguity. Emitted on engine success (the flash
+		// really went booted->target), independent of the live switch
+		// below — so even a failed switch leaves DFE pointing at the
+		// freshly flashed slot, which then self-heals the session.
+		// Single pair per boot by construction (a second flash in the
+		// same session is refused by the guard above).
+		LOGINFO("hs: source_slot: %s\n", hs_booted.c_str());
+		LOGINFO("hs: target_slot: %s\n", hs_target == "b" ? "B" : "A");
 		// Engine wrote the target slot; restore the pre-ROM mount
 		// state first (stock order), then switch the slot through
 		// the partition manager so tw_active_slot + system details
