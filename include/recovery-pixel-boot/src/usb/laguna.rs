@@ -1,39 +1,36 @@
 //! usb::laguna — OTG implementation (Tensor G5: frankel/blazer/mustang/rango).
 //!
-//! Election-driven host mode, zuma-style driver manipulation — NO vendor
-//! staging by design (no siw/lptools/iw, no dm-mapper, no vendor mounts,
-//! no aocd, no AoC sysfs polling; the old staging chain hung the daemon
-//! on wedged `services`/`verify_aoc_responsive` reads and is gone).
+//! Manual host mode (zuma-style), NO vendor staging by design (no
+//! siw/lptools/iw, no dm-mapper, no vendor mounts, no aocd, no AoC sysfs
+//! polling; the old staging chain hung the daemon on wedged
+//! `services`/`verify_aoc_responsive` reads and is gone).
 //!
-//! Mechanism (disassembly-verified on mustang 6.6.98/6.12.81
-//! `google-role-sw.ko` + `aoc_usb_driver.ko`; DTBO `fragment@usb_data_role_switch`):
-//! - `google-role-sw` election `USB_DR_EL`: host requires `TCPCI=host AND
-//!   AOC=host` (else `NONE`); `DISABLE_USB_DATA` forces `NONE`.
-//! - The AOC vote is cast by stock `aoc_usb_driver` only once the AoC
-//!   `usb_control` service runs (userspace `aocd`) — which never happens
-//!   in recovery (AoC firmware: `deferred probe pending` forever).
-//! - Our `aoc_vote_shim` (`include/source/aoc_vote_shim/`) casts the same
-//!   vote the stock probe casts for the `disable-aoc-voter` DT boolean:
-//!   `get_handle("USB_DR_EL")` + `cast_vote(h, "AOC", 1, 1)`.
-//!   The vote is sticky (field-proven: mustang keeps host across
-//!   `stop aocd` + replug), so one cast replaces the whole AoC stack.
-//! - The kernel self-switches via the election once both votes are host,
-//!   so this code performs NO role/UDC writes (direct downstream writes
-//!   are reverted by the election — hardware no-op per field lesson).
+//! Mechanism (field-proven on mustang CP3A 6.6.127):
+//! - The `google-role-sw` election is observed but NOT depended on: the
+//!   `role` switch accepts a `host` write and it sticks (no revert over
+//!   minutes), while Type-C `data_role` stays `[device]` — decorative.
+//! - With no PC attached the port must be forced to source explicitly:
+//!   UDC unbind + role-switch `host` + gvotable `CHARGER_MODE` VBUS
+//!   force. The drive then enumerates and mounts regardless of
+//!   `data_role` (mass storage rides xhci, not the data-role flag).
+//! - The AOC vote shim is kept as a belt-and-braces (it makes the
+//!   election agree instead of fighting the manual switch), but host
+//!   mode no longer waits for any election.
 //! - `aoc_core`/`aoc_usb_driver` are deliberately NOT insmodded: their
 //!   only job was the vote, and a loaded stock driver re-casts (0,1)
 //!   while the firmware is down, fighting the shim. First-stage may have
 //!   pre-loaded them — the shim's delayed re-asserts cover that race.
 //!
-//! Two kernel generations (6.6 stable, 6.12 beta): same election, same
-//! shim source; only the prebuilt vermagic differs (major.minor is
+//! Two kernel generations (6.6 stable, 6.12 beta): same manual path,
+//! same shim source; only the prebuilt vermagic differs (major.minor is
 //! enough for our own shim via the force-load fallback).
 //! Anything else fails closed (device mode, adb safe).
 //!
 //! Success criteria (observable in recovery, never role alone):
-//! downstream `role == host` AND Type-C `data_role == host` AND a source
-//! power_supply `online == 1`. `patch_dwc3=1` is set only when the shim
-//! is loaded (vote lands via its internal retries); otherwise `0` + `Err`.
+//! downstream `role == host` AND a source power_supply `online == 1`
+//! (`gcpm/online` reads 1 while our VBUS rail is up) AND the OTG disk
+//! link `/dev/block/otg-usb` resolving. `patch_dwc3=1` is set only when
+//! the shim is loaded; otherwise `0` + `Err`.
 
 use crate::i2c::patch_max77759_i2c_with_driver;
 use crate::ko_picker::{
@@ -53,11 +50,26 @@ const USB_ROLE_CLASS: &str = "/sys/class/usb_role";
 /// never written here).
 const TYPEC_CLASS: &str = "/sys/class/typec";
 /// Source-online candidates (`gcpm` first: DTBO `chg-psy-name = "gcpm"`).
+/// NOTE: `gcpm/online` reads 1 whenever our VBUS rail is up (sourcing
+/// OR sinking), so it is a rail sensor, not a direction signal. PC
+/// presence (device-mode trigger) is read from `usb/online|present`
+/// only — see VBUS_PATHS.
 const SOURCE_PSY_PATHS: &[&str] = &[
     "/sys/class/power_supply/gcpm/online",
     "/sys/class/power_supply/usb/online",
     "/sys/class/power_supply/usb/present",
 ];
+/// PC-attached sensor: input power present. `gcpm` is deliberately NOT
+/// here (it also reads 1 while we source VBUS ourselves).
+const VBUS_PATHS: &[&str] = &[
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+];
+/// VBUS force voter (gvotable debugfs election `CHARGER_MODE`, same
+/// max77759 family voter as zuma/gs101; created at runtime by the
+/// charger driver — absent = no force available).
+const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value";
+const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
 /// UDC gadget path. Documented, never written on laguna by design.
 #[allow(dead_code)]
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
@@ -187,9 +199,13 @@ fn find_typec_data_role() -> Option<PathBuf> {
 }
 
 /// Pure host check over already-read sysfs values (testable).
-/// All three must read host/online: role alone is never enough.
-fn is_host_verified(role: &str, data_role: &str, psy_online: &str) -> bool {
-    role.trim() == "host" && data_role.trim() == "host" && psy_online.trim() == "1"
+/// `data_role` is intentionally NOT part of the verdict: field-proven
+/// on mustang CP3A, the role-switch `host` sticks and the drive
+/// enumerates while Type-C `data_role` stays `[device]` (decorative).
+/// Role `host` + rail PSY up is the host signal; role alone is never
+/// enough.
+fn is_host_verified(role: &str, psy_online: &str) -> bool {
+    role.trim() == "host" && psy_online.trim() == "1"
 }
 
 /// Best source-online reading among the candidate PSYs. Returns the raw
@@ -206,8 +222,10 @@ fn read_source_psy() -> (String, String) {
     (String::new(), String::new())
 }
 
-/// Verified-host gate: downstream `role == host` AND Type-C
-/// `data_role == host` AND source PSY `online == 1`. Loud about each leg.
+/// Verified-host gate: downstream `role == host` AND source rail PSY
+/// `online == 1`. Type-C `data_role` is logged for observability only
+/// (stays `[device]` on laguna even in working host mode). Loud about
+/// each leg.
 fn verify_host() -> bool {
     let role_path = find_usb_role();
     let role = role_path
@@ -221,17 +239,17 @@ fn verify_host() -> bool {
         .unwrap_or_default();
     let (psy, psy_path) = read_source_psy();
     info(&format!(
-        "verify: role={role:?} data_role={data_role:?} psy={psy:?} ({psy_path})"
+        "verify: role={role:?} data_role={data_role:?}(info only) psy={psy:?} ({psy_path})"
     ));
-    if role.is_empty() || data_role.is_empty() || psy.is_empty() {
-        info("verify: missing leg (role/data_role/psy absent) → NOT host");
+    if role.is_empty() || psy.is_empty() {
+        info("verify: missing leg (role/psy absent) → NOT host");
         return false;
     }
-    let ok = is_host_verified(&role, &data_role, &psy);
+    let ok = is_host_verified(&role, &psy);
     info(if ok {
-        "verify: HOST confirmed (role+data_role+psy)"
+        "verify: HOST confirmed (role+psy)"
     } else {
-        "verify: NOT host (need role=host AND data_role=host AND psy=1)"
+        "verify: NOT host (need role=host AND psy=1)"
     });
     ok
 }
@@ -365,6 +383,91 @@ fn pick_otg_disk() -> Option<String> {
     None
 }
 
+/// PC-attached sensor: input power present (`usb/online|present`).
+/// `gcpm/online` is deliberately NOT consulted here: it also reads 1
+/// while we source VBUS ourselves (rail sensor, not direction).
+fn find_vbus() -> Option<String> {
+    VBUS_PATHS
+        .iter()
+        .find(|p| Path::new(p).exists())
+        .map(|s| s.to_string())
+}
+
+fn read_vbus(path: &Option<String>) -> String {
+    match path {
+        Some(p) => read_trim(p),
+        None => "0".into(),
+    }
+}
+
+/// UDC name for the gadget bind (from the live udc class, never the
+/// sys.usb.controller prop blindly: a stale UNKNOWN would kill adb).
+fn resolve_udc() -> Option<String> {
+    let mut names: Vec<String> = std::fs::read_dir("/sys/class/udc")
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names.into_iter().next()
+}
+
+/// Manual host path (field-proven on mustang CP3A: role write sticks,
+/// drive enumerates while data_role stays [device]): UDC unbind +
+/// role-switch `host` + gvotable VBUS force. Fails closed with a loud
+/// reason when the role switch is absent.
+fn switch_to_host(current: &mut String) {
+    if current.as_str() == "host" {
+        return;
+    }
+    info(">>> SWITCHING TO HOST MODE <<<");
+    let _ = std::fs::write(UDC_FILE, b"\n");
+    match find_usb_role() {
+        Some(role) => {
+            if let Err(e) = std::fs::write(role.as_path(), b"host\n") {
+                info(&format!("host: role-switch write FAILED: {e}"));
+            }
+        }
+        None => info("host: no usb_role switch found"),
+    }
+    if Path::new(CHARGER_VALUE).exists() && Path::new(CHARGER_ACTIVE).exists() {
+        info("forcing VBUS via gvotable CHARGER_MODE");
+        let _ = std::fs::write(CHARGER_VALUE, b"49\n");
+        let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    } else {
+        info("host: no CHARGER_MODE voter (no VBUS force?)");
+    }
+    *current = "host".into();
+}
+
+fn switch_to_device(current: &mut String) {
+    if current.as_str() == "device" {
+        return;
+    }
+    info(">>> SWITCHING TO DEVICE MODE <<<");
+    if Path::new(CHARGER_ACTIVE).exists() {
+        let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    }
+    let _ = set_prop("sys.usb.ffs.ready", "1");
+    // Self-healing bind: init triggers are edge-based; a missed edge leaves
+    // UDC unbound forever. Explicit bind + adbd start covers it.
+    if let Some(controller) = resolve_udc() {
+        match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
+            Ok(()) => {
+                let _ = set_prop("sys.usb.controller", &controller);
+            }
+            Err(e) => info(&format!("device mode: UDC bind FAILED: {e}")),
+        }
+    } else {
+        info("device mode: no UDC entry, skip bind");
+    }
+    let _ = set_prop("ctl.start", "adbd");
+    *current = "device".into();
+}
+
 /// Keep /dev/block/otg-usb (/usb_otg) on the current OTG disk; relink
 /// only on change. Best-effort: no disk attached = nothing to do.
 fn ensure_otg_symlink() {
@@ -418,6 +521,28 @@ pub fn run_otg_patch() -> Result<(), String> {
         Err(e) => info(&format!("TCPC switch not configured: {e}")),
     }
 
+    // debugfs for the gvotable CHARGER_MODE voter (VBUS force knob).
+    {
+        use std::ffi::CString;
+        let mp = CString::new("/sys/kernel/debug").unwrap();
+        let fst = CString::new("debugfs").unwrap();
+        // SAFETY: plain C mount(2) of a kernel pseudo-filesystem
+        // (debugfs) with no data pointer; return value is the only
+        // effect, checked. Same call shape as the zuma otg-patch path.
+        let rc = unsafe {
+            libc::mount(
+                fst.as_ptr(),
+                mp.as_ptr(),
+                fst.as_ptr(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if rc == 0 {
+            info("debugfs mounted");
+        }
+    }
+
     // 3. The AOC vote (replaces the entire AoC/aocd stack).
     if !load_vote_shim() {
         let _ = set_prop("sys.usb.patch_dwc3", "0");
@@ -428,22 +553,36 @@ pub fn run_otg_patch() -> Result<(), String> {
     Ok(())
 }
 
-/// laguna `otg-auto`: vote keeper + host verify + `/dev/block/otg-usb`
-/// maintenance. Never exits. Performs NO role/UDC writes by design: the
-/// `google-role-sw` election owns the data role; VBUS/typec state is
-/// logged for observability.
+/// laguna `otg-auto`: default HOST, external VBUS (PC) → DEVICE.
+/// Never exits. Re-asserts the host switch while no PC is attached
+/// (TCPC renegotiation can park the role back); keeps the AOC vote
+/// alive and the otg-usb link on the current disk.
 pub fn run_otg_auto() -> ! {
-    info("starting (laguna vote keeper + otg-usb maintenance, no role writes)");
+    info("starting (laguna vote keeper + VBUS-gated host, manual role writes)");
     info(&format!(
         "patch gate sys.usb.patch_dwc3={}",
         get_prop("sys.usb.patch_dwc3")
     ));
+    let vbus_file = find_vbus();
+    match &vbus_file {
+        Some(p) => info(&format!("using VBUS path: {p}")),
+        None => info("no VBUS sysfs path, assuming 0"),
+    }
     info("waiting 3s for boot to settle");
     sleep(Duration::from_secs(3));
-    // Edge-triggered host verification (loud legs via verify_host, no
-    // per-tick spam).
-    let mut last_state = (String::new(), String::new(), String::new());
+    let initial = read_vbus(&vbus_file);
+    info(&format!("initial VBUS: {initial}"));
+    let mut current = String::new();
+    if initial == "1" {
+        info("PC detected at boot (VBUS=1), starting in DEVICE mode");
+        switch_to_device(&mut current);
+    } else {
+        info("no PC at boot (VBUS=0), starting in HOST mode");
+        switch_to_host(&mut current);
+    }
+    let mut prev = initial;
     let mut was_verified = false;
+    let mut last_state = (String::new(), String::new(), String::new());
     loop {
         // Keeper: the vote is sticky, but re-poke if the shim reports
         // it dropped (e.g. election re-created late).
@@ -456,28 +595,50 @@ pub fn run_otg_auto() -> ! {
                 load_vote_shim();
             }
         }
-        // Verify on state change only; verify_host() logs every leg.
+        let vbus = read_vbus(&vbus_file);
+        if vbus != prev {
+            info(&format!("VBUS change: {prev} -> {vbus}"));
+            if vbus == "1" {
+                switch_to_device(&mut current);
+            } else {
+                switch_to_host(&mut current);
+            }
+            prev = vbus;
+        }
+        // Re-assert host while unplugged: a renegotiating TCPC can park
+        // the role back to device behind our backs.
+        if current == "host" {
+            let role_now = find_usb_role()
+                .map(|p| read_trim(&p.to_string_lossy()))
+                .unwrap_or_default();
+            if role_now != "host" {
+                info("daemon: role drifted from host, re-asserting");
+                switch_to_host(&mut String::from("device"));
+            }
+        }
+        // Edge-triggered host verification (loud legs via verify_host, no
+        // per-tick spam).
         let role = find_usb_role()
             .map(|p| read_trim(&p.to_string_lossy()))
             .unwrap_or_default();
+        let (psy, _) = read_source_psy();
         let data_role = find_typec_data_role()
             .map(|p| read_trim(&p.to_string_lossy()))
             .unwrap_or_default();
-        let (psy, _) = read_source_psy();
-        let triple = (role, data_role, psy);
+        let triple = (role.clone(), data_role, psy.clone());
         if triple != last_state
             && (!triple.0.is_empty() || !triple.1.is_empty() || !triple.2.is_empty())
         {
-            last_state = triple.clone();
+            last_state = triple;
             verify_host();
         }
-        let now_verified = is_host_verified(&triple.0, &triple.1, &triple.2);
+        let now_verified = is_host_verified(&role, &psy);
         if now_verified && !was_verified {
-            info("daemon: HOST verified (role+data_role+psy) — serving attach");
+            info("daemon: HOST verified (role+psy) — serving attach");
         }
         was_verified = now_verified;
         ensure_otg_symlink();
-        sleep(Duration::from_secs(3));
+        sleep(Duration::from_secs(1));
     }
 }
 
@@ -508,15 +669,15 @@ mod tests {
     }
 
     #[test]
-    fn host_needs_all_three_legs() {
-        // Prior field lesson: never role alone.
-        assert!(is_host_verified("host", "host", "1"));
-        assert!(!is_host_verified("host", "host", "0"));
-        assert!(!is_host_verified("host", "device", "1"));
-        assert!(!is_host_verified("device", "host", "1"));
-        assert!(!is_host_verified("", "host", "1"));
+    fn host_needs_role_and_psy() {
+        // Prior field lesson: never role alone. data_role is decorative
+        // on laguna (stays [device] in working host mode) — not gated.
+        assert!(is_host_verified("host", "1"));
+        assert!(!is_host_verified("host", "0"));
+        assert!(!is_host_verified("device", "1"));
+        assert!(!is_host_verified("", "1"));
         // Sysfs reads carry trailing newlines — trim covers them.
-        assert!(is_host_verified("host\n", "host\n", "1\n"));
+        assert!(is_host_verified("host\n", "1\n"));
     }
 
     #[test]

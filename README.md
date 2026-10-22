@@ -41,19 +41,19 @@ generations (left to right), rows are features (top to bottom).
 | Data decryption          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | MTP + ADB                | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | ROM flashing             | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| OTG                      | 🟠 | 🔵 | 🟢 | 🟢 | 🟡 | 🟡 |
+| OTG                      | 🟢 | 🔵 | 🟢 | 🟢 | 🟢 | 🟡 |
 | Flashlight               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 |
-| Vibration                | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Reboot to Android        | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Vibration                | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Reboot to Android        | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Touchscreen              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Recovery boots           | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Backup / restore         | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Brightness control       | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| ADB sideload             | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Brightness control       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ADB sideload             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Self-reflash             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Reboot menu              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | PIN unlock               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Slot switch              | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Slot switch              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Fastbootd                | 🔵 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Files + terminal         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | OTA survival             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
