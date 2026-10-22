@@ -452,6 +452,11 @@ pub fn run(a: Args) -> i32 {
             3 => (0.75, 0.85),
             _ => (0.85, 0.95),
         };
+        // The verify phase (fsync + re-read + sha256 over gigabytes)
+        // is wall-time heavy but emitted nothing: the bar froze at the
+        // band ceiling until "stage done". Reserve the top slice of the
+        // band for it and tick per partition.
+        let vrfy = 0.02f64.min((hi - lo) * 0.25);
         let btotal = batch_totals.get(w).copied().unwrap_or(0).max(1);
         let out_mtx = std::sync::Mutex::new(&mut out);
         // Piecewise credit shared by every write site below (ZERO chunks,
@@ -459,7 +464,7 @@ pub fn run(a: Args) -> i32 {
         // actually written, so even a lone thread chewing one giant op
         // ticks the bar instead of freezing it. Emission only on
         // high-water-mark cross (0.5% bar steps), same gate as before.
-        let span = hi - lo;
+        let span = hi - lo - vrfy;
         let credit = |bytes: u64| {
             if bytes == 0 {
                 return;
@@ -597,21 +602,22 @@ pub fn run(a: Args) -> i32 {
                 crate::EXIT_FAIL,
             );
         }
-        out.set_progress(hi);
-        // fsync every node of the finished batch before validation: the
-        // hash below must cover durable bytes, not page cache.
-        for p in batch.iter() {
+        // Verify phase, merged per partition (fsync then hash): each
+        // node costs seconds on gigabytes of flash, so tick the
+        // reserved band slice here instead of freezing at the ceiling.
+        let vhi = hi - vrfy;
+        let n_verify = batch.len().max(1) as f64;
+        for (i, p) in batch.iter().enumerate() {
+            out.ui_print(&format!("verifying {}", p.name));
             if let Err(e) = backup::fsync_node(&node_of[&p.name]) {
                 if *w != 1 {
                     rollback(&mut out, &siw, &backed);
                 }
                 return fail(&mut out, &format!("fsync {}: {e}", p.name), crate::EXIT_FAIL);
             }
-        }
-        // Re-read + hash from the node (post-fsync) and compare against
-        // new_partition_info.hash. Fresh page cache makes this cheap;
-        // torn writes surface here instead of booting into them.
-        for p in batch.iter() {
+            // Re-read + hash from the node (post-fsync) and compare against
+            // new_partition_info.hash. Fresh page cache makes this cheap;
+            // torn writes surface here instead of booting into them.
             let sum = match payload_hs::extract::sha256_file_n(
                 &node_of[&p.name],
                 p.out_size(bs),
@@ -634,6 +640,7 @@ pub fn run(a: Args) -> i32 {
                     crate::EXIT_FAIL,
                 );
             }
+            out.set_progress(vhi + vrfy * (i + 1) as f64 / n_verify);
         }
         // --readback: BLKFLSBUF + re-read hash from storage (not page
         // cache). Only when asked: it doubles batch I/O.
