@@ -728,7 +728,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -3730,6 +4233,292 @@
+@@ -3730,6 +4233,316 @@
  		Update_System_Details();
  }
  
@@ -775,6 +775,30 @@
 +	if (s == "_a")
 +		return "A";
 +	if (s == "_b")
++		return "B";
++	return "";
++}
++
++string TWPartitionManager::Get_Bootctrl_Active_Slot() {
++	// Fresh bootctrl read, bypassing the cached Display. External
++	// runtime switchers (DFE NEO-style zips, manual bootctl) move the
++	// active slot behind TWRP's back; installers reconcile against this.
++	FILE* p = popen("/system/bin/bootctl get-active-boot-slot 2>/dev/null", "r");
++	if (!p)
++		return "";
++	char buf[16] = {0};
++	bool ok = (fgets(buf, sizeof(buf), p) != nullptr);
++	pclose(p);
++	if (!ok)
++		return "";
++	string s(buf);
++	size_t end = s.find_last_not_of(" \t\r\n");
++	if (end == string::npos)
++		return "";
++	s.erase(end + 1);
++	if (s == "0")
++		return "A";
++	if (s == "1")
 +		return "B";
 +	return "";
 +}
@@ -1021,7 +1045,7 @@
  string TWPartitionManager::Get_Internal_Storage_Path() {
     std::string s = getenv("EXTERNAL_STORAGE");
     if (s == "") 
-@@ -4662,7 +5451,12 @@
+@@ -4662,7 +5475,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -1035,7 +1059,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4704,14 +5498,21 @@
+@@ -4704,14 +5522,21 @@
  	bool status = true;
  	std::vector<TWPartition*>::iterator iter;
  
@@ -1059,7 +1083,7 @@
  	}
  	Update_System_Details();
  	return status;
-@@ -4840,6 +5641,912 @@
+@@ -4840,6 +5665,912 @@
  	}
  }
  
@@ -1972,7 +1996,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6564,13 @@
+@@ -4857,13 +6588,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -1988,7 +2012,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6589,45 @@
+@@ -4882,9 +6613,45 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;

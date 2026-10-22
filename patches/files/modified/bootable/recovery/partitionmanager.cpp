@@ -4280,6 +4280,30 @@ string TWPartitionManager::Get_Booted_Slot_Display() {
 	return "";
 }
 
+string TWPartitionManager::Get_Bootctrl_Active_Slot() {
+	// Fresh bootctrl read, bypassing the cached Display. External
+	// runtime switchers (DFE NEO-style zips, manual bootctl) move the
+	// active slot behind TWRP's back; installers reconcile against this.
+	FILE* p = popen("/system/bin/bootctl get-active-boot-slot 2>/dev/null", "r");
+	if (!p)
+		return "";
+	char buf[16] = {0};
+	bool ok = (fgets(buf, sizeof(buf), p) != nullptr);
+	pclose(p);
+	if (!ok)
+		return "";
+	string s(buf);
+	size_t end = s.find_last_not_of(" \t\r\n");
+	if (end == string::npos)
+		return "";
+	s.erase(end + 1);
+	if (s == "0")
+		return "A";
+	if (s == "1")
+		return "B";
+	return "";
+}
+
 // Forward declaration (defined further below next to Unmap_Super_Devices).
 static bool DestroyLogicalPartition_Retry(const std::string& name);
 
