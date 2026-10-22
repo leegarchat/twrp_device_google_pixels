@@ -63,6 +63,7 @@
 		<string name="inject_twrp_chk">Inject OrangeFox after install</string>
 		<string name="high_speed_flash_chk">High-speed flash (Experimental)</string>
 		<string name="live_switch_chk">Live switch slot (Experimental)</string>
+		<string name="slot_live_reswitch">Target is the live booted slot; switching back to it and continuing.</string>
 		<string name="install_reboot_chk">Reboot after installation is complete</string>
 		<string name="options_hdr">Options</string>
 		<string name="zip_queue">Queue</string>
