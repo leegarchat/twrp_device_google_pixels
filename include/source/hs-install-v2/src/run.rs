@@ -360,11 +360,8 @@ pub fn run(a: Args) -> i32 {
             _ => "remaining partitions",
         };
         let names: Vec<&str> = batch.iter().map(|p| p.name.as_str()).collect();
-        out.ui_print(&format!(
-            "stage {w}/4: {}: {}",
-            label,
-            names.join(", ")
-        ));
+        out.ui_print(&format!("Step {w}: installing {label}..."));
+        out.log(&format!("stage {w}: {}: {}", label, names.join(", ")));
         // Open one fd per node (O_EXCL claim: fail fast if a target is
         // busy instead of writing under a live user). Shared by the op
         // workers of this batch, one mutex each; ops on different nodes
@@ -390,7 +387,7 @@ pub fn run(a: Args) -> i32 {
                         } else {
                             format!("open {node}: {e}")
                         };
-                        out.ui_print(&format!("stage {w}/4 FAILED: {msg}"));
+                        out.ui_print(&format!("Step {w} FAILED: {msg}"));
                         // Rollback restores critical (2+4) nodes; weight 1
                         // (super group) has no restorable state yet, and its
                         // Fresh ledger would delete just-rebuilt entries.
@@ -525,7 +522,7 @@ pub fn run(a: Args) -> i32 {
                         // instead of looking hung.
                         if t.expanded > (64 << 20) {
                             if let Ok(mut g) = out_mtx.lock() {
-                                g.ui_print(&format!(
+                                g.log(&format!(
                                     "large op: {} op {} ({} MB), decoding",
                                     t.part,
                                     t.op_i,
@@ -592,7 +589,7 @@ pub fn run(a: Args) -> i32 {
             }
         }
         if let Some(e) = failed {
-            out.ui_print(&format!("stage {w}/4 FAILED: {e}"));
+            out.ui_print(&format!("Step {w} FAILED: {e}"));
             if *w != 1 {
                 rollback(&mut out, &siw, &backed);
             }
@@ -608,7 +605,7 @@ pub fn run(a: Args) -> i32 {
         let vhi = hi - vrfy;
         let n_verify = batch.len().max(1) as f64;
         for (i, p) in batch.iter().enumerate() {
-            out.ui_print(&format!("verifying {}", p.name));
+            out.log(&format!("verifying {}", p.name));
             if let Err(e) = backup::fsync_node(&node_of[&p.name]) {
                 if *w != 1 {
                     rollback(&mut out, &siw, &backed);
@@ -674,11 +671,11 @@ pub fn run(a: Args) -> i32 {
             }
             out.log(&format!("batch {w}: readback ok"));
         }
-        out.ui_print(&format!("stage {w}/4 done"));
+        out.log(&format!("stage {w} done"));
     }
 
     // --- 8. done: sync, leave the slot switch to the caller ---
-    out.ui_print("syncing");
+    out.log("syncing");
     unsafe { libc::sync() };
     out.set_progress(1.0);
     // Scheme phase 6: drop the /tmp backup on success (kept on failure
