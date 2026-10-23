@@ -923,18 +923,6 @@
 
 			<listbox style="settingslist_group">
 				<placement x="0" y="%row2_2a_y%" w="%screen_w%" h="%options_list_num_group%"/>
-				<listitem name="{@sideload_wipe_dalvik_chk}">
-					<data variable="tw_wipe_dalvik"/>
-				</listitem>
-				<listitem name="{@sideload_wipe_cache_chk}">
-					<data variable="tw_wipe_cache"/>
-				</listitem>
-				<listitem name="{@unmount_sys_install}">
-					<data variable="tw_unmount_system"/>
-				</listitem>
-				<listitem name="{@unmount_vendor_install}">
-					<data variable="tw_unmount_vendor"/>
-				</listitem>
 				<listitem name="{@auto_reflashtwrp_chk}">
 					<condition var1="fox_branch" op="&gt;=" var2="11"/>
 					<condition var1="fox_vab_device" var2="1"/>
@@ -943,6 +931,22 @@
 					<condition var1="fox_disable_reflash_current" op="!=" var2="1"/>
 					<data variable="tw_auto_reflashtwrp"/>
 				</listitem>
+				<listitem name="{@live_switch_chk}">
+					<condition var1="tw_has_boot_slots" var2="1"/>
+					<data variable="tw_live_switch"/>
+				</listitem>
+				<listitem name="{@unmount_vendor_install}">
+					<data variable="tw_unmount_vendor"/>
+				</listitem>
+				<listitem name="{@unmount_sys_install}">
+					<data variable="tw_unmount_system"/>
+				</listitem>
+				<listitem name="{@sideload_wipe_dalvik_chk}">
+					<data variable="tw_wipe_dalvik"/>
+				</listitem>
+				<listitem name="{@sideload_wipe_cache_chk}">
+					<data variable="tw_wipe_cache"/>
+				</listitem>
 				<listitem name="{@auto_disable_avb2=Disable vbmeta AVB2.0}">
 					<condition var1="fox_auto_disable_vbmeta_avb2" var2="1"/>
 					<data variable="tw_auto_disable_avb2"/>
@@ -950,10 +954,6 @@
 				<listitem name="{@inject_twrp_chk}">
 					<condition var1="tw_has_injecttwrp" var2="1"/>
 					<data variable="tw_inject_after_zip"/>
-				</listitem>
-				<listitem name="{@live_switch_chk}">
-					<condition var1="tw_has_boot_slots" var2="1"/>
-					<data variable="tw_live_switch"/>
 				</listitem>
 			</listbox>
 

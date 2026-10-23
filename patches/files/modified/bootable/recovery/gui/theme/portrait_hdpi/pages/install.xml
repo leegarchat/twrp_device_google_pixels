@@ -46,13 +46,6 @@
 
 			<listbox style="settingslist">
 				<placement x="0" y="%row4_2a_y%" w="%screen_w%" h="%options_list_num%"/>
-				<listitem name="{@install_reboot_chk}">
-					<condition var1="tw_reboot_system" var2="1"/>
-					<data variable="tw_install_reboot"/>
-				</listitem>
-				<listitem name="{@zip_sig_chk}">
-					<data variable="tw_signed_zip_verify"/>
-				</listitem>
 				<listitem name="{@auto_reflashtwrp_chk}">
 					<condition var1="fox_branch" op="&gt;=" var2="11"/>
 					<condition var1="fox_vab_device" var2="1"/>
@@ -61,12 +54,27 @@
 					<condition var1="fox_disable_reflash_current" op="!=" var2="1"/>
 					<data variable="tw_auto_reflashtwrp"/>
 				</listitem>
-				<listitem name="{@unmount_sys_install}">
-					<data variable="tw_unmount_system"/>
+				<listitem name="{@high_speed_flash_chk}">
+					<condition var1="tw_has_boot_slots" var2="1"/>
+					<data variable="tw_high_speed_flash"/>
+				</listitem>
+				<listitem name="{@live_switch_chk}">
+					<condition var1="tw_has_boot_slots" var2="1"/>
+					<data variable="tw_live_switch"/>
+				</listitem>
+				<listitem name="{@zip_sig_chk}">
+					<data variable="tw_signed_zip_verify"/>
 				</listitem>
 				<listitem name="{@unmount_vendor_install}">
 					<condition var1="fox_branch" op="&gt;=" var2="10"/>
 					<data variable="tw_unmount_vendor"/>
+				</listitem>
+				<listitem name="{@unmount_sys_install}">
+					<data variable="tw_unmount_system"/>
+				</listitem>
+				<listitem name="{@install_reboot_chk}">
+					<condition var1="tw_reboot_system" var2="1"/>
+					<data variable="tw_install_reboot"/>
 				</listitem>
 				<listitem name="{@auto_disable_avb2=Disable vbmeta AVB2.0}">
 					<condition var1="fox_auto_disable_vbmeta_avb2" var2="1"/>
@@ -75,14 +83,6 @@
 				<listitem name="{@inject_twrp_chk}">
 					<condition var1="tw_has_injecttwrp" var2="1"/>
 					<data variable="tw_inject_after_zip"/>
-				</listitem>
-				<listitem name="{@high_speed_flash_chk}">
-					<condition var1="tw_has_boot_slots" var2="1"/>
-					<data variable="tw_high_speed_flash"/>
-				</listitem>
-				<listitem name="{@live_switch_chk}">
-					<condition var1="tw_has_boot_slots" var2="1"/>
-					<data variable="tw_live_switch"/>
 				</listitem>
 			</listbox>
 
@@ -225,13 +225,6 @@
 			<listbox style="settingslist">
 				<condition var1="tw_fileexists" var2="1"/>
 				<placement x="0" y="%row3_2a_y%" w="%screen_w%" h="%options_list_num%"/>
-				<listitem name="{@install_reboot_chk}">
-					<condition var1="tw_reboot_system" var2="1"/>
-					<data variable="tw_install_reboot"/>
-				</listitem>
-				<listitem name="{@zip_sig_chk}">
-					<data variable="tw_signed_zip_verify"/>
-				</listitem>
 				<listitem name="{@auto_reflashtwrp_chk}">
 					<condition var1="fox_branch" op="&gt;=" var2="11"/>
 					<condition var1="fox_vab_device" var2="1"/>
@@ -240,12 +233,27 @@
 					<condition var1="fox_disable_reflash_current" op="!=" var2="1"/>
 					<data variable="tw_auto_reflashtwrp"/>
 				</listitem>
-				<listitem name="{@unmount_sys_install}">
-					<data variable="tw_unmount_system"/>
+				<listitem name="{@high_speed_flash_chk}">
+					<condition var1="tw_has_boot_slots" var2="1"/>
+					<data variable="tw_high_speed_flash"/>
+				</listitem>
+				<listitem name="{@live_switch_chk}">
+					<condition var1="tw_has_boot_slots" var2="1"/>
+					<data variable="tw_live_switch"/>
+				</listitem>
+				<listitem name="{@zip_sig_chk}">
+					<data variable="tw_signed_zip_verify"/>
 				</listitem>
 				<listitem name="{@unmount_vendor_install}">
 					<condition var1="fox_branch" op="&gt;=" var2="10"/>
 					<data variable="tw_unmount_vendor"/>
+				</listitem>
+				<listitem name="{@unmount_sys_install}">
+					<data variable="tw_unmount_system"/>
+				</listitem>
+				<listitem name="{@install_reboot_chk}">
+					<condition var1="tw_reboot_system" var2="1"/>
+					<data variable="tw_install_reboot"/>
 				</listitem>
 				<listitem name="{@auto_disable_avb2=Disable vbmeta AVB2.0}">
 					<condition var1="fox_auto_disable_vbmeta_avb2" var2="1"/>
@@ -254,14 +262,6 @@
 				<listitem name="{@inject_twrp_chk}">
 					<condition var1="tw_has_injecttwrp" var2="1"/>
 					<data variable="tw_inject_after_zip"/>
-				</listitem>
-				<listitem name="{@high_speed_flash_chk}">
-					<condition var1="tw_has_boot_slots" var2="1"/>
-					<data variable="tw_high_speed_flash"/>
-				</listitem>
-				<listitem name="{@live_switch_chk}">
-					<condition var1="tw_has_boot_slots" var2="1"/>
-					<data variable="tw_live_switch"/>
 				</listitem>
 			</listbox>
 
