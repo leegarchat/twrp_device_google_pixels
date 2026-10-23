@@ -252,6 +252,29 @@ echo "flog: + hardware.txt"
 } > "$DEST/otg.txt" 2>/dev/null
 echo "flog: + otg.txt"
 
+# --- battery + health HAL snapshot (all families: generic sysfs dump, no
+# hardcoded supply names; gs101 uses battery+maxfg, others differ) ---
+{
+    echo "## charger service"
+    printf '  init.svc.charger=%s\n' "$(getprop init.svc.charger 2>/dev/null)"
+    echo "## health HAL spam in this boot (IHealth missing = charger loop)"
+    if command -v dmesg >/dev/null 2>&1; then
+        printf '  ihealth_lines=%s\n' "$(dmesg 2>/dev/null | grep -c 'IHealth/default')"
+        printf '  health_waits=%s\n' "$(dmesg 2>/dev/null | grep -c 'Waited one second for android.hardware.health')"
+    fi
+    echo "## power_supply detail (capacity/status drives the OFox icon via sysfs)"
+    for _p in /sys/class/power_supply/*/; do
+        [ -d "$_p" ] || continue
+        _n=$(basename "$_p")
+        printf '%s:' "$_n"
+        for _k in capacity status online present type voltage_now current_now; do
+            [ -f "$_p/$_k" ] && printf ' %s=%s' "$_k" "$(cat "$_p/$_k" 2>/dev/null)"
+        done
+        echo ""
+    done
+} > "$DEST/battery.txt" 2>/dev/null
+echo "flog: + battery.txt"
+
 # --- pstore (survives reboot; empty dir listing is also an answer) ---
 if [ -d /sys/fs/pstore ] && ls -la /sys/fs/pstore/ > "$DEST/pstore_ls.txt" 2>/dev/null; then
     for _p in /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-0; do
