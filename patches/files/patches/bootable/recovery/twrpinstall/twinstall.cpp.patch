@@ -1,6 +1,6 @@
 --- a/bootable/recovery/twrpinstall/twinstall.cpp
 +++ b/bootable/recovery/twrpinstall/twinstall.cpp
-@@ -282,6 +282,235 @@
+@@ -282,6 +282,244 @@
  	return INSTALL_SUCCESS;
  }
  
@@ -214,6 +214,15 @@
 +				return FoxHighSpeedResult::kAborted;
 +			}
 +		} else {
++			// Classic post: no live session switch, but the bootloader
++			// MUST point at the freshly flashed slot (stock update_engine
++			// does this internally; the hs engine never touches bootctrl
++			// by design). Without this the reboot stays on the old slot.
++			PartitionManager.Set_Active_Slot(slot_up);
++			if (PartitionManager.Get_Active_Slot_Display() != slot_up) {
++				gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
++				return FoxHighSpeedResult::kAborted;
++			}
 +			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
 +		}
 +		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
@@ -236,7 +245,7 @@
  int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
  {
    int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
-@@ -433,7 +662,53 @@
+@@ -433,7 +671,53 @@
  		ZipEntry64 ab_binary_entry;
  		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
  			LOGINFO("AB zip\n");
@@ -291,7 +300,7 @@
  			// We need this so backuptool can do its magic
  			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
  			bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
-@@ -461,12 +736,18 @@
+@@ -461,12 +745,18 @@
  				PartitionManager.UnMount_By_Path("/vendor", false);
  			if (!system_mount_state)
  				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);

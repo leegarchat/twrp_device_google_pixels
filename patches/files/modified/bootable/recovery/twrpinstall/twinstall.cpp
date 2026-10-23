@@ -492,6 +492,15 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 				return FoxHighSpeedResult::kAborted;
 			}
 		} else {
+			// Classic post: no live session switch, but the bootloader
+			// MUST point at the freshly flashed slot (stock update_engine
+			// does this internally; the hs engine never touches bootctrl
+			// by design). Without this the reboot stays on the old slot.
+			PartitionManager.Set_Active_Slot(slot_up);
+			if (PartitionManager.Get_Active_Slot_Display() != slot_up) {
+				gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
+				return FoxHighSpeedResult::kAborted;
+			}
 			gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");
 		}
 		if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
