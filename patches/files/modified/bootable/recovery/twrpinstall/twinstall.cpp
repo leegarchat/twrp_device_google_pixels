@@ -491,6 +491,7 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 				gui_err("hs_slot_fail=High-speed install wrote the update but the slot switch failed.");
 				return FoxHighSpeedResult::kAborted;
 			}
+			gui_msg("flash_ab_live_done=Slot switched live; you can flash additional zips without reboot.");
 		} else {
 			// Classic post: no live session switch, but the bootloader
 			// MUST point at the freshly flashed slot (stock update_engine
@@ -750,8 +751,11 @@ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
 				if (!PartitionManager.Live_Switch_Slot(stock_up)) {
 					gui_err("switch_slot_fail=Slot switch failed. See the log for details.");
 					ret_val = INSTALL_ERROR;
-				} else if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
-					gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
+				} else {
+					gui_msg("flash_ab_live_done=Slot switched live; you can flash additional zips without reboot.");
+					if (android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {
+						gui_warn("mount_vab_partitions=Devices on super may not mount until after rebooting recovery.");
+					}
 				}
 			} else {
 				gui_warn("flash_ab_reboot=To flash additional zips, please reboot recovery to switch to the updated slot.");

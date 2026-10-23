@@ -766,6 +766,7 @@
 		<string name="unable_set_boot_slot">Error changing bootloader boot slot to {1}</string>
 		<string name="flash_ab_inactive">Flashing A/B zip to inactive slot: {1}</string>
 		<string name="flash_ab_reboot">To flash additional zips, please reboot recovery to switch to the updated slot.</string>
+		<string name="flash_ab_live_done">Slot switched live; you can flash additional zips without reboot.</string>
 		<string name="flash_ab_both_slots">Flash to both slots</string>
 		<string name="ozip_decrypt_decryption">Starting Ozip Decryption...</string>
 		<string name="ozip_decrypt_finish">Ozip Decryption Finished!</string>

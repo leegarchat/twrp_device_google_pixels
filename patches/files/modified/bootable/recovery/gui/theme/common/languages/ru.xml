@@ -767,6 +767,7 @@
 		<string name="unable_set_boot_slot">Ошибка изменения загрузочного слота {1}</string>
 		<string name="flash_ab_inactive">Прошивка A/B ZIP в неактивный слот: {1}</string>
 		<string name="flash_ab_reboot">Чтобы прошить дополнительные ZIP, перезагрузите рекавери, чтобы переключить слот.</string>
+		<string name="flash_ab_live_done">Слот переключён на лету; можно шить следующие ZIP без перезагрузки.</string>
 		<string name="flash_ab_both_slots">Прошить в оба слота</string>
 		<string name="ozip_decrypt_decryption">Начало расшифровки Ozip...</string>
 		<string name="ozip_decrypt_finish">Расшифровка Ozip завершена!</string>
