@@ -126,7 +126,7 @@ Legend: **tree** = set by `pixels/` (vendorsetup.sh unless noted).
 | `OF_UNBIND_SDCARD_F2FS=1` | Bind-unmount `/sdcard` before F2FS repair/format | `=1` (:244) |
 | `OF_BIND_MOUNT_SDCARD_ON_FORMAT=1` | — | `=1` (:245) |
 | `OF_DYNAMIC_FULL_SIZE=8531214336` | Full-size constant (matches `BOARD_SUPER_PARTITION_SIZE`) | (:246) |
-| `OF_USE_LEGACY_BATTERY_SERVICES=1` | Legacy battery HAL (`TW_USE_LEGACY_BATTERY_SERVICES`) | `=1` (:249) |
+| `OF_USE_LEGACY_BATTERY_SERVICES=0` | HIDL health branch (`GetBatteryInfo`); needs `health@2.1-service` in ramdisk (`device.mk`) | `=0` (:249) |
 | `OF_FORCE_DATA_FORMAT_F2FS=1` | Force F2FS on format | `BoardConfig.mk:215` (mk, not env) |
 | `OF_FL_PATH1="cmd:/system/bin/recovery-pixel-boot torch"` | Torch hook wired to our Rust daemon | (:216) |
 | `OF_WORKAROUND_BACKUP_BUG=1` | Forced `1` in mk | default (untouched) |

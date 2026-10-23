@@ -1,6 +1,0 @@
-<manifest version="1.0" type="framework">
-    <hal format="aidl">
-        <name>android.hardware.health</name>
-        <fqname>IHealth/default</fqname>
-    </hal>
-</manifest>

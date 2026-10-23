@@ -946,12 +946,13 @@ case "$CALL_TYPE" in
         done
         # Both KeyMint HALs are built from source and always ship in the
         # universal payload: rust (system/core/trusty/keymint) and cpp
-        # (system/core/trusty/keymaster). Soong places the vendor output at
-        # $PRODUCT_OUT/vendor/bin/hw/; it is copied into the ramdisk and
-        # later packed into the LGZ cluster. No prebuilt blobs. Both
-        # services start at boot and the wrong one exits harmlessly (or the
-        # installer pre-selects via ro.recovery.keymint, see the gated
-        # triggers in pixel_common.rc).
+        # (system/core/trusty/keymaster), plus the HIDL health HAL from
+        # hardware/interfaces/health. Soong places the vendor outputs at
+        # $PRODUCT_OUT/vendor/bin/hw/; the callback copies them into the
+        # ramdisk and the cluster packs them. No prebuilt blobs. Ordering
+        # is enforced in BoardConfig.mk: the recovery ramdisk assembly
+        # waits for these outputs (INTERNAL_RECOVERYIMAGE_FILES), so a
+        # single mka pass suffices — no keymint-first pre-pass.
         PRODUCT_OUT="${TARGET_DIR%/recovery/root}"
 
         echo "    [PLATFORM] Injecting both keymint HALs (universal payload)"
@@ -986,6 +987,28 @@ case "$CALL_TYPE" in
             echo "    [PLATFORM]   + libkeymasterconfig.so (GS101 KeyMint dependency)"
         else
             echo "    [PLATFORM] ERROR: KeyMint dependency not found at: $km_config_lib"
+            return 1
+        fi
+
+        # --- HIDL health HAL binary ---
+        # Same story as keymint above: TARGET_RECOVERY_DEVICE_MODULES does
+        # not deliver vendor/bin/hw binaries into the recovery root (the
+        # health module has no recovery variant upstream), so stage it
+        # explicitly from the just-built $PRODUCT_OUT. Without it the
+        # charger loops on the missing IHealth/default and the HIDL
+        # battery branch hangs in waitForService (icon stuck at 0).
+        # The *.rc stays open via LGZ_EXCLUDE_LIST; the binary itself
+        # rides the cluster like keymint.
+        health_bin_name="android.hardware.health@2.1-service"
+        health_src="$PRODUCT_OUT/vendor/bin/hw/$health_bin_name"
+        if [ -f "$health_src" ]; then
+            mkdir -p "$TARGET_DIR/vendor/bin/hw"
+            cp -f "$health_src" "$TARGET_DIR/vendor/bin/hw/"
+            chmod 755 "$TARGET_DIR/vendor/bin/hw/$health_bin_name"
+            echo "    [PLATFORM]   + $health_bin_name (source-built)"
+        else
+            echo "    [PLATFORM] ERROR: health binary not found at: $health_src"
+            echo "    [PLATFORM]   Ensure PRODUCT_PACKAGES includes $health_bin_name"
             return 1
         fi
 

@@ -234,5 +234,17 @@ TARGET_USE_CUSTOM_LUN_FILE_PATH := /config/usb_gadget/g1/functions/mass_storage.
 
 BOARD_RECOVERY_IMAGE_PREPARE = bash $(DEVICE_PATH)/include/prebuilt/fox_build_callback.sh $(TARGET_RECOVERY_ROOT_OUT) --second-call
 
+# Forced ordering for the HAL binaries the callback stages from $PRODUCT_OUT
+# (keymint rust+cpp, health 2.1, libkeymasterconfig): vendorbootimage never
+# pulls vendor/bin/hw outputs on its own, so without this the callback can
+# run before Soong compiles them. Appending to INTERNAL_RECOVERYIMAGE_FILES
+# (a prerequisite of the recovery ramdisk assembly that runs the callback)
+# makes ninja build them first — single mka pass, no pre-pass, no prebuilts.
+INTERNAL_RECOVERYIMAGE_FILES += \
+    $(TARGET_OUT_VENDOR)/bin/hw/android.hardware.security.keymint-service.trusty \
+    $(TARGET_OUT_VENDOR)/bin/hw/android.hardware.security.keymint-service.rust.trusty \
+    $(TARGET_OUT_VENDOR)/bin/hw/android.hardware.health@2.1-service \
+    $(TARGET_OUT_VENDOR)/lib64/libkeymasterconfig.so
+
 # Workaround
 TARGET_COPY_OUT_VENDOR := vendor

@@ -65,6 +65,11 @@ on init
     start vendor.keymint.rust-trusty
     start vendor.keymint-trusty
 
+    # Start HIDL health HAL (registers IHealth/default for the charger
+    # loop and the HIDL battery branch; no Trusty dependency, but same
+    # early-init block keeps all HAL starts in one place).
+    start vendor.health-hal-2-1
+
     # --- Titan M2 / GSC init ---
     # Wait for GSC device (Titan M2 / Citadel chip — used for Weaver CE keys)
     wait /dev/gsc0 10
@@ -149,6 +154,17 @@ service recovery_weaver /system/bin/sh -c "exec /system/bin/recovery-tensor-daem
     group root
     disabled
     oneshot
+    seclabel u:r:recovery:s0
+
+# HIDL health HAL (provides IHealth/default: charger loop + HIDL battery
+# branch GetBatteryInfo). Generic sysfs-backed 2.1-service from source,
+# staged into /vendor/bin/hw by fox_build_callback.sh. Persistent binder
+# daemon — deliberately NOT oneshot (unlike the keymint entries above).
+service vendor.health-hal-2-1 /vendor/bin/hw/android.hardware.health@2.1-service
+    class early_hal
+    user root
+    group root
+    disabled
     seclabel u:r:recovery:s0
 
 # AIO keymint pre-selection (set by the installer post-unpack, see

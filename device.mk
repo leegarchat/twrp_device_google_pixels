@@ -48,6 +48,13 @@ PRODUCT_PACKAGES += \
     vndservice \
     bootctl
 
+# Battery: HIDL health HAL (charger loop + GetBatteryInfo need IHealth/default).
+# Generic sysfs-backed 2.1-service from source; no vendor blobs. It compiles
+# via PRODUCT_PACKAGES and is staged into the ramdisk by
+# fox_build_callback.sh (NOT via TARGET_RECOVERY_DEVICE_MODULES — the module
+# has no recovery variant upstream, that list silently skips it).
+PRODUCT_PACKAGES += android.hardware.health@2.1-service
+
 # Libraries
 PRODUCT_PACKAGES += \
     libtrusty \
@@ -57,6 +64,10 @@ PRODUCT_PACKAGES += \
 RECOVERY_LIBRARY_SOURCE_FILES += \
     $(TARGET_OUT_SHARED_LIBRARIES)/libsysutils.so
 
+# NOTE: android.hardware.health@2.1-service is intentionally NOT here:
+# the module has no recovery variant upstream, so this list cannot
+# deliver it (silently skipped). It is staged by fox_build_callback.sh
+# from $PRODUCT_OUT instead, with ordering enforced in BoardConfig.mk.
 TARGET_RECOVERY_DEVICE_MODULES += libion
 RECOVERY_LIBRARY_SOURCE_FILES += \
     $(TARGET_OUT_SHARED_LIBRARIES)/libion.so

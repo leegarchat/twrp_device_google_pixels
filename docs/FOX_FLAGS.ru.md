@@ -126,7 +126,7 @@
 | `OF_UNBIND_SDCARD_F2FS=1` | Bind-unmount `/sdcard` перед F2FS-ремонтом/форматом | `=1` (:244) |
 | `OF_BIND_MOUNT_SDCARD_ON_FORMAT=1` | — | `=1` (:245) |
 | `OF_DYNAMIC_FULL_SIZE=8531214336` | Константа full-size (совпадает с `BOARD_SUPER_PARTITION_SIZE`) | (:246) |
-| `OF_USE_LEGACY_BATTERY_SERVICES=1` | Legacy battery HAL (`TW_USE_LEGACY_BATTERY_SERVICES`) | `=1` (:249) |
+| `OF_USE_LEGACY_BATTERY_SERVICES=0` | HIDL-ветка health (`GetBatteryInfo`); нужен `health@2.1-service` в рамдиске (`device.mk`) | `=0` (:249) |
 | `OF_FORCE_DATA_FORMAT_F2FS=1` | Формат только в F2FS | `BoardConfig.mk:215` (mk, не env) |
 | `OF_FL_PATH1="cmd:/system/bin/recovery-pixel-boot torch"` | Хук фонарика на наш Rust-демон | (:216) |
 | `OF_WORKAROUND_BACKUP_BUG=1` | Форсирован `1` в mk | дефолт (не трогаем) |

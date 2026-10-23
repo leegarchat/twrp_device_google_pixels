@@ -514,13 +514,15 @@ fi
 
 echo "[build] DEVICE_BUILD_FLAG=${DEVICE_BUILD_FLAG:-<not set>}"
 
-# KeyMint HAL modules must be built explicitly: vendorbootimage does not pull
-# vendor/bin/hw binaries on its own (ninja graph entries exist via
-# PRODUCT_PACKAGES but intermediates never compile, and the recovery callback
-# finds nothing to copy). AIO always ships both HALs; the wrong one exits
-# harmlessly at runtime.
+# HAL modules must be explicit mka goals: vendorbootimage never pulls
+# vendor/bin/hw outputs on its own. The recovery callback stages the
+# just-built binaries from $PRODUCT_OUT; ordering (callback after Soong
+# compiles them) is enforced via INTERNAL_RECOVERYIMAGE_FILES in
+# BoardConfig.mk — one mka pass, compile from source, no prebuilts.
+# AIO always ships both KeyMint HALs; the wrong one exits harmlessly.
 KEYMINT_MODULE="android.hardware.security.keymint-service.trusty android.hardware.security.keymint-service.rust.trusty"
-BUILD_TARGETS="adbd vendorbootimage $KEYMINT_MODULE"
+HEALTH_MODULE="android.hardware.health@2.1-service"
+BUILD_TARGETS="adbd vendorbootimage $KEYMINT_MODULE $HEALTH_MODULE"
 echo "[build] Keymint modules: $KEYMINT_MODULE"
 
 echo "=============================================="
@@ -559,18 +561,9 @@ if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     fi
 fi
 
-# KeyMint HAL first, alone: the recovery callback copies the vendor output
-# during vendorbootimage assembly and parallel ninja gives no ordering
-# guarantee. The follow-up full mka reuses it (no-op) and builds the rest.
-echo "[build] Building keymint HALs first ($KEYMINT_MODULE) ..."
-mka "$KEYMINT_MODULE" -j"$JOBS" || fox_safe_exit $?
-if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
-    if [[ "$fox_sourced" == true ]]; then
-        return "$SAFE_EXIT_CODE"
-    else
-        exit "$SAFE_EXIT_CODE"
-    fi
-fi
+# Single mka pass: the HAL modules are explicit goals and the recovery
+# ramdisk assembly waits for their outputs (BoardConfig.mk), so the
+# callback copy from $PRODUCT_OUT is deterministic — no pre-pass.
 mka $BUILD_TARGETS -j"$JOBS" || fox_safe_exit $?
 if [[ "$SAFE_EXIT_REQUESTED" == true ]]; then
     if [[ "$fox_sourced" == true ]]; then

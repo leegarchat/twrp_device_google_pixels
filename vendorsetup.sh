@@ -206,7 +206,9 @@ export OF_BIND_MOUNT_SDCARD_ON_FORMAT=1
 export OF_DYNAMIC_FULL_SIZE=8531214336
 
 # --- Battery ---
-export OF_USE_LEGACY_BATTERY_SERVICES=1
+# HIDL health branch (GetBatteryInfo): needs android.hardware.health@2.1-service
+# in the ramdisk (device.mk). Legacy sysfs branch is off on purpose.
+export OF_USE_LEGACY_BATTERY_SERVICES=0
 
 # --- Logging ---
 export OF_DONT_KEEP_LOG_HISTORY=0
