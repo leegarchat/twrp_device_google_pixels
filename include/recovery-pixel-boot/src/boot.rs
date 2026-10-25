@@ -359,20 +359,11 @@ fn prune_touch_modules() {
 
 fn modules_touch_install(cfg: &DeviceConfig, code: &str, suffix: &str, unsuffix: &str, slot: &str, unslot: &str) {
     let want = !cfg.touch_modules.is_empty();
-    // Monolithic kernels (lsmod empty — same live-state predicate as the
-    // USB gate): every driver is built in, there is nothing to inject
-    // and no failure to report. The whole touch module branch is
-    // skipped — touch is interpreted as working — and in particular
-    // the HW GUI fallback never fires. (Haptics *firmware* fetch stays
-    // outside this fork in the caller: files, not modules.)
-    if crate::ko_picker::is_monolithic() {
-        info("modules: monolithic kernel (lsmod empty), touch drivers are built in — skipping module branch");
-        prune_touch_modules();
-        if let Err(e) = crate::temp::run_setup_temp() {
-            warn(&format!("thermal refresh failed: {e}"));
-        }
-        return;
-    }
+    // Inclusion branch always runs: even lsmod-empty kernels (Sultan-style
+    // partial monoliths) accept finit_module, and /lib/modules carries
+    // exact-vermagic .ko that first-stage init refuses via blocklist
+    // (direct finit_module ignores init policy). Haptics *firmware* fetch
+    // stays outside this fork in the caller.
     // 0. Device touch section first: /<code>.lgz -> / populates the OFOX
     // prebuilt dir for step 2. No-op without the section.
     if want {
@@ -412,15 +403,37 @@ fn modules_touch_install(cfg: &DeviceConfig, code: &str, suffix: &str, unsuffix:
         }
         let _ = load_staged(&staged, &cfg.touch_modules);
     }
+    // 1b. Live ramdisk set (/lib/modules): exact-vermagic .ko for the
+    // running kernel (Sultan-style trees ship them here; first-stage init
+    // may refuse them via blocklist, but direct finit_module ignores init
+    // policy). Best-effort, loud per module.
+    {
+        let mut staged = Vec::new();
+        for m in &cfg.touch_modules {
+            collect_ko(Path::new("/lib/modules"), m, &mut staged);
+        }
+        if !staged.is_empty() {
+            info("modules: trying live /lib/modules");
+            let _ = load_staged(&staged, &cfg.touch_modules);
+        }
+    }
     // 2. OFOX-supplied set for this kernel snapshot (only what stock
     // missed; already-injected modules are skipped via the record).
     if want {
         load_touch_prebuilt(&cfg.touch_modules);
     }
-    // 3. Verdict: total miss on every source forces HW GUI mode.
+    // 3. Verdict: total miss on every source forces HW GUI mode — but
+    // only on proven-modular trees (cached verdict: lsmod non-empty AND
+    // live canary). Monolith (true or partial/Sultan-style) tolerates
+    // the miss: drivers may be built in under another name, triggered
+    // by name, or hidden from lsmod.
     if want && !check_modules_loaded(&cfg.touch_modules) {
-        error("modules: final failure, still missing");
-        force_hw_gui_fallback();
+        if !crate::ko_picker::is_monolith_cached() {
+            error("modules: final failure, still missing");
+            force_hw_gui_fallback();
+        } else {
+            warn("modules: final miss, but monolithic/partially-monolithic kernel — tolerating, no HW GUI fallback");
+        }
     }
     // 4. RAM diet: drop unpacked snapshots this boot did not inject.
     // The /<code>.lgz archive itself stays (reflash re-appends it).
