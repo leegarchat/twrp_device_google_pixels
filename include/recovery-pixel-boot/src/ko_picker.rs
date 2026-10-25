@@ -466,11 +466,111 @@ pub fn loaded_module_names() -> Vec<String> {
 /// Monolithic-for-our-purposes: lsmod is empty, so there is nothing
 /// version-sensitive in play — every driver we could inject is either
 /// built in or was never staged. This is the same live-state predicate
-/// the USB gate uses, and the touch branch must agree with it: on
-/// monolith the whole module-injection branch is skipped, touch is
-/// interpreted as working, and the HW GUI fallback never fires.
+/// the USB gate uses. NOTE: lsmod content alone is not trusted for
+/// loadability (root-hiding kernels fake it empty) — the touch verdict
+/// additionally probes real inclusion via [`module_inclusion_works`].
 pub fn is_monolithic() -> bool {
     loaded_module_names().is_empty()
+}
+
+/// Canary module proving this kernel really runs our .ko files.
+/// Strict finit_module, never forced: a side-effect-free empty module
+/// built for the exact running kernel (GKI vermagic). The verdict is the
+/// /proc trace it leaves, NOT the syscall return code — Sultan's
+/// integrated-modules path fakes RC=0 for unknown modules without ever
+/// running init. Pure evidence, unlike lsmod content (faked empty too).
+pub const PROBE_MODULE: &str = "empty_checker_module";
+/// Ramdisk prebuilt canaries, same <kver>/<android>/<pagesize> layout
+/// as the other module sets (scored by find_candidates).
+pub const PROBE_ROOT: &str = "/system/lib64/modules/probe";
+/// The trace the canary leaves iff its init really ran.
+pub const PROBE_PROC: &str = "/proc/empty_check_gki";
+
+/// Human-readable cause for a rejected canary (triage aid, pure).
+pub fn classify_probe_error(e: &Error) -> &'static str {
+    match e.raw_os_error() {
+        // Kernel has no module support at all (true monolith).
+        Some(libc::ENOSYS) => "ENOSYS (kernel has no module support)",
+        // vermagic mismatch: foreign tree (e.g. GKI canary on Sultan).
+        Some(libc::ENOEXEC) => "ENOEXEC (vermagic mismatch, foreign tree)",
+        Some(libc::EPERM) | Some(libc::EACCES) => "permission denied",
+        Some(libc::ENOENT) => "no such file or device",
+        _ => "rejected",
+    }
+}
+
+fn probe_inclusion_once() -> bool {
+    const TAG: &str = "probe";
+    // Already proven this boot (the file persists after a real load).
+    if Path::new(PROBE_PROC).exists() {
+        return true;
+    }
+    let env = match detect_kernel_env() {
+        Ok(e) => e,
+        Err(e) => {
+            log_msg(TAG, "WARN", &format!("uname failed ({e}), falling back to lsmod"));
+            return !is_monolithic();
+        }
+    };
+    let cands = find_candidates(Path::new(PROBE_ROOT), PROBE_MODULE, &env);
+    let Some(best) = cands.first() else {
+        log_msg(
+            TAG,
+            "WARN",
+            "no canary shipped for this kernel, falling back to lsmod",
+        );
+        return !is_monolithic();
+    };
+    // Attempt the load, but judge by the EFFECT, not the return code:
+    // Sultan's integrated-modules path fakes RC=0 for unknown modules
+    // without running init, so only the /proc trace proves inclusion.
+    match load_kernel_module(best) {
+        Ok(()) => log_msg(TAG, "INFO", "canary insmod returned Ok, checking trace"),
+        Err(e) => log_msg(
+            TAG,
+            "INFO",
+            &format!("canary insmod failed ({})", classify_probe_error(&e)),
+        ),
+    }
+    if Path::new(PROBE_PROC).exists() {
+        record_loaded_module(PROBE_MODULE);
+        log_msg(TAG, "INFO", "canary live (/proc/empty_check_gki present) — modular tree, misses are real");
+        true
+    } else {
+        log_msg(TAG, "INFO", "canary left no trace — partial monolith, misses tolerated");
+        false
+    }
+}
+
+/// Cached answer for this boot: a second insmod would just hit EEXIST.
+pub fn module_inclusion_works() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(probe_inclusion_once)
+}
+
+/// Final cached monolith verdict for the boot: /proc/modules absent,
+/// lsmod empty, or canary left no trace. The kernel cannot change at
+/// runtime, so fix it once at first use. Custom modules (OTG shims,
+/// susfs) are ignored on monolith; the touch branch tolerates misses.
+pub fn is_monolith_cached() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        const TAG: &str = "monolith";
+        if !modules_supported() {
+            log_msg(TAG, "INFO", "no /proc/modules — true monolith");
+            return true;
+        }
+        if is_monolithic() {
+            log_msg(TAG, "INFO", "lsmod empty — monolith");
+            return true;
+        }
+        if !module_inclusion_works() {
+            log_msg(TAG, "INFO", "canary left no trace — partial monolith");
+            return true;
+        }
+        log_msg(TAG, "INFO", "modular tree (lsmod + live canary) — strict");
+        false
+    })
 }
 
 /// `vermagic=` triplet out of raw .ko bytes ("6.1.157-android14-..." ->
@@ -539,12 +639,9 @@ pub fn is_module_recorded(module_name: &str) -> bool {
 
 /// Pick the best .ko for this kernel and load it.
 /// Returns true when loaded or already loaded.
+/// On monolith (true or partial/Sultan-style) custom modules are ignored:
+/// built-ins already hit the checks above, anything else is unavailable.
 pub fn ko_try_load(module_name: &str, proc_entry: Option<&str>, tag: &str) -> bool {
-    // Monolithic kernel (CONFIG_MODULES=n): nothing to do.
-    if !Path::new("/proc/modules").exists() {
-        log_msg(tag, "INFO", "monolithic kernel (/proc/modules absent), skipping");
-        return true;
-    }
     if let Some(pe) = proc_entry {
         if Path::new(pe).exists() {
             record_loaded_module(module_name);
@@ -554,6 +651,10 @@ pub fn ko_try_load(module_name: &str, proc_entry: Option<&str>, tag: &str) -> bo
     if is_module_loaded(module_name) {
         record_loaded_module(module_name);
         return true;
+    }
+    if is_monolith_cached() {
+        log_msg(tag, "INFO", &format!("monolith, ignoring custom module {module_name}"));
+        return false;
     }
     let env = match detect_kernel_env() {
         Ok(e) => e,
@@ -610,6 +711,24 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn probe_error_classification() {
+        // ENOSYS = true monolith (no finit_module at all).
+        assert_eq!(
+            classify_probe_error(&Error::from_raw_os_error(libc::ENOSYS)),
+            "ENOSYS (kernel has no module support)"
+        );
+        // ENOEXEC = vermagic mismatch: GKI canary on a foreign tree.
+        assert_eq!(
+            classify_probe_error(&Error::from_raw_os_error(libc::ENOEXEC)),
+            "ENOEXEC (vermagic mismatch, foreign tree)"
+        );
+        assert_eq!(
+            classify_probe_error(&Error::from_raw_os_error(libc::EPERM)),
+            "permission denied"
+        );
     }
 
     #[test]
