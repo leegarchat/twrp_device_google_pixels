@@ -72,6 +72,10 @@ const OTG_ID: &str = "/sys/devices/platform/11210000.usb/dwc3_exynos_otg_id";
 const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value";
 const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
+/// In-kernel VBUS bridge (custom kernels without DEBUG_FS): the built-in
+/// shim votes CHARGER_MODE from kernel space. GKI uses the debugfs voter
+/// above instead; this node only exists on built-in shim builds.
+const PROC_VBUS: &str = "/proc/otg_vbus";
 /// Created at runtime by usb_psy.ko (`usb_psy_desc.name = "usb"`,
 /// usb_psy.c:562-563; DT `usb-psy-name = "usb"`).
 const VBUS_PATHS: &[&str] = &[
@@ -233,6 +237,10 @@ fn native_activate() -> Result<(), String> {
         info("forcing VBUS via gvotable CHARGER_MODE");
         let _ = std::fs::write(CHARGER_VALUE, b"49\n");
         let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    } else if Path::new(PROC_VBUS).exists() {
+        // Custom kernel without DEBUG_FS: same vote via the in-kernel bridge.
+        info("forcing VBUS via in-kernel /proc/otg_vbus bridge");
+        let _ = std::fs::write(PROC_VBUS, b"1\n");
     } else {
         info("native: no CHARGER_MODE voter (no VBUS force?)");
     }
@@ -436,6 +444,9 @@ fn switch_to_host(current: &mut String) {
     if Path::new(CHARGER_VALUE).exists() {
         let _ = std::fs::write(CHARGER_VALUE, b"49\n");
         let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    } else if Path::new(PROC_VBUS).exists() {
+        // Custom kernel without DEBUG_FS: same 49/on vote via the in-kernel bridge.
+        let _ = std::fs::write(PROC_VBUS, b"1\n");
     } else {
         info("host: no CHARGER_MODE voter (no VBUS force?)");
     }
@@ -467,6 +478,8 @@ fn switch_to_device(current: &mut String) {
     info(">>> SWITCHING TO DEVICE MODE <<<");
     if Path::new(CHARGER_ACTIVE).exists() {
         let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    } else if Path::new(PROC_VBUS).exists() {
+        let _ = std::fs::write(PROC_VBUS, b"0\n");
     }
     // OTG_ID restore is a 6.1-only step (we asserted it there); on native
     // 6.12 the role switch owns the mode and OTG_ID stays untouched.

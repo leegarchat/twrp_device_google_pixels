@@ -60,6 +60,10 @@ const OTG_ID: &str = "/sys/devices/platform/11210000.usb/dwc3_exynos_otg_id";
 const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value";
 const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
+/// In-kernel VBUS bridge (Sultan path, no debugfs): the built-in shim votes
+/// CHARGER_MODE itself, recovery drives it here. GKI uses the debugfs voter
+/// above instead; this node only exists on built-in shim builds.
+const PROC_VBUS: &str = "/proc/otg_vbus";
 /// Created at runtime by the charger driver (usb_psy).
 const VBUS_PATHS: &[&str] = &[
     "/sys/class/power_supply/usb/online",
@@ -401,6 +405,10 @@ fn switch_to_host(current: &mut String) {
     if Path::new(CHARGER_VALUE).exists() {
         let _ = std::fs::write(CHARGER_VALUE, b"49\n");
         let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    } else if Path::new(PROC_VBUS).exists() {
+        // Sultan (no DEBUG_FS): the built-in shim votes CHARGER_MODE
+        // from kernel space, same 49/on semantics as the debugfs voter.
+        let _ = std::fs::write(PROC_VBUS, b"1\n");
     } else {
         info("host: no CHARGER_MODE voter (no VBUS force?)");
     }
@@ -429,6 +437,8 @@ fn switch_to_device(current: &mut String) {
     info(">>> SWITCHING TO DEVICE MODE <<<");
     if Path::new(CHARGER_ACTIVE).exists() {
         let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    } else if Path::new(PROC_VBUS).exists() {
+        let _ = std::fs::write(PROC_VBUS, b"0\n");
     }
     // OTG_ID restore is a 6.1-only step (we asserted it there); on native
     // 6.12 the role switch owns the mode and OTG_ID stays untouched.
