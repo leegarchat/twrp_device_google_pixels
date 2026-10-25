@@ -316,17 +316,13 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 		return FoxHighSpeedResult::kNotApplicable;
 
 	// ADB sideload serves /sideload/package.zip as an on-demand FUSE
-	// stream (single-block cache, every miss is a host round-trip).
-	// The engine needs thousands of random preads over gigabytes,
-	// which either stalls for hours or ends in EIO -> hard abort.
-	// The stock update_engine_sideload path is designed for exactly
-	// this stream (single seek + sequential read), so decline before
-	// fork() and let it through. Same prefix style as the digest
-	// skip in TWinstall_zip below.
-	if (package.compare(0, 9, "/sideload") == 0) {
-		LOGINFO("hs: sideload package, stock update_engine path\n");
-		return FoxHighSpeedResult::kNotApplicable;
-	}
+	// stream. The FUSE layer keeps a 32 MiB LRU block cache (see the
+	// fuse_sideload patch), so the engine's parallel preads no longer
+	// evict each other and refetch every block over usb. Sideload
+	// packages therefore take the same HS path as local zips when the
+	// toggle is on; with the toggle off the check above already
+	// declined, so sideload without the toggle is unchanged (stock
+	// update_engine_sideload path).
 
 	// Live-slot guard turned normalizer: never flash the physically booted
 	// slot. Booted is the /tmp snapshot truth (never ro.boot.* / bootctl,

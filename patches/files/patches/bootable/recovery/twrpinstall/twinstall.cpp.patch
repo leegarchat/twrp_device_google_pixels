@@ -1,6 +1,6 @@
 --- a/bootable/recovery/twrpinstall/twinstall.cpp
 +++ b/bootable/recovery/twrpinstall/twinstall.cpp
-@@ -282,6 +282,245 @@
+@@ -282,6 +282,241 @@
  	return INSTALL_SUCCESS;
  }
  
@@ -38,17 +38,13 @@
 +		return FoxHighSpeedResult::kNotApplicable;
 +
 +	// ADB sideload serves /sideload/package.zip as an on-demand FUSE
-+	// stream (single-block cache, every miss is a host round-trip).
-+	// The engine needs thousands of random preads over gigabytes,
-+	// which either stalls for hours or ends in EIO -> hard abort.
-+	// The stock update_engine_sideload path is designed for exactly
-+	// this stream (single seek + sequential read), so decline before
-+	// fork() and let it through. Same prefix style as the digest
-+	// skip in TWinstall_zip below.
-+	if (package.compare(0, 9, "/sideload") == 0) {
-+		LOGINFO("hs: sideload package, stock update_engine path\n");
-+		return FoxHighSpeedResult::kNotApplicable;
-+	}
++	// stream. The FUSE layer keeps a 32 MiB LRU block cache (see the
++	// fuse_sideload patch), so the engine's parallel preads no longer
++	// evict each other and refetch every block over usb. Sideload
++	// packages therefore take the same HS path as local zips when the
++	// toggle is on; with the toggle off the check above already
++	// declined, so sideload without the toggle is unchanged (stock
++	// update_engine_sideload path).
 +
 +	// Live-slot guard turned normalizer: never flash the physically booted
 +	// slot. Booted is the /tmp snapshot truth (never ro.boot.* / bootctl,
@@ -246,7 +242,7 @@
  int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
  {
    int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
-@@ -433,7 +672,53 @@
+@@ -433,7 +668,53 @@
  		ZipEntry64 ab_binary_entry;
  		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
  			LOGINFO("AB zip\n");
@@ -301,7 +297,7 @@
  			// We need this so backuptool can do its magic
  			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
  			bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
-@@ -461,12 +746,21 @@
+@@ -461,12 +742,21 @@
  				PartitionManager.UnMount_By_Path("/vendor", false);
  			if (!system_mount_state)
  				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);

@@ -1,16 +1,19 @@
 --- a/bootable/recovery/gui/theme/common/languages/ru.xml
 +++ b/bootable/recovery/gui/theme/common/languages/ru.xml
-@@ -62,6 +62,9 @@
+@@ -62,6 +62,12 @@
  		<string name="file">Файл</string>
  		<string name="zip_sig_chk">Проверка ZIP сигнатуры</string>
  		<string name="inject_twrp_chk">Интегрировать OrangeFox после установки</string>
 +		<string name="high_speed_flash_chk">Быстрая прошивка (экспериментально)</string>
 +		<string name="live_switch_chk">Живое переключение слота (экспериментально)</string>
++		<string name="hs_failed">Быстрая прошивка не удалась. Подробности в логе.</string>
++		<string name="hs_no_booted_slot">Не могу прочитать загруженный слот. Отказываюсь прошивать.</string>
++		<string name="hs_slot_fail">Обновление записано, но переключение слота не удалось.</string>
 +		<string name="slot_live_reswitch">Цель — живой загруженный слот; переключаюсь обратно на него и продолжаю.</string>
  		<string name="install_reboot_chk">Перезагрузка по окончании</string>
  		<string name="options_hdr">Настройки</string>
  		<string name="zip_queue">Очередь</string>
-@@ -764,6 +767,7 @@
+@@ -764,6 +770,7 @@
  		<string name="unable_set_boot_slot">Ошибка изменения загрузочного слота {1}</string>
  		<string name="flash_ab_inactive">Прошивка A/B ZIP в неактивный слот: {1}</string>
  		<string name="flash_ab_reboot">Чтобы прошить дополнительные ZIP, перезагрузите рекавери, чтобы переключить слот.</string>

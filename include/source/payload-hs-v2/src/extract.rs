@@ -58,9 +58,6 @@ fn decode(typ: u32, blob: Vec<u8>) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Fetch one op blob, verify its data hash, decode it. Returns the plain
-/// bytes, which must be exactly `expanded` long (checked by the caller
-/// via dst extents).
 pub fn fetch_decode(
     zip_path: &str,
     data_start: u64,
@@ -218,23 +215,30 @@ pub fn extract_partition_into(
 /// SHA-256 of the first `size` bytes of a node/file, to check against
 /// new_partition_info.hash. Block nodes may be larger than the payload
 /// image they carry, so the hash window must be explicit.
-pub fn sha256_file_n(path: &str, size: u64) -> Result<[u8; 32], String> {
+/// Also reports whether every byte read was zero (sanity: a real image
+/// is never all zeros; hashing already touches every byte, so this is
+/// a free piggyback with no extra I/O).
+pub fn sha256_file_n(path: &str, size: u64) -> Result<([u8; 32], bool), String> {
     use sha2::Digest;
     let mut f = File::open(path).map_err(|e| format!("open: {e}"))?;
     let mut h = sha2::Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
     let mut left = size;
+    let mut all_zero = size > 0;
     while left > 0 {
         let n = (left as usize).min(buf.len());
         f.read_exact(&mut buf[..n])
             .map_err(|e| format!("read: {e}"))?;
+        if all_zero && buf[..n].iter().any(|&b| b != 0) {
+            all_zero = false;
+        }
         h.update(&buf[..n]);
         left -= n as u64;
     }
     let sum = h.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&sum);
-    Ok(out)
+    Ok((out, all_zero))
 }
 
 /// SHA-256 of a finished image, to check against new_partition_info.hash.

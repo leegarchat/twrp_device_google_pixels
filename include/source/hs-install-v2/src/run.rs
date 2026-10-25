@@ -18,8 +18,40 @@ pub struct Args {
     pub readback: bool,
 }
 
-pub fn flag(args: &[String], name: &str) -> Option<String> {
-    // Both "--flag value" and "--flag=value" forms (the installer execs
+/// Self RSS/peak + system MemAvailable, for RAM-budget tuning from the
+/// field logs. All values in MiB; zeros on parse failure (never fatal).
+pub fn mem_snapshot() -> String {    let (rss, hwm) = std::fs::read_to_string("/proc/self/status")
+        .map(|s| {
+            let mut rss = 0u64;
+            let mut hwm = 0u64;
+            for line in s.lines() {
+                let mut it = line.split_whitespace();
+                match (it.next(), it.next()) {
+                    (Some("VmRSS:"), Some(v)) => rss = v.parse().unwrap_or(0) / 1024,
+                    (Some("VmHWM:"), Some(v)) => hwm = v.parse().unwrap_or(0) / 1024,
+                    _ => {}
+                }
+            }
+            (rss, hwm)
+        })
+        .unwrap_or((0, 0));
+    let avail = std::fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|s| {
+            s.lines().find_map(|l| {
+                l.strip_prefix("MemAvailable:").and_then(|r| {
+                    r.split_whitespace()
+                        .next()
+                        .and_then(|v| v.parse::<u64>().ok())
+                })
+            })
+        })
+        .unwrap_or(0)
+        / 1024;
+    format!("rss {rss}MB peak {hwm}MB avail {avail}MB")
+}
+
+pub fn flag(args: &[String], name: &str) -> Option<String> {    // Both "--flag value" and "--flag=value" forms (the installer execs
     // the glued form; humans type the split one).
     let glued = format!("{name}=");
     let mut it = args.iter().peekable();
@@ -69,7 +101,7 @@ pub fn run(a: Args) -> i32 {
             crate::EXIT_FAIL,
         );
     }
-    out.ui_print(&format!("device={device} guest slot=_{target}"));
+    out.log(&format!("device={device} guest slot=_{target}"));
 
     // --- 1. device gate: pre-device must match (hard error, no fallback) ---
     if let Err(e) = ota::check_device(&a.zip, &device) {
@@ -160,7 +192,7 @@ pub fn run(a: Args) -> i32 {
         }
     }
     let fit = layout::strictest(&plans);
-    out.ui_print(&format!("fit {}", fit.code()));
+    out.log(&format!("fit {}", fit.code()));
     let kill: Vec<String> = match &fit {
         layout::FitPlan::AsIs => Vec::new(),
         layout::FitPlan::Kill(k) => k.clone(),
@@ -185,7 +217,7 @@ pub fn run(a: Args) -> i32 {
         }
     };
     if !kill.is_empty() {
-        out.ui_print(&format!("reclaim: {}", kill.join(",")));
+        out.log(&format!("reclaim: {}", kill.join(",")));
     }
 
     // --- 5. order: weights; backup critical (2+4) of the TARGET slot ---
@@ -254,7 +286,7 @@ pub fn run(a: Args) -> i32 {
     for p in parts.iter().filter(|p| weights::is_critical(w_of(&p.name))) {
         if let Some((node, size)) = present_target(&p.name) {
             let file = format!("{}/{}.img", a.tmpdir, p.name);
-            out.ui_print(&format!("backup {}", p.name));
+            out.log(&format!("backup {}", p.name));
             if let Err(e) = backup::dump(&node, &file, size) {
                 return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
             }
@@ -269,7 +301,7 @@ pub fn run(a: Args) -> i32 {
     }
 
     // --- 6. rebuild, single thread: unmount+unmap victims, remove, create, map ---
-    out.ui_print("rebuilding target group (single-threaded)");
+    out.log("rebuilding target group (single-threaded)");
     let mut to_remove: Vec<String> = kill.clone();
     if let Some(m) = &dm {
         for g in &m.groups {
@@ -284,7 +316,7 @@ pub fn run(a: Args) -> i32 {
     // refused while any dm mapping holds the device. Removals happen
     // only after the table is fully unmapped.
     match rebuild::unmount_unmap_all(&siw, &live) {
-        Ok(gone) => out.ui_print(&format!("unmapped {} dm node(s)", gone.len())),
+        Ok(gone) => out.log(&format!("unmapped {} dm node(s)", gone.len())),
         Err(e) => return fail(&mut out, &e, crate::EXIT_FAIL),
     }
     for full in &to_remove {
@@ -387,7 +419,7 @@ pub fn run(a: Args) -> i32 {
                         } else {
                             format!("open {node}: {e}")
                         };
-                        out.ui_print(&format!("Step {w} FAILED: {msg}"));
+                        out.log(&format!("Step {w} FAILED: {msg}"));
                         // Rollback restores critical (2+4) nodes; weight 1
                         // (super group) has no restorable state yet, and its
                         // Fresh ledger would delete just-rebuilt entries.
@@ -450,18 +482,146 @@ pub fn run(a: Args) -> i32 {
             _ => (0.85, 0.95),
         };
         // The verify phase (fsync + re-read + sha256 over gigabytes)
-        // is wall-time heavy but emitted nothing: the bar froze at the
-        // band ceiling until "stage done". Reserve the top slice of the
-        // band for it and tick per partition.
-        let vrfy = 0.02f64.min((hi - lo) * 0.25);
+        // runs inline per partition (see finalize_part) while the rest of
+        // the batch still decodes, so the bar must not reserve a slice
+        // for it: decode owns the whole band, the close-out tick below
+        // caps it.
         let btotal = batch_totals.get(w).copied().unwrap_or(0).max(1);
         let out_mtx = std::sync::Mutex::new(&mut out);
+        // Inline per-partition finalize (otaripper-style): the worker
+        // that finishes a partition's LAST op fsyncs its node and checks
+        // its hash right away, while the other workers keep decoding
+        // the remaining partitions. The old code did all of this in one
+        // sequential pass after the batch drained, which roughly doubled
+        // the wall time on large stages. No extra pass is needed for the
+        // hash itself: it is re-read from the hot page cache, and the
+        // fsyncs now overlap each other and the tail of the decode.
+        let final_ms = std::sync::atomic::AtomicU64::new(0);
+        let first_err = std::sync::Mutex::new(None::<String>);
+        let by_name: HashMap<&str, &manifest::Part> =
+            batch.iter().map(|p| (p.name.as_str(), *p)).collect();
+        let mut remaining: HashMap<&str, std::sync::atomic::AtomicUsize> =
+            HashMap::new();
+        for t in tasks.iter() {
+            remaining
+                .entry(t.part)
+                .or_insert_with(|| std::sync::atomic::AtomicUsize::new(0))
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        let finalize_part = |name: &str| {
+            use std::sync::atomic::Ordering;
+            let t0 = std::time::Instant::now();
+            let Some(p) = by_name.get(name) else {
+                return;
+            };
+            if let Ok(mut g) = out_mtx.lock() {
+                g.log(&format!("verifying {}", p.name));
+            }
+            let fail_here = |msg: String| {
+                if let Ok(mut g) = first_err.lock() {
+                    if g.is_none() {
+                        *g = Some(msg);
+                    }
+                }
+            };
+            // Hash BEFORE fsync, not after: the just-written pages are
+            // still hot dirty cache here; fsync first would clean them
+            // and let memory pressure evict them, turning the check into
+            // cold UFS reads fighting the still-running decode workers.
+            // Page cache is coherent either way, so the order only
+            // affects speed, never correctness.
+            // Super-group members (weight 1, the bulk of the gigabytes)
+            // skip the re-read entirely: every one of their bytes already
+            // passed its per-op data_hash on the way in, and the re-read
+            // of gigabytes is pure competing traffic. Boot/modem/rest
+            // keep the full check (small, critical).
+            let is_super = group_of.contains_key(p.name.as_str());
+            if p.new_hash.len() == 32 && !is_super {
+                // Re-read + hash from the node (post-fsync) and compare
+                // against new_partition_info.hash. Fresh page cache makes
+                // this cheap; torn writes surface here instead of booting
+                // into them.
+                match payload_hs::extract::sha256_file_n(
+                    &node_of[&p.name],
+                    p.out_size(bs),
+                ) {
+                    Ok((sum, all_zero)) => {
+                        // Sanity (otaripper parity): a real image is never
+                        // all zeros — even an empty filesystem carries a
+                        // superblock. All-zero means a corrupt package or
+                        // a botched write, regardless of the hash below.
+                        if all_zero {
+                            fail_here(format!(
+                                "{}: image is all zeros (corrupt package or failed write)",
+                                p.name
+                            ));
+                            return;
+                        }
+                        if sum[..] != p.new_hash[..] {
+                            fail_here(format!(
+                                "{}: sha256 mismatch (media or decode error)",
+                                p.name
+                            ));
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        fail_here(format!("hash {}: {e}", p.name));
+                        return;
+                    }
+                }
+            } else if is_super {
+                if let Ok(mut g) = out_mtx.lock() {
+                    g.log(&format!("verify skipped (super): {}", p.name));
+                }
+            }
+            if let Err(e) = backup::fsync_node(&node_of[&p.name]) {
+                fail_here(format!("fsync {}: {e}", p.name));
+                return;
+            }
+            // --readback: BLKFLSBUF + re-read hash from storage (not page
+            // cache). Only when asked: it doubles partition I/O.
+            if a.readback {
+                let node = &node_of[&p.name];
+                match backup::readback_hash(node, p.out_size(bs)) {
+                    Ok(sum) => {
+                        if p.new_hash.len() == 32 && sum[..] != p.new_hash[..] {
+                            fail_here(format!(
+                                "{}: readback sha256 mismatch",
+                                p.name
+                            ));
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        fail_here(format!("{}: readback failed: {e}", p.name));
+                        return;
+                    }
+                }
+                if let Ok(mut g) = out_mtx.lock() {
+                    g.log(&format!("readback ok: {}", p.name));
+                }
+            }
+            // No bar tick here by design: decode owns the whole band and
+            // still creeps toward `hi` while the big partition grinds.
+            // A verify tick for an early small partition would yank the
+            // bar to the ceiling mid-stage and freeze it there (the
+            // reported judder). The band closes with one set_progress(hi)
+            // after the barrier below.
+            final_ms.fetch_add(
+                t0.elapsed().as_millis() as u64,
+                Ordering::Relaxed,
+            );
+        };
         // Piecewise credit shared by every write site below (ZERO chunks,
         // REPLACE pieces, end-of-task remainder): bytes are credited as
         // actually written, so even a lone thread chewing one giant op
         // ticks the bar instead of freezing it. Emission only on
         // high-water-mark cross (0.5% bar steps), same gate as before.
-        let span = hi - lo - vrfy;
+        // Decode owns the whole band (span = hi - lo, no verify
+        // reservation): the inline finalize emits no ticks, the band
+        // closes with set_progress(hi) after the barrier.
+        let span = hi - lo;
         let credit = |bytes: u64| {
             if bytes == 0 {
                 return;
@@ -477,6 +637,7 @@ pub fn run(a: Args) -> i32 {
                 }
             }
         };
+        let t_dec0 = std::time::Instant::now();
         let res: Vec<Result<(), String>> = pool.install(|| {
             use rayon::prelude::*;
             tasks
@@ -516,20 +677,11 @@ pub fn run(a: Args) -> i32 {
                         }
                         drop(f);
                     } else {
-                        // Giant ops decode atomically (no progress while
-                        // crabz2 runs), then tick per 8 MiB of writes.
-                        // Announce them so a quiet bar tail is explained
-                        // instead of looking hung.
-                        if t.expanded > (64 << 20) {
-                            if let Ok(mut g) = out_mtx.lock() {
-                                g.log(&format!(
-                                    "large op: {} op {} ({} MB), decoding",
-                                    t.part,
-                                    t.op_i,
-                                    t.expanded / 1_000_000
-                                ));
-                            }
-                        }
+                        // Whole-op fetch + decode (classic path): one big
+                        // sequential read per op, decode from RAM. The
+                        // streaming variant proved I/O-equal on paper but
+                        // ~2x slower on-device in threads; with gigabytes
+                        // of free RAM there is no reason to bound op RAM.
                         let plain =
                             payload_hs::extract::fetch_decode(&a.zip, layout.data_start, t.op)
                                 .map_err(|e| format!("{tag}: {e}"))?;
@@ -573,13 +725,23 @@ pub fn run(a: Args) -> i32 {
                     // Remainder of the bulk credit (zero when piecewise
                     // sites above already accounted every byte).
                     credit(t.expanded.saturating_sub(credited));
+                    // Last finished op of this partition: finalize it
+                    // inline (fsync + hash overlap the remaining decode).
+                    if let Some(rem) = remaining.get(t.part) {
+                        use std::sync::atomic::Ordering;
+                        if rem.fetch_sub(1, Ordering::SeqCst) == 1 {
+                            finalize_part(t.part);
+                        }
+                    }
                     Ok(())
                 })
                 .collect()
         });
-        drop(out_mtx);
         // barrier: every op must validate, else finish batch and roll back.
         // collect() waits for all workers: the batch always drains fully.
+        // (No explicit drop(out_mtx) here: the inline finalize hook above
+        // still borrows it for the zero-task partitions below; NLL ends
+        // the borrow before `out` is used directly.)
         let mut failed: Option<String> = None;
         for r in res {
             if let Err(e) = r {
@@ -588,8 +750,29 @@ pub fn run(a: Args) -> i32 {
                 }
             }
         }
+        // Partitions with no op tasks (every op was DISCARD) never ran
+        // the inline hook above: finalize them here, same routine.
+        for p in batch.iter().filter(|p| !remaining.contains_key(p.name.as_str())) {
+            finalize_part(&p.name);
+        }
+        // Merge finalize errors with task errors: either way the batch
+        // failed (rollback below, slot NOT switched).
+        // Timing: decode wall vs inline finalize sum (the latter ran
+        // overlapped with decode, so it is NOT additive — it only shows
+        // where the wall time went).
+        out.log(&format!(
+            "batch {w}: decode {}ms, finalize {}ms (overlapped) | {}",
+            t_dec0.elapsed().as_millis(),
+            final_ms.load(std::sync::atomic::Ordering::Relaxed),
+            mem_snapshot()
+        ));
+        let failed = match (failed, first_err.lock().map(|mut g| g.take())) {
+            (Some(e), _) => Some(e),
+            (None, Ok(Some(e))) => Some(e),
+            (None, _) => None,
+        };
         if let Some(e) = failed {
-            out.ui_print(&format!("Step {w} FAILED: {e}"));
+            out.log(&format!("Step {w} FAILED: {e}"));
             if *w != 1 {
                 rollback(&mut out, &siw, &backed);
             }
@@ -599,82 +782,13 @@ pub fn run(a: Args) -> i32 {
                 crate::EXIT_FAIL,
             );
         }
-        // Verify phase, merged per partition (fsync then hash): each
-        // node costs seconds on gigabytes of flash, so tick the
-        // reserved band slice here instead of freezing at the ceiling.
-        let vhi = hi - vrfy;
-        let n_verify = batch.len().max(1) as f64;
-        for (i, p) in batch.iter().enumerate() {
-            out.log(&format!("verifying {}", p.name));
-            if let Err(e) = backup::fsync_node(&node_of[&p.name]) {
-                if *w != 1 {
-                    rollback(&mut out, &siw, &backed);
-                }
-                return fail(&mut out, &format!("fsync {}: {e}", p.name), crate::EXIT_FAIL);
-            }
-            // Re-read + hash from the node (post-fsync) and compare against
-            // new_partition_info.hash. Fresh page cache makes this cheap;
-            // torn writes surface here instead of booting into them.
-            let sum = match payload_hs::extract::sha256_file_n(
-                &node_of[&p.name],
-                p.out_size(bs),
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    if *w != 1 {
-                        rollback(&mut out, &siw, &backed);
-                    }
-                    return fail(&mut out, &format!("hash {}: {e}", p.name), crate::EXIT_FAIL);
-                }
-            };
-            if p.new_hash.len() == 32 && sum[..] != p.new_hash[..] {
-                if *w != 1 {
-                    rollback(&mut out, &siw, &backed);
-                }
-                return fail(
-                    &mut out,
-                    &format!("{}: sha256 mismatch (media or decode error)", p.name),
-                    crate::EXIT_FAIL,
-                );
-            }
-            out.set_progress(vhi + vrfy * (i + 1) as f64 / n_verify);
-        }
-        // --readback: BLKFLSBUF + re-read hash from storage (not page
-        // cache). Only when asked: it doubles batch I/O.
-        if a.readback {
-            for p in batch.iter() {
-                let node = &node_of[&p.name];
-                match backup::readback_hash(node, p.out_size(bs)) {
-                    Ok(sum) => {
-                        if p.new_hash.len() == 32 && sum[..] != p.new_hash[..] {
-                            if *w != 1 {
-                                rollback(&mut out, &siw, &backed);
-                            }
-                            return fail(
-                                &mut out,
-                                &format!("{}: readback sha256 mismatch", p.name),
-                                crate::EXIT_FAIL,
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        if *w != 1 {
-                            rollback(&mut out, &siw, &backed);
-                        }
-                        return fail(
-                            &mut out,
-                            &format!("{}: readback failed: {e}", p.name),
-                            crate::EXIT_FAIL,
-                        );
-                    }
-                }
-            }
-            out.log(&format!("batch {w}: readback ok"));
-        }
+        // Band close-out: decode crept here all stage; plant the flag.
+        out.set_progress(hi);
         out.log(&format!("stage {w} done"));
     }
 
     // --- 8. done: sync, leave the slot switch to the caller ---
+    out.log(&format!("done | {}", mem_snapshot()));
     out.log("syncing");
     unsafe { libc::sync() };
     out.set_progress(1.0);
@@ -703,11 +817,11 @@ fn rollback(out: &mut Out, siw: &str, backed: &[Backed]) {
     for b in backed {
         match b {
             Backed::Dump { node, file } => match backup::restore(file, node) {
-                Ok(()) => out.ui_print(&format!("rollback ok: {node}")),
+                Ok(()) => out.log(&format!("rollback ok: {node}")),
                 Err(e) => out.ui_print(&format!("rollback FAILED {node}: {e}")),
             },
             Backed::Fresh { full } => match rebuild::remove_meta(siw, full) {
-                Ok(()) => out.ui_print(&format!("rollback removed fresh {full}")),
+                Ok(()) => out.log(&format!("rollback removed fresh {full}")),
                 Err(e) => {
                     out.ui_print(&format!("rollback FAILED {full}: {e}"))
                 }

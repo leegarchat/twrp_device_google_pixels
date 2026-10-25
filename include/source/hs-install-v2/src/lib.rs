@@ -32,8 +32,12 @@ pub const EXIT_USAGE: i32 = 6;
 
 /// Line sink: status fd when given (--status-fd N, inherited pipe),
 /// stdout otherwise. Mirrors the updater/recovery wire protocol.
+/// Human-readable lines (ui_print/log) carry a [t=seconds] stamp so a
+/// single recovery.log gives the whole install timeline; protocol lines
+/// (progress/set_progress) stay bare for the parser.
 pub struct Out {
     f: std::fs::File,
+    t0: std::time::Instant,
 }
 
 impl Out {
@@ -48,11 +52,17 @@ impl Out {
                 unsafe { std::fs::File::from_raw_fd(1) }
             }
         };
-        Out { f }
+        Out {
+            f,
+            t0: std::time::Instant::now(),
+        }
     }
     pub fn line(&mut self, s: &str) {
         let _ = writeln!(self.f, "{s}");
         let _ = self.f.flush();
+    }
+    fn stamp(&self) -> String {
+        format!("[t={:>7.1}s]", self.t0.elapsed().as_secs_f32())
     }
     pub fn ui_print(&mut self, s: &str) {
         self.line(&format!("ui_print {s}"));
@@ -61,7 +71,8 @@ impl Out {
     /// the GUI (the twinstall relay truncates any other multi-word line
     /// to its first token, so full-text diagnostics must use `log`).
     pub fn log(&mut self, s: &str) {
-        self.line(&format!("log {s}"));
+        let t = self.stamp();
+        self.line(&format!("log {t} {s}"));
     }
     pub fn set_progress(&mut self, frac: f64) {
         self.line(&format!("set_progress {frac:.4}"));

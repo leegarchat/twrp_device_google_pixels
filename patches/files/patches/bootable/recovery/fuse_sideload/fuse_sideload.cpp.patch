@@ -1,0 +1,197 @@
+--- a/bootable/recovery/fuse_sideload/fuse_sideload.cpp
++++ b/bootable/recovery/fuse_sideload/fuse_sideload.cpp
+@@ -57,6 +57,7 @@
+ #include <sys/uio.h>
+ #include <unistd.h>
+ 
++#include <algorithm>
+ #include <array>
+ #include <string>
+ #include <vector>
+@@ -71,8 +72,19 @@
+ static constexpr int NO_STATUS = 1;
+ static constexpr int NO_STATUS_EXIT = 2;
+ 
++// Total memory for cached blocks, so parallel readers (high-speed flash
++// extractor) don't evict each other's block and refetch it over usb.
++static constexpr size_t CACHE_BYTES = 32 << 20;
++static constexpr uint32_t NO_BLOCK = static_cast<uint32_t>(-1);
++
+ using SHA256Digest = std::array<uint8_t, SHA256_DIGEST_LENGTH>;
+ 
++struct cache_slot {
++  uint32_t block;  // NO_BLOCK if empty
++  uint64_t used;   // last access, for LRU
++  uint8_t* data;   // allocated on first use
++};
++
+ struct fuse_data {
+   android::base::unique_fd ffd;  // file descriptor for the fuse socket
+ 
+@@ -86,8 +98,8 @@
+   uid_t uid;
+   gid_t gid;
+ 
+-  uint32_t curr_block;  // cache the block most recently read from the host
+-  uint8_t* block_data;
++  std::vector<cache_slot> cache;  // most recently used blocks from the host
++  uint64_t tick;
+ 
+   uint8_t* extra_block;  // another block of storage for reads that span two blocks
+ 
+@@ -223,16 +235,33 @@
+   return 0;
+ }
+ 
+-// Fetch a block from the host into fd->curr_block and fd->block_data.
+-// Returns 0 on successful fetch, negative otherwise.
+-static int fetch_block(fuse_data* fd, uint64_t block) {
+-  if (block == fd->curr_block) {
+-    return 0;
++// Get a block from the cache, fetching it from the host if needed.
++// Returns 0 on success (*out points at the block), negative otherwise.
++static int fetch_block(fuse_data* fd, uint64_t block, uint8_t** out) {
++  cache_slot* victim = nullptr;
++  for (auto& slot : fd->cache) {
++    if (slot.data && slot.block == block) {
++      slot.used = ++fd->tick;
++      *out = slot.data;
++      return 0;
++    }
++    if (!victim || (victim->data && (!slot.data || slot.used < victim->used))) {
++      victim = &slot;
++    }
+   }
++  if (!victim) return -ENOMEM;
++  if (!victim->data) {
++    victim->data = static_cast<uint8_t*>(malloc(fd->block_size));
++    if (!victim->data) return -ENOMEM;
++  }
++  victim->block = NO_BLOCK;
++  uint8_t* data = victim->data;
+ 
+   if (block >= fd->file_blocks) {
+-    memset(fd->block_data, 0, fd->block_size);
+-    fd->curr_block = block;
++    memset(data, 0, fd->block_size);
++    victim->block = block;
++    victim->used = ++fd->tick;
++    *out = data;
+     return 0;
+   }
+ 
+@@ -241,38 +270,36 @@
+     // If we're reading the last (partial) block of the file, expect a shorter response from the
+     // host, and pad the rest of the block with zeroes.
+     fetch_size = fd->file_size - (block * fd->block_size);
+-    memset(fd->block_data + fetch_size, 0, fd->block_size - fetch_size);
++    memset(data + fetch_size, 0, fd->block_size - fetch_size);
+   }
+ 
+-  if (!fd->provider->ReadBlockAlignedData(fd->block_data, fetch_size, block)) {
++  if (!fd->provider->ReadBlockAlignedData(data, fetch_size, block)) {
+     return -EIO;
+   }
+ 
+-  fd->curr_block = block;
+-
+   // Verify the hash of the block we just got from the host.
+   //
+   // - If the hash of the just-received data matches the stored hash for the block, accept it.
+   // - If the stored hash is all zeroes, store the new hash and accept the block (this is the first
+   //   time we've read this block).
+-  // - Otherwise, return -EINVAL for the read.
++  // - Otherwise, return -EIO for the read.
+ 
+   SHA256Digest hash;
+-  SHA256(fd->block_data, fd->block_size, hash.data());
++  SHA256(data, fd->block_size, hash.data());
+ 
+   const SHA256Digest& blockhash = fd->hashes[block];
+-  if (hash == blockhash) {
+-    return 0;
+-  }
+-
+-  for (uint8_t i : blockhash) {
+-    if (i != 0) {
+-      fd->curr_block = -1;
+-      return -EIO;
++  if (hash != blockhash) {
++    for (uint8_t i : blockhash) {
++      if (i != 0) {
++        return -EIO;
++      }
+     }
++    fd->hashes[block] = hash;
+   }
+ 
+-  fd->hashes[block] = hash;
++  victim->block = block;
++  victim->used = ++fd->tick;
++  *out = data;
+   return 0;
+ }
+ 
+@@ -301,7 +328,8 @@
+   vec[0].iov_len = sizeof(outhdr);
+ 
+   uint32_t block = offset / fd->block_size;
+-  int result = fetch_block(fd, block);
++  uint8_t* block_data;
++  int result = fetch_block(fd, block, &block_data);
+   if (result != 0) return result;
+ 
+   // Two cases:
+@@ -318,19 +346,20 @@
+   if (size + block_offset <= fd->block_size) {
+     // First case: the read fits entirely in the first block.
+ 
+-    vec[1].iov_base = fd->block_data + block_offset;
++    vec[1].iov_base = block_data + block_offset;
+     vec[1].iov_len = size;
+     vec_used = 2;
+   } else {
+     // Second case: the read spills over into the next block.
+ 
+-    memcpy(fd->extra_block, fd->block_data + block_offset, fd->block_size - block_offset);
++    memcpy(fd->extra_block, block_data + block_offset, fd->block_size - block_offset);
+     vec[1].iov_base = fd->extra_block;
+     vec[1].iov_len = fd->block_size - block_offset;
+ 
+-    result = fetch_block(fd, block + 1);
++    uint8_t* next_data;
++    result = fetch_block(fd, block + 1, &next_data);
+     if (result != 0) return result;
+-    vec[2].iov_base = fd->block_data;
++    vec[2].iov_base = next_data;
+     vec[2].iov_len = size - vec[1].iov_len;
+     vec_used = 3;
+   }
+@@ -377,13 +406,11 @@
+   fd.uid = getuid();
+   fd.gid = getgid();
+ 
+-  fd.curr_block = -1;
+-  fd.block_data = static_cast<uint8_t*>(malloc(block_size));
+-  if (fd.block_data == nullptr) {
+-    fprintf(stderr, "failed to allocate %d bites for block_data\n", block_size);
+-    result = -1;
+-    goto done;
+-  }
++  // Block cache shared by parallel readers: enough slots for 32 MiB
++  // (at least two, so a two-block spanning read never evicts itself).
++  fd.tick = 0;
++  fd.cache.assign(std::max<size_t>(2, CACHE_BYTES / block_size),
++                  cache_slot{ NO_BLOCK, 0, nullptr });
+   fd.extra_block = static_cast<uint8_t*>(malloc(block_size));
+   if (fd.extra_block == nullptr) {
+     fprintf(stderr, "failed to allocate %d bites for extra_block\n", block_size);
+@@ -488,7 +515,7 @@
+     fprintf(stderr, "fuse_sideload umount failed: %s\n", strerror(errno));
+   }
+ 
+-  free(fd.block_data);
++  for (auto& slot : fd.cache) free(slot.data);
+   free(fd.extra_block);
+ 
+   return result;

@@ -935,6 +935,10 @@
 					<condition var1="tw_has_boot_slots" var2="1"/>
 					<data variable="tw_live_switch"/>
 				</listitem>
+				<listitem name="{@high_speed_flash_chk}">
+					<condition var1="tw_has_boot_slots" var2="1"/>
+					<data variable="tw_high_speed_flash"/>
+				</listitem>
 				<listitem name="{@unmount_vendor_install}">
 					<data variable="tw_unmount_vendor"/>
 				</listitem>

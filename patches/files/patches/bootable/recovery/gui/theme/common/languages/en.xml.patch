@@ -1,16 +1,19 @@
 --- a/bootable/recovery/gui/theme/common/languages/en.xml
 +++ b/bootable/recovery/gui/theme/common/languages/en.xml
-@@ -61,6 +61,9 @@
+@@ -61,6 +61,12 @@
  		<string name="file">File</string>
  		<string name="zip_sig_chk">ZIP signature verification</string>
  		<string name="inject_twrp_chk">Inject OrangeFox after install</string>
 +		<string name="high_speed_flash_chk">High-speed flash (Experimental)</string>
 +		<string name="live_switch_chk">Live switch slot (Experimental)</string>
++		<string name="hs_failed">High-speed install failed. See the log for details.</string>
++		<string name="hs_no_booted_slot">Cannot read the booted slot. Refusing to flash.</string>
++		<string name="hs_slot_fail">High-speed install wrote the update but the slot switch failed.</string>
 +		<string name="slot_live_reswitch">Target is the live booted slot; switching back to it and continuing.</string>
  		<string name="install_reboot_chk">Reboot after installation is complete</string>
  		<string name="options_hdr">Options</string>
  		<string name="zip_queue">Queue</string>
-@@ -763,6 +766,7 @@
+@@ -763,6 +769,7 @@
  		<string name="unable_set_boot_slot">Error changing bootloader boot slot to {1}</string>
  		<string name="flash_ab_inactive">Flashing A/B zip to inactive slot: {1}</string>
  		<string name="flash_ab_reboot">To flash additional zips, please reboot recovery to switch to the updated slot.</string>

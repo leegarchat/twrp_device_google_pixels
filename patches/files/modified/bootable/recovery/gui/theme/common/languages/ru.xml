@@ -64,6 +64,9 @@
 		<string name="inject_twrp_chk">Интегрировать OrangeFox после установки</string>
 		<string name="high_speed_flash_chk">Быстрая прошивка (экспериментально)</string>
 		<string name="live_switch_chk">Живое переключение слота (экспериментально)</string>
+		<string name="hs_failed">Быстрая прошивка не удалась. Подробности в логе.</string>
+		<string name="hs_no_booted_slot">Не могу прочитать загруженный слот. Отказываюсь прошивать.</string>
+		<string name="hs_slot_fail">Обновление записано, но переключение слота не удалось.</string>
 		<string name="slot_live_reswitch">Цель — живой загруженный слот; переключаюсь обратно на него и продолжаю.</string>
 		<string name="install_reboot_chk">Перезагрузка по окончании</string>
 		<string name="options_hdr">Настройки</string>
