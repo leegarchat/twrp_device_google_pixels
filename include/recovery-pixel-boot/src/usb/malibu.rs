@@ -1,8 +1,9 @@
 //! usb::malibu — OTG implementation (Tensor G6: grizzly/cubs/kodiak/yogi).
 //!
-//! Election-driven host mode, zuma-style driver manipulation — NO vendor
-//! staging by design (no siw/loop/dm-mapper, no vendor mounts, no aocd,
-//! no AoC sysfs polling).
+//! Manual host mode (laguna-style d429e90 — the election-only path never
+//! engaged in recovery, same field lesson as laguna): UDC unbind +
+//! role-switch `host` + gvotable `CHARGER_MODE` VBUS force, driven by a
+//! VBUS-gated daemon. NO vendor staging by design.
 //!
 //! Mechanism (disassembly-verified on grizzly/yogi 6.12.69
 //! `google-role-sw.ko` + `aoc_usb_driver.ko`; DTBO
@@ -11,6 +12,9 @@
 //! `aoc_vote_shim` (`include/source/aoc_vote_shim/`, shared with laguna:
 //! same election name, same voter, same constants) casts the AOC vote
 //! directly: `get_handle("USB_DR_EL")` + `cast_vote(h, "AOC", 1, 1)`.
+//! The shim stays as belt-and-braces (it makes the election agree
+//! instead of fighting the manual switch), but host mode no longer
+//! waits for any election.
 //!
 //! Malibu bonus, verified in stock DTBO (grizzly 46 overlays, yogi 9):
 //! `host-mode-aoc-optional` is PRESENT on `goog_usb_role_sw`, which the
@@ -20,20 +24,22 @@
 //! and the shim is belt-and-suspenders (best-effort, never a failure
 //! gate): even a missing shim prebuilt keeps patch green.
 //!
-//! The kernel self-switches via the election, so this code performs NO
-//! role/UDC writes and NO i2c TCPC patch (SPMI bus: `max77759tcpc-spmi@4`,
-//! self-managed by the stock driver). `aoc_core`/`aoc_usb_driver` are
+//! The kernel does NOT self-switch in recovery, so this code drives it:
+//! role-switch `host` sticks (no revert observed), TCPC sources VBUS on
+//! the CHARGER_MODE force. No i2c TCPC patch (SPMI bus:
+//! `max77759tcpc-spmi@4`, self-managed by the stock driver). `aoc_core`/`aoc_usb_driver` are
 //! deliberately NOT insmodded (their only job was the vote).
 //! 6.12-only family; anything else fails closed (device mode, adb safe).
 //!
 //! Success predicate (field-proven, never role alone): controller
-//! `role == host` AND TCPC source psy `online == 1`.
+//! `role == host` AND TCPC source psy `online == 1` AND the OTG disk
+//! link `/dev/block/otg-usb` resolving.
 
 use crate::ko_picker::{
     detect_kernel_env, find_candidates, is_module_loaded, ko_try_load,
     load_kernel_module, load_kernel_module_force, log_msg,
 };
-use crate::props::set_prop;
+use crate::props::{get_prop, set_prop};
 use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::Duration;
@@ -49,9 +55,22 @@ const ROLE_PREFER: &str = "usb3";
 const PSY_CLASS: &str = "/sys/class/power_supply";
 const SOURCE_PSY: &str = "tcpm-source-psy-spmi-max77759tcpc";
 /// UDC fallback: base DTB `dwc3@a210000` under `usb3@a200000`.
-/// Reference only (never written on malibu by design).
-#[allow(dead_code)]
+/// Used when `/sys/class/udc` is empty (never blindly: the live class wins).
 const UDC_FALLBACK: &str = "a210000.dwc3";
+/// UDC gadget path (unbind on host switch, rebind on device switch).
+const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
+/// VBUS force voter (gvotable debugfs election `CHARGER_MODE`, same voter
+/// name as laguna/zuma; created at runtime by the charger driver —
+/// absent = no force available). Verified value 49 on max77759 AND
+/// max77779 (`GBMS_USB_OTG_ON` -> otg_on -> OTG_BOOST_ON).
+const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value";
+const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
+/// PC-attached sensor: input power present (`usb/*` only — the TCPC
+/// source psy reads 1 while WE source VBUS ourselves, rail not direction).
+const VBUS_PATHS: &[&str] = &[
+    "/sys/class/power_supply/usb/online",
+    "/sys/class/power_supply/usb/present",
+];
 /// Stable symlink for `/usb_otg`.
 const OTG_USB_LINK: &str = "/dev/block/otg-usb";
 /// Our vote shim (shared prebuilt with laguna; best-effort here — the
@@ -61,8 +80,6 @@ const PROC_SHIM: &str = "/proc/aoc_vote_shim";
 const PROC_READY: &str = "/proc/aoc_vote_ready";
 /// Shim vote settle: the shim retries the election internally.
 const SHIM_SETTLE_SECS: u64 = 2;
-/// Supervisor tick.
-const TICK_SECS: u64 = 3;
 /// Stock USB chain in dep order (strict flags: stock modules match the
 /// running kernel by construction). First-stage (`vendor_kernel_boot`
 /// `modules.load`) normally autoloads all of these before we run, so
@@ -241,6 +258,89 @@ fn read_source_online() -> String {
         .unwrap_or_default()
 }
 
+/// PC-attached sensor: input power present. `usb/*` only — the source
+/// psy is deliberately NOT consulted: it reads 1 while we source VBUS
+/// ourselves (rail sensor, not direction).
+fn find_vbus() -> Option<String> {
+    VBUS_PATHS
+        .iter()
+        .find(|p| Path::new(p).exists())
+        .map(|s| s.to_string())
+}
+
+fn read_vbus(path: &Option<String>) -> String {
+    match path {
+        Some(p) => read_trim(p),
+        None => "0".into(),
+    }
+}
+
+/// UDC name for the gadget bind: live `/sys/class/udc` entry wins,
+/// base-DTB fallback otherwise (never a blind prop: a stale UNKNOWN
+/// would kill adb).
+fn resolve_udc() -> String {
+    let mut names: Vec<String> = std::fs::read_dir("/sys/class/udc")
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names.into_iter().next().unwrap_or_else(|| UDC_FALLBACK.to_string())
+}
+
+/// Manual host path (laguna d429e90, field-proven on mustang: role write
+/// sticks, drive enumerates): UDC unbind + role-switch `host` + gvotable
+/// VBUS force. Best-effort per leg, loud about each.
+fn switch_to_host(current: &mut String) {
+    if current.as_str() == "host" {
+        return;
+    }
+    info(">>> SWITCHING TO HOST MODE <<<");
+    let _ = std::fs::write(UDC_FILE, b"\n");
+    // Controller switch first (ROLE_PREFER), else first sorted entry.
+    match find_data_role() {
+        Some(role) => {
+            if let Err(e) = std::fs::write(role.as_path(), b"host\n") {
+                info(&format!("host: role-switch write FAILED: {e}"));
+            }
+        }
+        None => info("host: no usb_role switch found"),
+    }
+    if Path::new(CHARGER_VALUE).exists() {
+        info("forcing VBUS via gvotable CHARGER_MODE");
+        let _ = std::fs::write(CHARGER_VALUE, b"49\n");
+        let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    } else {
+        info("host: no CHARGER_MODE voter (no VBUS force?)");
+    }
+    *current = "host".into();
+}
+
+fn switch_to_device(current: &mut String) {
+    if current.as_str() == "device" {
+        return;
+    }
+    info(">>> SWITCHING TO DEVICE MODE <<<");
+    if Path::new(CHARGER_ACTIVE).exists() {
+        let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    }
+    let _ = set_prop("sys.usb.ffs.ready", "1");
+    // Self-healing bind: init triggers are edge-based; a missed edge leaves
+    // UDC unbound forever. Explicit bind + adbd start covers it.
+    let controller = resolve_udc();
+    match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
+        Ok(_) => {
+            let _ = set_prop("sys.usb.controller", &controller);
+        }
+        Err(e) => info(&format!("device mode: UDC bind FAILED: {e}")),
+    }
+    let _ = set_prop("ctl.start", "adbd");
+    *current = "device".into();
+}
+
 /// Host path ACTIVE only on BOTH signals — never the role alone: a bare
 /// `role=host` readback with no sourced VBUS is not host mode.
 fn host_active() -> bool {
@@ -374,12 +474,33 @@ pub fn run_otg_patch() -> Result<(), String> {
     Ok(())
 }
 
-/// otg-auto (service `otg_auto`): vote keeper + host observe +
-/// `otg-usb` symlink. Never exits. Never touches UDC/gadget/role/voter
-/// state — TCPC + role-sw negotiate modes on their own, so device mode
-/// (adb) always survives.
+/// otg-auto (service `otg_auto`): vote keeper + VBUS-gated host/device
+/// switching (laguna d429e90: manual role writes) + `otg-usb` symlink.
+/// Never exits.
 pub fn run_otg_auto() -> ! {
-    info("starting (malibu supervisor: vote keeper + otg-usb symlink)");
+    info("starting (malibu supervisor: vote keeper + VBUS-gated host, manual role writes)");
+    info(&format!(
+        "patch gate sys.usb.patch_dwc3={}",
+        get_prop("sys.usb.patch_dwc3")
+    ));
+    let vbus_file = find_vbus();
+    match &vbus_file {
+        Some(p) => info(&format!("using VBUS path: {p}")),
+        None => info("no VBUS sysfs path, assuming 0"),
+    }
+    info("waiting 3s for boot to settle");
+    sleep(Duration::from_secs(3));
+    let initial = read_vbus(&vbus_file);
+    info(&format!("initial VBUS: {initial}"));
+    let mut current = String::new();
+    if initial == "1" {
+        info("PC detected at boot (VBUS=1), starting in DEVICE mode");
+        switch_to_device(&mut current);
+    } else {
+        info("no PC at boot (VBUS=0), starting in HOST mode");
+        switch_to_host(&mut current);
+    }
+    let mut prev = initial;
     loop {
         // Keeper: re-poke if the vote is not asserted; load the shim if
         // it appeared after boot (e.g. dropped in by hand for testing) —
@@ -393,6 +514,25 @@ pub fn run_otg_auto() -> ! {
                 load_vote_shim();
             }
         }
+        let vbus = read_vbus(&vbus_file);
+        if vbus != prev {
+            info(&format!("VBUS change: {prev} -> {vbus}"));
+            if vbus == "1" {
+                switch_to_device(&mut current);
+            } else {
+                switch_to_host(&mut current);
+            }
+            prev = vbus;
+        }
+        // Re-assert host while unplugged: a renegotiating TCPC can park
+        // the role back to device behind our backs.
+        if current == "host" {
+            let role_now = read_data_role();
+            if !role_now.is_empty() && role_now != "host" {
+                info("daemon: role drifted from host, re-asserting");
+                switch_to_host(&mut String::from("device"));
+            }
+        }
         if pick_otg_disk().is_some() {
             info(&format!(
                 "disk present: data_role={:?} source_online={:?} host_active={}",
@@ -402,7 +542,7 @@ pub fn run_otg_auto() -> ! {
             ));
         }
         ensure_otg_symlink();
-        sleep(Duration::from_secs(TICK_SECS));
+        sleep(Duration::from_secs(1));
     }
 }
 
