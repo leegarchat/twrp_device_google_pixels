@@ -1,0 +1,26 @@
+load("//build/kernel/kleaf:kernel.bzl", "kernel_module")
+
+# 4k pages (default Pixel kernels).
+kernel_module(
+    name = "empty_checker_module_4k",
+    srcs = [
+        "empty_checker_module.c",
+        "Makefile",
+        "Kbuild",
+    ],
+    outs = ["empty_checker_module.ko"],
+    kernel_build = "//common:kernel_aarch64",
+)
+
+# 16k pages (16k Pixel kernels). If your tree names the 16k config
+# differently, replace //common:kernel_aarch64_16k with it.
+kernel_module(
+    name = "empty_checker_module_16k",
+    srcs = [
+        "empty_checker_module.c",
+        "Makefile",
+        "Kbuild",
+    ],
+    outs = ["empty_checker_module.ko"],
+    kernel_build = "//common:kernel_aarch64_16k",
+)
