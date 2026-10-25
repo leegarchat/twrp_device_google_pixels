@@ -219,6 +219,28 @@ fn native_activate() -> Result<(), String> {
     }
 }
 
+/// 6.1-only Sultan check: on a monolithic tree the shim is built in,
+/// so all three nodes must exist. Missing → normal trigger once
+/// (load_shim); still missing → gated (no host_ready/VBUS possible).
+fn ensure_shim_nodes_61() -> Result<(), String> {
+    const NODES: &[&str] = &[PROC_SHIM, PROC_READY, PROC_VBUS];
+    if NODES.iter().all(|n| Path::new(n).exists()) {
+        return Ok(());
+    }
+    info("shim nodes missing, triggering normal shim load");
+    let _ = load_shim();
+    let missing: Vec<&str> = NODES
+        .iter()
+        .copied()
+        .filter(|n| !Path::new(n).exists())
+        .collect();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("shim nodes still missing: {missing:?}"))
+    }
+}
+
 /// otg-patch (oneshot, service otg_enable): stock chain -> shim ->
 /// host_ready -> TCPC switch. Sets sys.usb.patch_dwc3=1 on success (gates
 /// otg_auto); 0 + Err otherwise.
@@ -279,6 +301,17 @@ pub fn run_otg_patch() -> Result<(), String> {
         if read_trim(PROC_READY) == "1" {
             set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
             info("host_ready ACTIVE, sys.usb.patch_dwc3=1");
+            // Sultan-style 6.1 monolith only: built-in shim must expose
+            // all three nodes. Missing → trigger once; still missing →
+            // gate (stay device). GKI 6.1 keeps the legacy path above
+            // (module shim has no /proc/otg_vbus by design).
+            let is_61 = matches!(detect_kernel_env(), Ok(e) if e.major == 6 && e.minor == 1);
+            if is_61 && crate::ko_picker::is_monolith_cached() {
+                if let Err(e) = ensure_shim_nodes_61() {
+                    let _ = set_prop("sys.usb.patch_dwc3", "0");
+                    return Err(e);
+                }
+            }
         } else {
             let _ = set_prop("sys.usb.patch_dwc3", "0");
             return Err("host_ready NOT active after activation attempt".into());

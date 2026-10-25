@@ -38,7 +38,9 @@
 //! design and would always mismatch.
 
 use super::{Family, TAG};
-use crate::ko_picker::{detect_kernel_env, is_monolithic, log_msg, modules_supported, read_ko_vermagic};
+use crate::ko_picker::{
+    detect_kernel_env, is_monolith_cached, is_monolithic, log_msg, modules_supported, read_ko_vermagic,
+};
 use std::path::{Path, PathBuf};
 
 /// How many .ko files the scan reads before voting (cheap + decisive).
@@ -147,9 +149,23 @@ pub fn check(fam: &Family) -> Gate {
         info("gate: monolithic kernel, no module check (vendor stack owns USB)");
         return Gate::Proceed;
     }
-    // Same live-state predicate as the touch branch
-    // (`ko_picker::is_monolithic`): empty lsmod, nothing to check.
-    if is_monolithic() {
+    // G1-G4 Tensor (Exynos glue generations): the gate exists only for GKI
+    // trees with a real module/kernel version drift. Monoliths (incl.
+    // partial/Sultan-style, cached verdict) skip the scan entirely —
+    // stray firmware .ko must never block a kernel that loads nothing.
+    // laguna/malibu keep the legacy lsmod-only check (different stack,
+    // no custom kernels in the field).
+    if matches!(
+        fam,
+        Family::Zuma | Family::Gs101 | Family::Gs201 | Family::Zumapro
+    ) {
+        if is_monolith_cached() {
+            info("gate: monolith, scan skipped (vendor stack owns USB)");
+            return Gate::Proceed;
+        }
+    } else if is_monolithic() {
+        // Same live-state predicate as the touch branch
+        // (`ko_picker::is_monolithic`): empty lsmod, nothing to check.
         info("gate: lsmod empty, no loaded modules — nothing version-sensitive in play — proceeding");
         return Gate::Proceed;
     }
