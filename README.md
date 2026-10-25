@@ -54,7 +54,7 @@ generations (left to right), rows are features (top to bottom).
 | Reboot menu              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | PIN unlock               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Slot switch              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Fastbootd                | 🔵 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
+| Fastbootd                | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
 | Files + terminal         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | OTA survival             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Charging                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |

@@ -359,11 +359,14 @@ fn prune_touch_modules() {
 
 fn modules_touch_install(cfg: &DeviceConfig, code: &str, suffix: &str, unsuffix: &str, slot: &str, unslot: &str) {
     let want = !cfg.touch_modules.is_empty();
-    // Full fallback fork for monolithic kernels (CONFIG_MODULES=n):
-    // every driver is built in, there is nothing to inject and no
-    // failure to report — in particular, never the HW GUI fallback.
-    if !crate::ko_picker::modules_supported() {
-        info("modules: monolithic kernel (/proc/modules absent), touch drivers are built in");
+    // Monolithic kernels (lsmod empty — same live-state predicate as the
+    // USB gate): every driver is built in, there is nothing to inject
+    // and no failure to report. The whole touch module branch is
+    // skipped — touch is interpreted as working — and in particular
+    // the HW GUI fallback never fires. (Haptics *firmware* fetch stays
+    // outside this fork in the caller: files, not modules.)
+    if crate::ko_picker::is_monolithic() {
+        info("modules: monolithic kernel (lsmod empty), touch drivers are built in — skipping module branch");
         prune_touch_modules();
         if let Err(e) = crate::temp::run_setup_temp() {
             warn(&format!("thermal refresh failed: {e}"));

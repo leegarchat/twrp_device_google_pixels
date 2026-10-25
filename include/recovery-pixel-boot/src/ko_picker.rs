@@ -437,6 +437,42 @@ pub fn modules_supported() -> bool {
     modules_supported_at(Path::new("/proc"))
 }
 
+/// Live loaded-module set: first column of /proc/modules (the same
+/// source `lsmod` prints). Pure over file text (testable).
+pub fn parse_loaded_modules(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| {
+            let name = l.split_whitespace().next()?;
+            // lsmod pretty-print header, not a module (/proc/modules itself
+            // has no header, but be tolerant of either input).
+            if name.is_empty() || name == "Module" {
+                return None;
+            }
+            Some(name.to_string())
+        })
+        .collect()
+}
+
+/// Whatever the kernel has live right now. Empty on a fresh custom
+/// build (Sultan: support compiled in, nothing staged loads) and on a
+/// true monolithic kernel alike.
+pub fn loaded_module_names() -> Vec<String> {
+    match std::fs::read_to_string("/proc/modules") {
+        Ok(t) => parse_loaded_modules(&t),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Monolithic-for-our-purposes: lsmod is empty, so there is nothing
+/// version-sensitive in play — every driver we could inject is either
+/// built in or was never staged. This is the same live-state predicate
+/// the USB gate uses, and the touch branch must agree with it: on
+/// monolith the whole module-injection branch is skipped, touch is
+/// interpreted as working, and the HW GUI fallback never fires.
+pub fn is_monolithic() -> bool {
+    loaded_module_names().is_empty()
+}
+
 /// `vermagic=` triplet out of raw .ko bytes ("6.1.157-android14-..." ->
 /// (6, 1, 157)). Pure (testable); backing for the OTG fool-proof gate,
 /// which cannot ask the kernel what a loaded module was built for.

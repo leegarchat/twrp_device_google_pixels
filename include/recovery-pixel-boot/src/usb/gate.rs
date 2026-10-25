@@ -10,8 +10,14 @@
 //! loaded module was built for — there is no vermagic query API).
 //!
 //! Rules:
-//! - Monolithic kernel (no /proc/modules): nothing to inject, gate is
-//!   vacuous — proceed, whatever happens is the vendor's own stack.
+//! - Empty lsmod (no loaded modules): nothing version-sensitive is in
+//!   play — first-stage loads either stuck (stock GKI proves the tree
+//!   modular) or never happened (monolithic/custom like Sultan, where
+//!   everything needed is built in). Gate is vacuous — proceed. This is
+//!   the primary discriminator: it reads the live state, not config
+//!   files or uname strings.
+//! - Monolithic kernel (module syscalls missing): nothing to inject,
+//!   gate is vacuous — proceed.
 //! - No readable stock .ko anywhere: cannot prove foolishness — proceed
 //!   with a loud note (fail-open, today's behavior).
 //! - Majority firmware patch == running patch: proceed.
@@ -32,7 +38,7 @@
 //! design and would always mismatch.
 
 use super::{Family, TAG};
-use crate::ko_picker::{detect_kernel_env, log_msg, modules_supported, read_ko_vermagic};
+use crate::ko_picker::{detect_kernel_env, is_monolithic, log_msg, modules_supported, read_ko_vermagic};
 use std::path::{Path, PathBuf};
 
 /// How many .ko files the scan reads before voting (cheap + decisive).
@@ -141,6 +147,12 @@ pub fn check(fam: &Family) -> Gate {
         info("gate: monolithic kernel, no module check (vendor stack owns USB)");
         return Gate::Proceed;
     }
+    // Same live-state predicate as the touch branch
+    // (`ko_picker::is_monolithic`): empty lsmod, nothing to check.
+    if is_monolithic() {
+        info("gate: lsmod empty, no loaded modules — nothing version-sensitive in play — proceeding");
+        return Gate::Proceed;
+    }
     let kernel_patch = match detect_kernel_env() {
         Ok(e) => {
             info(&format!("gate: running kernel {}.{}.{}", e.major, e.minor, e.patch));
@@ -195,6 +207,18 @@ pub fn check(fam: &Family) -> Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ko_picker::parse_loaded_modules;
+
+    #[test]
+    fn loaded_modules_parsing() {
+        // Sultan (custom): empty file, header-only lsmod, blanks.
+        assert!(parse_loaded_modules("").is_empty());
+        assert!(parse_loaded_modules("Module                  Size  Used by\n").is_empty());
+        assert!(parse_loaded_modules("\n  \n").is_empty());
+        // Stock GKI: names are the first column.
+        let t = "touch_offload 28672 0\nsec_touch 667648 2 sec_touch,goog_touch_interface\n";
+        assert_eq!(parse_loaded_modules(t), vec!["touch_offload", "sec_touch"]);
+    }
 
     #[test]
     fn verdict_matrix() {
