@@ -17,7 +17,51 @@ pub struct FetchStat {
     pub millis: u128,
 }
 
+use std::cell::RefCell;
+
+thread_local! {
+    /// One cached zip fd per rayon worker. The engine opens the same zip
+    /// thousands of times (once per op); reusing the fd saves the
+    /// open/close churn AND, crucially, gives the kernel a persistent
+    /// sequential access history per thread, so readahead actually
+    /// engages (a fresh fd per 2 MB op defeats it completely — this is
+    /// what serialized sideload reads into 40k lonely USB round-trips).
+    /// Reopened automatically if the path changes or an I/O error hits.
+    static ZIP_FD: RefCell<(String, Option<std::fs::File>)> =
+        RefCell::new((String::new(), None));
+}
+
 fn read_blob(zip_path: &str, off: u64, len: u64) -> Result<Vec<u8>, String> {
+    // Fast path: cached thread-local fd for the same zip.
+    let cached = ZIP_FD.try_with(|c| -> Result<Vec<u8>, String> {
+        let mut c = c.borrow_mut();
+        if c.0 != zip_path {
+            c.0 = zip_path.to_string();
+            c.1 = None;
+        }
+        if c.1.is_none() {
+            c.1 = Some(
+                File::open(zip_path).map_err(|e| format!("open: {e}"))?,
+            );
+        }
+        let f = c.1.as_mut().ok_or_else(|| "no fd".to_string())?;
+        f.seek(SeekFrom::Start(off))
+            .map_err(|e| format!("seek {off}: {e}"))?;
+        let mut buf = vec![0u8; len as usize];
+        f.read_exact(&mut buf)
+            .map_err(|e| format!("read {off}+{len}: {e}"))?;
+        Ok(buf)
+    });
+    match cached {
+        Ok(Ok(buf)) => return Ok(buf),
+        // I/O error on the cached fd (stale position, HUP, ...): drop it
+        // and fall through to a fresh open below.
+        Ok(Err(_)) => {
+            ZIP_FD.try_with(|c| c.borrow_mut().1 = None).ok();
+        }
+        // Thread-local access failed (destroyed on thread exit): plain open.
+        Err(_) => {}
+    }
     let mut f = File::open(zip_path).map_err(|e| format!("open: {e}"))?;
     f.seek(SeekFrom::Start(off))
         .map_err(|e| format!("seek {off}: {e}"))?;

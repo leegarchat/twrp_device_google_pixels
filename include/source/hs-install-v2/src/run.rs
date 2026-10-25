@@ -78,6 +78,14 @@ pub fn run(a: Args) -> i32 {
     out.line("progress 0.0 600");
 
     // --- 0. identity: device + slots (universal, no hardcodes) ---
+    // UFS/FUSE readahead bump for the install: the engine preads
+    // thousands of ~2 MB blobs. On sideload each FUSE request is capped
+    // at 64 KiB, so ~40k USB round-trips at ~5 ms each would serialize
+    // to minutes; a deep readahead keeps dozens of requests in flight
+    // and hides the RTT. Best-effort, restored at the end.
+    let readahead_prev =
+        std::fs::read_to_string("/sys/block/sda/queue/read_ahead_kb").ok();
+    let _ = std::fs::write("/sys/block/sda/queue/read_ahead_kb", "2048\n");
     let device = match device::getprop("ro.product.device") {
         Ok(d) if !d.is_empty() => d,
         _ => return fail(&mut out, "no ro.product.device prop", crate::EXIT_FAIL),
@@ -462,6 +470,10 @@ pub fn run(a: Args) -> i32 {
                 });
             }
         }
+        // Read-order sort: sequential file offsets per thread keep FUSE
+        // (sideload) and UFS reads streaming instead of scattered;
+        // zero RAM cost, stable for equal offsets.
+        tasks.sort_by_key(|t| t.op.off);
         // Live progress: atomic byte counter, GUI update on 0.5% steps
         let task_done = std::sync::atomic::AtomicU64::new(0);
         let next_pct = std::sync::atomic::AtomicU64::new(0);
@@ -788,6 +800,9 @@ pub fn run(a: Args) -> i32 {
     }
 
     // --- 8. done: sync, leave the slot switch to the caller ---
+    if let Some(prev) = readahead_prev.as_deref() {
+        let _ = std::fs::write("/sys/block/sda/queue/read_ahead_kb", prev);
+    }
     out.log(&format!("done | {}", mem_snapshot()));
     out.log("syncing");
     unsafe { libc::sync() };
