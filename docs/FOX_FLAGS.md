@@ -1,4 +1,8 @@
-# FOX/OF/TW build flags — what they do and what they lead to
+# FOX/OF/TW build flags - what they do and what they lead to
+
+> [Русская версия](FOX_FLAGS_ru.md)
+
+`Guide v3 · 2026-10-26 · reference`
 
 Reference for `device/google/pixels` (OrangeFox R12, Android 14 tree).
 All paths below are repo-relative to the Android root unless noted.
@@ -24,16 +28,16 @@ display-only (strings, props, zip name).
 | `Beta` / `Testing` / `Unstable` / any other non-empty | **No** `OF_ADVANCED_SECURITY` → normal MTP autostart path (`twrp.cpp:292-313`), no early `ctl.stop adbd`. `BETA` (any case) still gets the Welcome support-link line (`twrp-functions.cpp:2736`); other values print "No official support for unknown builds" (`:2740`). Nothing else changes at runtime. |
 | unset / empty | Defaults to `"Unofficial"` (`orangefox.mk:143`, `OrangeFox_A14.sh:311`). Same runtime as Beta-row plus Unofficial warning (`twrp-functions.cpp:2732-2733`). |
 
-`FOX_VARIANT` (`pixels/vendorsetup.sh:150` → `default`; `orangefox.mk:43-47`)
-and `OF_MAINTAINER` (`:151` → `LeeGarChat`; `orangefox.mk:206-210`,
+`FOX_VARIANT` (`pixels/vendorsetup.sh:121` → `default`; `orangefox.mk:43-47`)
+and `OF_MAINTAINER` (`:122` → `LeeGarChat`; `orangefox.mk:206-210`,
 unset = `"Testing build (unofficial)"`) are **strings only**
 (`ro.orangefox.variant`, About page, zip name, `releaseinfo.json`).
 No behavior fork. `FOX_BUILD` (`R12.0[_N]`, `orangefox.mk:24-37`,
-`--patch N` via `pixels/build.sh:196`) same — version string only.
+`--patch N` via `pixels/build.sh:258`) same - version string only.
 
 ---
 
-## 2. `OF_ADVANCED_SECURITY=1` — full runtime gate list
+## 2. `OF_ADVANCED_SECURITY=1` - full runtime gate list
 
 Set automatically on `Stable`; manual `export OF_ADVANCED_SECURITY=1`
 takes the identical path. Old name `FOX_ADVANCED_SECURITY` is a hard
@@ -41,12 +45,12 @@ build error (`orangefox.mk:616-617`).
 
 | Gate | Effect in practice |
 |---|---|
-| `twrp.cpp:246-249` | **`ctl.stop adbd` at early boot, `orangefox.adb.status=0`. ADB is dead on arrival — including the decrypt password screen.** |
+| `twrp.cpp:246-249` | **`ctl.stop adbd` at early boot, `orangefox.adb.status=0`. ADB is dead on arrival - including the decrypt password screen.** |
 | `twrp.cpp:287-290` | `fox_advanced_security=1`, **`tw_mtp_enabled=0`**, normal MTP autostart skipped (`:292-314` else-branch dead). Log: `ADB & MTP disabled by maintainer`. |
 | `main.xml:48-65` | Deferred re-enable **on first `main`-page entry**: `startmtp` + `adb enable` fire once (conditions: no lockscreen pass, `adb_startup=1`, `adb_started!=1`, `tw_has_mtp=1`). **On an encrypted device stuck at the password prompt, `main` is never entered → adb/MTP stay off for the whole session.** |
 | `partitionmanager.cpp:812-819` (pixels tree) | Intent comment only: no MTP restart after metadata decrypt (also covered by `tw_mtp_enabled=0`, but explicit). |
 
-**Explicitly NOT gated** (verified by grep — works the same on Stable):
+**Explicitly NOT gated** (verified by grep - works the same on Stable):
 - ADB sideload / ORS (`openrecoveryscript.cpp:408-448` does `ctl.start adbd`; `twrp.cpp:280-282` ORS auto-run unconditional).
 - Built-in terminal / nano (`data.cpp:1513-1518`, only `TW_EXCLUDE_NANO` matters).
 - File manager (no `fox_advanced_security` conditions).
@@ -99,14 +103,14 @@ Legend: **tree** = set by `pixels/` (vendorsetup.sh unless noted).
 | `OF_HIDE_NOTCH` | `0` | `=1` (:193) |
 | `OF_CLOCK_POS` | `0` | `=1` (:194) |
 | `OF_ALLOW_DISABLE_NAVBAR` | `1` | `=0` (:195) |
-| `OF_OPTIONS_LIST_NUM` | — | `=6` (:196) |
+| `OF_OPTIONS_LIST_NUM` | - | `=6` (:196) |
 
 ### 3.5 Compression / ramdisk
 
 | Flag | Effect | Tree |
 |---|---|---|
 | `OF_USE_LZ4_COMPRESSION=1` | LZ4 ramdisk + code path (`BOARD_RAMDISK_USE_LZ4`) | `=1` (:199; `BoardConfig.mk:110` agrees) |
-| `FOX_USE_LZ4_COMPRESSION`, `FOX_USE_LZMA_COMPRESSION`, `FOX_ADVANCED_SECURITY`, `OF_PATCH_VBMETA_FLAG`, `OF_TARGET_DEVICES` | **obsolete — hard build errors** (`orangefox.mk:600-621`) | correctly absent |
+| `FOX_USE_LZ4_COMPRESSION`, `FOX_USE_LZMA_COMPRESSION`, `FOX_ADVANCED_SECURITY`, `OF_PATCH_VBMETA_FLAG`, `OF_TARGET_DEVICES` | **obsolete - hard build errors** (`orangefox.mk:600-621`) | correctly absent |
 
 ### 3.6 Feature toggles (tree)
 
@@ -124,7 +128,7 @@ Legend: **tree** = set by `pixels/` (vendorsetup.sh unless noted).
 | `FOX_DELETE_INITD_ADDON=1` | Deletes init.d addon (default-on unless `=0`) | `=1` (:262) |
 | `OF_QUICK_BACKUP_LIST` | Quick-backup preset (`tw_backup_list_quick`) | `="/boot;/vendor_boot;/data;"` (:243) |
 | `OF_UNBIND_SDCARD_F2FS=1` | Bind-unmount `/sdcard` before F2FS repair/format | `=1` (:244) |
-| `OF_BIND_MOUNT_SDCARD_ON_FORMAT=1` | — | `=1` (:245) |
+| `OF_BIND_MOUNT_SDCARD_ON_FORMAT=1` | - | `=1` (:245) |
 | `OF_DYNAMIC_FULL_SIZE=8531214336` | Full-size constant (matches `BOARD_SUPER_PARTITION_SIZE`) | (:246) |
 | `OF_USE_LEGACY_BATTERY_SERVICES=0` | HIDL health branch (`GetBatteryInfo`); needs `health@2.1-service` in ramdisk (`device.mk`) | `=0` (:249) |
 | `OF_FORCE_DATA_FORMAT_F2FS=1` | Force F2FS on format | `BoardConfig.mk:215` (mk, not env) |
@@ -141,13 +145,13 @@ Legend: **tree** = set by `pixels/` (vendorsetup.sh unless noted).
 `TWRP_INCLUDE_LOGCAT`, `TW_USE_FSCRYPT_POLICY:=2` (`BoardConfig.mk:196-225`).
 `OF_CHECK_OVERWRITE_ATTEMPTS` untouched → check stays enabled.
 `OF_SKIP_FBE_DECRYPTION` commented out / `OF_DEFAULT_KEYMASTER_VERSION`
-explicitly unset (`vendorsetup.sh:220`).
+explicitly unset (`vendorsetup.sh:175-177`).
 
 ### 3.8 Toolchain / misc (tree)
 
-`USE_CCACHE=1` (:152), `TARGET_ARCH=arm64` (:153, `BoardConfig.mk:65`
-overrides env anyway), `FOX_REPLACE_TOOLBOX_GETPROP=1` (:226),
-`FOX_BASH_TO_SYSTEM_BIN=1` (:228), `FOX_LOCAL_CALLBACK_SCRIPT` (:265),
+`USE_CCACHE=1` (:123), `TARGET_ARCH=arm64` (:124, `BoardConfig.mk:65`
+overrides env anyway), `FOX_REPLACE_TOOLBOX_GETPROP=1` (:181),
+`FOX_BASH_TO_SYSTEM_BIN=1` (:183), `FOX_LOCAL_CALLBACK_SCRIPT` (:227),
 `FOX_KEYMINT_TYPE` (=`both`, fixed) / `DEVICE_BUILD_FLAG` (=`aio`, fixed) /
 `FOX_KERNEL_VER` (=`stock`, fixed) / `LGZ_LEVEL` (via `build.sh`).
 Commented-out (deliberately off): `FOX_ASH_IS_BASH`, `FOX_USE_TAR_BINARY`,
@@ -156,7 +160,7 @@ Commented-out (deliberately off): `FOX_ASH_IS_BASH`, `FOX_USE_TAR_BINARY`,
 
 ### 3.9 Set but never read (dead knobs in this tree)
 
-`OF_IGNORE_LOGICAL_MOUNT_ERRORS=1` (`:202`) — no reader in
+`OF_IGNORE_LOGICAL_MOUNT_ERRORS=1` (`:202`) - no reader in
 `bootable/`, `vendor/recovery/`, `vendor/twrp/`. Legacy/no-op here.
 (Unset-but-unused elsewhere: `FOX_REPLACE_BOOTIMAGE_DATE`,
 `OF_KEEP_DM_VERITY*` (forced `1` in mk anyway), `OF_FORCE_DISABLE_DM_VERITY`,
@@ -195,4 +199,4 @@ Commented-out (deliberately off): `FOX_ASH_IS_BASH`, `FOX_USE_TAR_BINARY`,
   self-heal. Replug does not help (edge-triggered init).
 - `Beta` enables **nothing** at runtime vs `Stable` except *removing* the
   §2 gates. There is no "beta features" flag.
-- Never set the §3.5 obsolete names — instant build error by design.
+- Never set the §3.5 obsolete names - instant build error by design.

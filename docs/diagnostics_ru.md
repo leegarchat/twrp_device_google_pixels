@@ -1,10 +1,12 @@
-> [English version](diagnostics.en.md)
+> [English version](diagnostics.md)
+
 # Диагностика на девайсе
 
-adb в рекавери — root по умолчанию (на Stable-сборках adbd остановлен
-by design — см. `build-system_ru.md`; для отладки брать Beta).
+`Гайд v3 · 2026-10-26 · что смотреть, если не грузится`
 
-## Базовый опрос (первые 30 секунд)
+adb в рекавери - root по умолчанию. На сборках **Stable** adbd остановлен by design (см. `build-system_ru.md`) - для отладки брать **Beta**.
+
+## Базовый опрос - первые 30 секунд
 
 ```bash
 adb shell 'getprop ro.hardware; uname -r; getconf PAGESIZE'
@@ -13,90 +15,52 @@ adb shell 'ls /dev/ko_stage/*/ | head; cat /proc/modules | grep -cE "touch|goodi
 adb shell 'dmesg | grep -iE "LGZ|OFOX" | head'
 ```
 
-## Карта симптомов
+<details>
+<summary>🗺️ Карта симптомов - куда смотреть</summary>
 
 | Симптом | Куда смотреть |
 |---|---|
 | Не грузится вообще | `dmesg` с ПК (fastboot), слот (`bootctl`/`slot-detect`), оба ли слота прошиты |
-| Висит до GUI | `/tmp/recovery.log`: `boot`-стадия (модули), `servicemanager.ready`, keymint-статус |
-| Нет тача | `lsmod` (тач-модули из `touch_modules`?), `/dev/input/`, depth-guard в `ko-fetch` |
-| Не расшифровывает | Статус keymint/weaver-сервисов, `.weaver`-слот, `ro.crypto.fs_crypto_blkdev` |
-| Нет USB/OTG | `vbus_paths`, `patch_dwc3`, UDC-привязка в логе `otg-auto` |
-| GUI тормозит | `TW_FRAMERATE` в сборочном логе (`-DTW_FRAMERATE=` в cflags) |
+| Висит до GUI | `/tmp/recovery.log`: стадия `boot` (модули), `servicemanager.ready`, статус KeyMint |
+| Нет тача | `lsmod` (модули тача из `touch_modules`?), `/dev/input/`, depth guard в `ko-fetch`. Полный промах на модульном ядре поднимает `fox.force_hw_gui=1` (клавиши VOL+/VOL-/POWER); на монолите/частичном промах терпится - какое: строки `is_monolith_cached` в `/tmp/recovery.log` (нет `/proc/modules` → настоящий монолит; пустой lsmod → монолит; канарейка `empty_checker_module` без следа `/proc/empty_check_gki` → частичный монолит, Sultan-стайл: поддельные RC=0 и пустой lsmod) |
+| Не расшифровывает | Статус сервисов KeyMint/weaver, слот `.weaver`, `ro.crypto.fs_crypto_blkdev` |
+| Нет USB/OTG | Пути `vbus_paths`, `patch_dwc3`, бинд UDC в логе `otg_auto`. Блок гейта (ядро новее прошивки) = только девайс-режим, adb цел. Диск воткнут, но не монтируется: гони `otg_test.sh` на девайсе (ПК отключён) - проверки T1-T8 (диск, раздел, демон, линк `/dev/block/otg-usb`, match uevent, тома, mount, dedup) |
+| Путаница dm | `/tmp/fox_dm_state` (`<name> <dm-target>`, `# v1 epoch=`): единственная рантайм-правда. `dm-watch` снапшот-only - не воскресит узел, который формат только что снёс |
+| Нет % батареи | Жив ли health HAL (`android.hardware.health@2.1-service`)? Снапшот батареи в `flog.sh` |
+| Тормозит GUI | `TW_FRAMERATE` в логе сборки (`-DTW_FRAMERATE=` во флагах) |
 | Фолд: картинка/тач на разных экранах | `DOF_SCREEN_W/H`, выбор DSI-коннектора (cover-патч) |
-| Format Data падает | Строки `FoxFstab`/`FoxTeardown`/`FoxFormat` в `/tmp/recovery.log` (см. ниже) |
+| Format Data падает | Строки `FoxFstab` / `FoxTeardown` / `FoxFormat` в `/tmp/recovery.log` (ниже) |
 
-## Format Data на мультидевайсной /data
+</details>
 
-На аппаратах, чей стоковый `fstab` декларирует сет девайсов `/data`
-(`device=zoned|exp|exp_alias`, семьи malibu/laguna), рекавери повторяет
-стоковый factory reset. Живая геометрия парсится в момент Format
-из `/first_stage_ramdisk/system/etc/fstab.<family>` загруженного слота
-(вендорные DFE-правки и наши снапшоты обходятся); отсутствующие ноды
-скипаются, а без exp-участников (пустой сет или одинокий zoned) легаси-путь
-однодевайсных семей остаётся нетронутым. Нечитаемый fstab или задекларированный
-exp-сет с нулём живых нод — громкий отказ (fail closed), а не угадывание.
+<details>
+<summary>💾 Format Data на мультидевайс `/data` - два маршрута</summary>
+
+На аппаратах, чей стоковый `fstab` объявляет набор устройств `/data` (`device=zoned|exp|exp_alias`, семейства malibu/laguna), рекавери зеркалит стоковый factory reset. Живая геометрия парсится в момент формата из `/first_stage_ramdisk/system/etc/fstab.<family>` загруженного слота (вендорские DFE-правки и наши снапшоты обходятся); отсутствующие узлы скипаются, а без exp-участников (пустой набор или одинокий zoned-компаньон) остаётся нетронутым legacy-путь одного девайса. Несканируемый fstab или объявленный exp-набор с нулём выживших узлов - громкий отказ от формата (fail closed) вместо угадывания.
 
 Стадии в `/tmp/recovery.log`:
-1. `FoxFstab: parsing ...` + `/data set: N device(s)` — что нашлось;
-2. quiesce: MTP off + `FoxTeardown: unmounted ...` (обратимые анмаунты);
-3. merge-check (Unmap уже по отмонтированному стеку, крипто-ноды свип
-   теперь скипает все), затем выбор маршрута по живому стеку;
-4. расшифровано (dm-стек жив) = маршрут (a-dm), как легаси-поток: `mkfs`
-   через живой крипто-dm (vold-точные аргументы, мэппер-пути + `@alias`)
-   + проверка маунтом тут же; ключи живут дальше, `/data` пригодна
-   в сессии, без вайпа `/metadata` и без nuking Титана. Залочено/DFE
-   (стека нет) = маршрут (b): снос dm сверху вниз
-   (`FoxTeardown: removing dm mapping ...`; после этого ребут пересоздаст
-   стек через расшифровку, ключи ещё в `/metadata`), discard userdata
-   с проверкой header-kill, discard компаньонов (zoned отдаётся на
-   provision vold). Провал (a-dm) внутри того же вызова уводит в (b).
-   Хвост только на (b): вайп `/metadata`, сброс memtag, Titan nuke
-   (`titan-wipe`), вайп `trusty_userdata`, misc-флаги;
-   `Can_Be_Mounted=false` тоже только там. Авторитетен reformat vold
-   при следующей загрузке через свежий dm-стек. Проверка header доказывает только убийство
-   заголовка, не весь вайп; крипто-стирание завершают вайп `/metadata`
-   + nuke Титана.
 
-`EBUSY` на teardown = что-то держит `/data`: чистый ребут в рекавери и
-повтор; до этой точки ничего не уничтожается.
+1. `FoxFstab: parsing ...` + `/data set: N device(s)` - что найдено;
+2. quiesce: MTP off + `FoxTeardown: unmounted ...` (обратимые размонтирования);
+3. merge-проверка (Unmap по размонтированному стеку; sweep теперь скипает все crypto dm-узлы), затем решение о маршруте на живом стеке;
+4. расшифровано (живой dm-стек) = маршрут **(a-dm)**, как legacy-поток: `mkfs` через живой crypto dm (vold-точные аргументы, mapper-пути + `@alias`) + тут же mount-verify; ключи живы, `/data` пригодна в сессии, без вайпа метадаты, без нюка Титана. Залочено/DFE (стека нет) = маршрут **(b)**: снос dm сверху вниз (`FoxTeardown: removing dm mapping ...`; дальше перезагрузка пересоздаст стек через decrypt, ключи всё ещё в `/metadata`), discard userdata с верификацией header-kill, подивайсные дискарды компаньонов (zoned отдаётся vold-провижинингу).
+5. **Фейл (a-dm) падает в (b)** внутри того же вызова. Хвост только на (b): вайп `/metadata`, сброс memtag, нюк Титана M (`titan-wipe`), вайп `trusty_userdata`, misc-флаги; `Can_Be_Mounted=false` только на (b). Авторитетным остаётся vold-реформат следующей загрузки через свежий dm-стек.
+6. Header-проверка доказывает только убийство 4K-заголовка, никогда весь вайп; крипто-стирание на маршруте (b) полно через вайп `/metadata` + нюк Титана.
 
-DFE/нешифрованные аппараты (нет живого крипто-стека) сохраняют легаси
-rm -rf-пути — отвязывать нечего. Голый `mkfs` мультидевайсного сета не
-поддерживается нигде: для wipe/restore `/data` ставьте галку rm -rf,
-а не форматирование.
+`EBUSY` на teardown = что-то держит `/data`: чисто перезагрузите рекавери и повторите; до этой точки ничего не разрушено. `EINVAL`/`EBUSY` на `removing dynamic partition: userdata_exp.*` = сборка без teardown (обновитесь, затем репортьте).
 
-Правило порядка (легаси `/data`): rm-rf-вариант трёт живой моунт до
-любого unmount; mkfs-вариант сначала размонтирует. Unmount перед rm -rf
-ломает повторный моунт — stale криптомэппинг всё ещё держит сырой девайс
-(`EBUSY`), либо сырой шифротекст сам по себе не монтируется (`EINVAL`).
+</details>
 
-Включённый rm-rf на `/data` — это ПОЛНОЕ стирание файлов (тот же
-результат, что mkfs, другим методом, включая внутреннюю память): он идёт
-мимо media-preserving ветки, которая иначе оставила бы `/data/media` и —
-через скип `OF_WORKAROUND_BACKUP_BUG` — `/data/data`. Выключенный оставляет
-сохраняющее поведение (стиль factory-reset).
+<details>
+<summary>📝 DFE / plaintext и legacy-правила</summary>
 
-Честный ярлык: этот Format Data — крипто-стирание (убивает ключи в
-`/metadata` + Titan M, discard сета). Физическое зануление всех блоков
-UFS не гарантируется.
+- DFE/plaintext-аппараты (нет живого crypto-стека) держат legacy rm-rf-маршруты - разбиндить нечего. Голый `mkfs` на мультидевайс-наборе не поддерживается нигде: для вайпа/рестора `/data` тикайте чекбокс rm-rf, никогда plain-format.
+- Правило порядка (legacy `/data`): rm-rf-стиль вайпает живой маунт **до** любого размонтирования; mkfs-стиль сначала размонтирует. Размонтирование до rm-rf-вайпа ломает перемонт - протухший crypto-мэппер всё ещё держит raw-девайс (`EBUSY`), либо сырой шифртекст сам по себе не маунтится (`EINVAL`).
+- Отмеченный rm-rf на `/data` = ПОЛНЫЙ файловый вайп (тот же результат, что mkfs, другим методом, включая internal storage): обходит media-preserving ветку, которая иначе сохранила бы `/data/media` и - через скип `OF_WORKAROUND_BACKUP_BUG` - `/data/data`. Без галки - сохраняющее поведение (factory-reset style).
+- Честный ярлык: этот Format Data - **крипто-стирание** (убивает ключи в `/metadata` + Титан, дискардит набор). Физического зануления каждого UFS-блока не гарантирует.
 
-Стадии в `/tmp/recovery.log`:
-1. `FoxFstab: parsing ...` + `/data set: N device(s)` — что нашлось;
-2. `FoxTeardown: unmounted ...` + `removing dm mapping ...` — обратное снятие
-   расшифрованного стека до `Unmap_Super_Devices` (ошибка `still in use`
-   означает, что что-то держит `/data`: закрыть, повторить; до этого момента
-   ничего не уничтожается);
-3. `FoxFormat: erasing /data...` — discard userdata с проверкой blank,
-   затем вайп `/metadata`, сброс memtag, вайп `trusty_userdata`, misc-флаги.
-   `Can_Be_Mounted=false`: vold форматирует сет при следующей загрузке
-   Android (в успешном логе — «Android sets up /data on its next boot»).
+</details>
 
-`EINVAL`/`EBUSY` на `removing dynamic partition: userdata_exp.*` = сборка
-без teardown (сначала обновиться, потом репортить).
+## Застряли? Сначала логи
 
-## Полный протокол для тестеров
-
-[`tester-guide.ru.md`](tester-guide.ru.md) — установка, исходы A–D,
-pstore (`console-ramoops`/`dmesg-ramoops`), дамп `vendor_boot`,
-UI-проверки фолдов/планшета. Репорты без логов не чинятся.
+В рекавери `flog.sh` (или `adb shell flog.sh`). Один архив `fox_logs_<device>_<family>_<stamp>.tar.gz`, приложите его + модель. Без логов чинить нечего - репорт без архива рассматривать не будут. Полный полевой протокол (исходы A-D, pstore, дамп `vendor_boot`, UI-чеки фолдов/планшета): [`tester-guide_ru.md`](tester-guide_ru.md).

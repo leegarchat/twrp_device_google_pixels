@@ -1,7 +1,11 @@
-# Флаги сборки FOX/OF/TW — что делают и к чему приводят
+# Флаги сборки FOX/OF/TW - что делают и к чему приводят
+
+> [English version](FOX_FLAGS.md)
+
+`Гайд v3 · 2026-10-26 · справочник`
 
 Справочник по `device/google/pixels` (OrangeFox R12, дерево Android 14).
-Все пути ниже — относительно корня Android-репозитория, если не сказано иное.
+Все пути ниже - относительно корня Android-репозитория, если не сказано иное.
 `pixels/` = `device/google/pixels`.
 
 > Поправка: Stable **останавливает** `adbd` на старте
@@ -15,44 +19,44 @@
 
 В слое `*.mk` есть ровно **один** поведенческий свитч Stable-vs-other
 (`bootable/recovery/orangefox.mk:151-153`, точное совпадение с учетом
-регистра `Stable`). Всё остальное, завязанное на тип сборки, — только
+регистра `Stable`). Всё остальное, завязанное на тип сборки, - только
 строки, пропсы и имя zip.
 
 | `FOX_BUILD_TYPE=` | Конкретные эффекты |
 |---|---|
-| `Stable` (дефолт нашего дерева: `pixels/build.sh --build-type`, без аргумента — `Stable`; `pixels/vendorsetup.sh` сохраняет предустановленное значение или дефолтит) | `OF_ADVANCED_SECURITY:=1` → `-DOF_ADVANCED_SECURITY="1"` (`orangefox.mk:152,224-225`). Рантайм: §2. Имя zip `...-Stable-...` (`vendor/recovery/OrangeFox_A14.sh:330/332`). `ro.orangefox.type=Stable` (`twrp.cpp:459`), строки About/`fox_build_type1` (`data.cpp:736,898`), тип в `releaseinfo.json` (`twrp-functions.cpp:367`), приветствие "Build type: Stable + ссылка на поддержку" (`twrp-functions.cpp:2735-2738`). |
+| `Stable` (дефолт нашего дерева: `pixels/build.sh --build-type`, без аргумента - `Stable`; `pixels/vendorsetup.sh` сохраняет предустановленное значение или дефолтит) | `OF_ADVANCED_SECURITY:=1` → `-DOF_ADVANCED_SECURITY="1"` (`orangefox.mk:152,224-225`). Рантайм: §2. Имя zip `...-Stable-...` (`vendor/recovery/OrangeFox_A14.sh:330/332`). `ro.orangefox.type=Stable` (`twrp.cpp:459`), строки About/`fox_build_type1` (`data.cpp:736,898`), тип в `releaseinfo.json` (`twrp-functions.cpp:367`), приветствие "Build type: Stable + ссылка на поддержку" (`twrp-functions.cpp:2735-2738`). |
 | `Beta` / `Testing` / `Unstable` / любое другое непустое | **Нет** `OF_ADVANCED_SECURITY` → штатный путь автостарта MTP (`twrp.cpp:292-313`), нет раннего `ctl.stop adbd`. `BETA` (в любом регистре) всё равно получает строку со ссылкой на поддержку (`twrp-functions.cpp:2736`); остальные значения печатают "No official support for unknown builds" (`:2740`). Больше ничего в рантайме не меняется. |
 | не задан / пусто | Дефолт `"Unofficial"` (`orangefox.mk:143`, `OrangeFox_A14.sh:311`). Тот же рантайм, что у Beta, плюс предупреждение Unofficial (`twrp-functions.cpp:2732-2733`). |
 
-`FOX_VARIANT` (`pixels/vendorsetup.sh:150` → `default`; `orangefox.mk:43-47`)
-и `OF_MAINTAINER` (`:151` → `LeeGarChat`; `orangefox.mk:206-210`,
-без значения = `"Testing build (unofficial)"`) — **только строки**
+`FOX_VARIANT` (`pixels/vendorsetup.sh:121` → `default`; `orangefox.mk:43-47`)
+и `OF_MAINTAINER` (`:122` → `LeeGarChat`; `orangefox.mk:206-210`,
+без значения = `"Testing build (unofficial)"`) - **только строки**
 (`ro.orangefox.variant`, страница About, имя zip, `releaseinfo.json`).
 Поведенческих форков нет. `FOX_BUILD` (`R12.0[_N]`, `orangefox.mk:24-37`,
-`--patch N` через `pixels/build.sh:196`) — то же, только версия.
+`--patch N` через `pixels/build.sh:258`) - то же, только версия.
 
 ---
 
-## 2. `OF_ADVANCED_SECURITY=1` — полный список гейтов
+## 2. `OF_ADVANCED_SECURITY=1` - полный список гейтов
 
 Выставляется автоматически на `Stable`; ручной
 `export OF_ADVANCED_SECURITY=1` идёт тем же путём. Старое имя
-`FOX_ADVANCED_SECURITY` — жёсткая ошибка сборки (`orangefox.mk:616-617`).
+`FOX_ADVANCED_SECURITY` - жёсткая ошибка сборки (`orangefox.mk:616-617`).
 
 | Гейт | Эффект на практике |
 |---|---|
-| `twrp.cpp:246-249` | **`ctl.stop adbd` на раннем старте, `orangefox.adb.status=0`. ADB мёртв с рождения — включая экран ввода пароля.** |
+| `twrp.cpp:246-249` | **`ctl.stop adbd` на раннем старте, `orangefox.adb.status=0`. ADB мёртв с рождения - включая экран ввода пароля.** |
 | `twrp.cpp:287-290` | `fox_advanced_security=1`, **`tw_mtp_enabled=0`**, штатный автостарт MTP пропущен (`:292-314` ветка else мертва). В лог: `ADB & MTP disabled by maintainer`. |
 | `main.xml:48-65` | Отложенное включение **при первом входе на страницу `main`**: `startmtp` + `adb enable` срабатывают один раз (условия: нет пароля локскрина, `adb_startup=1`, `adb_started!=1`, `tw_has_mtp=1`). **На зашифрованном девайсе, висящем на вводе пароля, `main` не достигается → adb/MTP молчат весь сеанс.** |
 | `partitionmanager.cpp:812-819` (дерево pixels) | Только intent-комментарий: рестарта MTP после metadata decrypt нет (и так покрыто `tw_mtp_enabled=0`, но зафиксировано явно). |
 
-**Явно НЕ затронуто** (проверено grep — работает одинаково на Stable):
+**Явно НЕ затронуто** (проверено grep - работает одинаково на Stable):
 - ADB sideload / ORS (`openrecoveryscript.cpp:408-448` делает `ctl.start adbd`; автостарт ORS `twrp.cpp:280-282` безусловен).
 - Встроенный терминал / nano (`data.cpp:1513-1518`, важен только `TW_EXCLUDE_NANO`).
 - Файловый менеджер (условий на `fox_advanced_security` нет).
 - Страница `pass.xml:92-106` проверки пароля (смотрит только `adb_startup`/`tw_mtp_enabled`).
 
-Практический вывод для тестеров: на Stable «нет adb на экране пароля» — это
+Практический вывод для тестеров: на Stable «нет adb на экране пароля» - это
 **by design**, а не баг. Наш self-heal в `otg.rs` (`switch_to_device`:
 `ctl.start adbd` + явный rebind UDC) осознанно оживляет его ради отладки.
 Передёргивание кабеля помочь не может: init-триггеры edge-based, а нового
@@ -99,14 +103,14 @@
 | `OF_HIDE_NOTCH` | `0` | `=1` (:193) |
 | `OF_CLOCK_POS` | `0` | `=1` (:194) |
 | `OF_ALLOW_DISABLE_NAVBAR` | `1` | `=0` (:195) |
-| `OF_OPTIONS_LIST_NUM` | — | `=6` (:196) |
+| `OF_OPTIONS_LIST_NUM` | - | `=6` (:196) |
 
 ### 3.5 Сжатие / ramdisk
 
 | Флаг | Эффект | Tree |
 |---|---|---|
 | `OF_USE_LZ4_COMPRESSION=1` | LZ4-ramdisk + кодовый путь (`BOARD_RAMDISK_USE_LZ4`) | `=1` (:199; `BoardConfig.mk:110` согласен) |
-| `FOX_USE_LZ4_COMPRESSION`, `FOX_USE_LZMA_COMPRESSION`, `FOX_ADVANCED_SECURITY`, `OF_PATCH_VBMETA_FLAG`, `OF_TARGET_DEVICES` | **устарели — жёсткие ошибки сборки** (`orangefox.mk:600-621`) | корректно отсутствуют |
+| `FOX_USE_LZ4_COMPRESSION`, `FOX_USE_LZMA_COMPRESSION`, `FOX_ADVANCED_SECURITY`, `OF_PATCH_VBMETA_FLAG`, `OF_TARGET_DEVICES` | **устарели - жёсткие ошибки сборки** (`orangefox.mk:600-621`) | корректно отсутствуют |
 
 ### 3.6 Переключатели фич (tree)
 
@@ -124,7 +128,7 @@
 | `FOX_DELETE_INITD_ADDON=1` | Удаляет init.d-аддон (включено по умолчанию, если не `=0`) | `=1` (:262) |
 | `OF_QUICK_BACKUP_LIST` | Пресет быстрого бэкапа (`tw_backup_list_quick`) | `="/boot;/vendor_boot;/data;"` (:243) |
 | `OF_UNBIND_SDCARD_F2FS=1` | Bind-unmount `/sdcard` перед F2FS-ремонтом/форматом | `=1` (:244) |
-| `OF_BIND_MOUNT_SDCARD_ON_FORMAT=1` | — | `=1` (:245) |
+| `OF_BIND_MOUNT_SDCARD_ON_FORMAT=1` | - | `=1` (:245) |
 | `OF_DYNAMIC_FULL_SIZE=8531214336` | Константа full-size (совпадает с `BOARD_SUPER_PARTITION_SIZE`) | (:246) |
 | `OF_USE_LEGACY_BATTERY_SERVICES=0` | HIDL-ветка health (`GetBatteryInfo`); нужен `health@2.1-service` в рамдиске (`device.mk`) | `=0` (:249) |
 | `OF_FORCE_DATA_FORMAT_F2FS=1` | Формат только в F2FS | `BoardConfig.mk:215` (mk, не env) |
@@ -141,13 +145,13 @@
 `TWRP_INCLUDE_LOGCAT`, `TW_USE_FSCRYPT_POLICY:=2` (`BoardConfig.mk:196-225`).
 `OF_CHECK_OVERWRITE_ATTEMPTS` не тронут → проверка включена.
 `OF_SKIP_FBE_DECRYPTION` закомментирован / `OF_DEFAULT_KEYMASTER_VERSION`
-явно unset (`vendorsetup.sh:220`).
+явно unset (`vendorsetup.sh:175-177`).
 
 ### 3.8 Тулчейн / прочее (tree)
 
-`USE_CCACHE=1` (:152), `TARGET_ARCH=arm64` (:153, `BoardConfig.mk:65`
-всё равно перебивает env), `FOX_REPLACE_TOOLBOX_GETPROP=1` (:226),
-`FOX_BASH_TO_SYSTEM_BIN=1` (:228), `FOX_LOCAL_CALLBACK_SCRIPT` (:265),
+`USE_CCACHE=1` (:123), `TARGET_ARCH=arm64` (:124, `BoardConfig.mk:65`
+всё равно перебивает env), `FOX_REPLACE_TOOLBOX_GETPROP=1` (:181),
+`FOX_BASH_TO_SYSTEM_BIN=1` (:183), `FOX_LOCAL_CALLBACK_SCRIPT` (:227),
 `FOX_KEYMINT_TYPE` (=`both`, фикс) / `DEVICE_BUILD_FLAG` (=`aio`, фикс) /
 `FOX_KERNEL_VER` (=`stock`, фикс) / `LGZ_LEVEL` (через `build.sh`).
 Закомментировано (сознательно выкл): `FOX_ASH_IS_BASH`,
@@ -156,7 +160,7 @@
 
 ### 3.9 Выставлено, но нигде не читается (мёртвые ручки в этом дереве)
 
-`OF_IGNORE_LOGICAL_MOUNT_ERRORS=1` (`:202`) — читателя нет ни в
+`OF_IGNORE_LOGICAL_MOUNT_ERRORS=1` (`:202`) - читателя нет ни в
 `bootable/`, ни в `vendor/recovery/`, ни в `vendor/twrp/`. Legacy/no-op здесь.
 (Заданное-но-неиспользуемое в других местах: `FOX_REPLACE_BOOTIMAGE_DATE`,
 `OF_KEEP_DM_VERITY*` (в mk и так форсирован `1`), `OF_FORCE_DISABLE_DM_VERITY`,
@@ -198,5 +202,5 @@
   Реплаг не помогает (edge-based init).
 - `Beta` **ничего** не включает в рантайме по сравнению со Stable, кроме
   *снятия* гейтов §2. Никаких "бета-фич" флагом нет.
-- Устаревшие имена из §3.5 не ставить никогда — мгновенная ошибка сборки
+- Устаревшие имена из §3.5 не ставить никогда - мгновенная ошибка сборки
   by design.
