@@ -223,6 +223,8 @@ TARGET_BOARD_INFO_FILE := $(DEVICE_PATH)/board-info.txt
 
 # Additional flags
 SELINUX_IGNORE_NEVERALLOWS := true
+# Extra SELinux types for third-party hardened kernels (see sepolicy/).
+BOARD_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy
 BOARD_ROOT_EXTRA_FOLDERS := bluetooth dsp firmware persist
 BOARD_SUPPRESS_SECURE_ERASE := true
 BOARD_MOVE_GSI_AVB_KEYS_TO_VENDOR_BOOT := true

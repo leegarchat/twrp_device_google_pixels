@@ -1,0 +1,15 @@
+# Compatibility stub for third-party hardened kernels.
+#
+# Some kernels (GrapheneOS Titan M3 era and similar) require extra SELinux
+# types to exist at policy load time. If the type is missing, the kernel
+# refuses the policy ("missing type_datum for <name>") and the rollback
+# path in sel_write_load panics the boot, before recovery even starts.
+#
+# Declared-but-unused types are ignored by stock kernels, so this file is
+# a no-op everywhere except on kernels that demand these names.
+#
+# Field-proven, one boot at a time: if the kernel still refuses the policy
+# after this, read the next "missing type_datum" name from pstore and add
+# it here the same way.
+
+type zygote_next;
