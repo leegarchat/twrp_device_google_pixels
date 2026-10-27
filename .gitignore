@@ -15,3 +15,5 @@ installer/modules/
 tools/unpack_modules
 tools/surgical
 tools/firmware
+# Release-page draft (GitHub release text, never committed).
+release.md
