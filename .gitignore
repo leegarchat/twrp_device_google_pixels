@@ -17,3 +17,6 @@ tools/surgical
 tools/firmware
 # Release-page draft (GitHub release text, never committed).
 release.md
+
+# Beta-1.3 release page draft (GitHub release text, never committed).
+release_b1_3.md
