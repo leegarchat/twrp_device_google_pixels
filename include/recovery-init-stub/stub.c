@@ -29,8 +29,9 @@
  *
  * Plain C, libc calls only, fully static (see Android.bp): must run before
  * the cluster is unpacked, so it cannot depend on any shared library.
- * Near-silent by design: only magisk-detection lines go to the stub log,
- * any bootstrap failure reboots to the bootloader.
+ * Paranoid logging by design: every branch logs to kmsg ("fox-stub: "
+ * tag, lands in pstore) plus the stub log files. Bootstrap failures
+ * still reboot to the bootloader, but the reason stays visible.
  */
 
 #include <errno.h>
@@ -39,14 +40,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/reboot.h>
+#include <sys/select.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "snapshot.h"
 #include "aioswap.h"
+
+/* Forward: paranoid kmsg sink, defined below next to fox_log. */
+static void fox_klog(const char* s);
+
+/* Stub version tag. Bump on every behavior change so pstore always tells
+ * exactly which stub ran — never trust build dates or hashes from memory. */
+#define FOX_STUB_VERSION "1.25"
 
 static const char kFoxInit[] = "/system/bin/fox.init";
 /* Magisk hexpatch canary: the INTENTIONAL single 16-byte "/system/bin/init"
@@ -79,20 +90,122 @@ static int path_exists(const char* path) {
     return access(path, F_OK) == 0;
 }
 
-/* fork + execve + synchronous wait. Returns the child exit code, or -1. */
+/* fork + execve + synchronous wait. Returns the child exit code, or -1.
+ * The child's stdout/stderr are captured through a pipe and mirrored to
+ * kmsg (capped, so a chatty child cannot flood pstore). Drained while
+ * waiting so a child writing more than the pipe buffer can never block. */
+#define RUN_CHILD_LOG_CAP 8192
 static int run_child(const char* prog, char* const argv[]) {
-    pid_t pid = fork();
-    if (pid < 0) return -1;
+    int pipefd[2];
+    pid_t pid;
+    size_t logged = 0;
+    int status = 0;
+    int child_done = 0;
+    int eof = 0;
+    if (pipe(pipefd) != 0) {
+        /* No pipe: fall back to silent spawn, behavior unchanged. */
+        pid = fork();
+        if (pid < 0) {
+            fox_klog("run_child: fork failed\n");
+            return -1;
+        }
+        if (pid == 0) {
+            extern char** environ;
+            execve(prog, argv, environ);
+            fox_klog("run_child: execve failed\n");
+            _exit(127);
+        }
+        while (waitpid(pid, &status, 0) < 0) {
+            if (errno != EINTR) {
+                fox_klog("run_child: waitpid failed\n");
+                return -1;
+            }
+        }
+        if (WIFEXITED(status)) return WEXITSTATUS(status);
+        return -1;
+    }
+    pid = fork();
+    if (pid < 0) {
+        fox_klog("run_child: fork failed\n");
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
     if (pid == 0) {
         extern char** environ;
+        int nullfd = open("/dev/null", O_RDONLY);
+        if (nullfd >= 0) {
+            dup2(nullfd, STDIN_FILENO);
+            if (nullfd > STDERR_FILENO) close(nullfd);
+        }
+        dup2(pipefd[1], STDOUT_FILENO);
+        dup2(pipefd[1], STDERR_FILENO);
+        if (pipefd[0] > STDERR_FILENO) close(pipefd[0]);
+        if (pipefd[1] > STDERR_FILENO) close(pipefd[1]);
         execve(prog, argv, environ);
         _exit(127);
     }
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) return -1;
+    close(pipefd[1]);
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    while (!child_done || !eof) {
+        char chunk[512];
+        ssize_t r = read(pipefd[0], chunk, sizeof(chunk) - 1);
+        if (r > 0) {
+            /* Log whole chunk as one record (may contain newlines;
+             * kernel splits records itself). Cap the total volume. */
+            if (logged < RUN_CHILD_LOG_CAP) {
+                size_t want = (size_t)r;
+                if (logged + want > RUN_CHILD_LOG_CAP)
+                    want = RUN_CHILD_LOG_CAP - logged;
+                chunk[want] = '\0';
+                fox_klog(chunk);
+                logged += want;
+            }
+            continue;
+        }
+        if (r == 0) {
+            eof = 1;
+        }
+        if (!child_done) {
+            pid_t w = waitpid(pid, &status, WNOHANG);
+            if (w < 0) {
+                if (errno != EINTR) {
+                    fox_klog("run_child: waitpid failed\n");
+                    close(pipefd[0]);
+                    return -1;
+                }
+            } else if (w == pid) {
+                child_done = 1;
+            }
+        }
+        if (!child_done || !eof) {
+            /* Brief nap: 5ms via select timeout, no timers needed. */
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 5000;
+            select(0, NULL, NULL, NULL, &tv);
+        }
     }
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    close(pipefd[0]);
+    if (WIFEXITED(status)) {
+        if (WEXITSTATUS(status) == 0) {
+            fox_klog("run_child: child ok\n");
+        } else {
+            fox_klog("run_child: child exit != 0\n");
+        }
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        /* Log the killing signal number (two digits max) so pstore shows
+         * SIGSEGV vs SIGABRT vs SIGILL without a debugger on device. */
+        char msg[] = "run_child: child killed by signal 00\n";
+        int sig = WTERMSIG(status);
+        msg[34] = (char)('0' + (sig / 10) % 10);
+        msg[35] = (char)('0' + sig % 10);
+        fox_klog(msg);
+        return -1;
+    }
+    fox_klog("run_child: child did not exit\n");
     return -1;
 }
 
@@ -104,8 +217,72 @@ static void reboot_bootloader(void) {
     for (;;) sleep(60);
 }
 
+static void fox_init_dev_and_stdio(void) {
+    mkdir("/dev", 0755);
+    mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
+    mknod("/dev/null", S_IFCHR | 0666, makedev(1, 3));
+    mknod("/dev/console", S_IFCHR | 0600, makedev(5, 1));
+    {
+        int fd = open("/dev/null", O_RDWR);
+        if (fd >= 0) {
+            if (fd != STDIN_FILENO) dup2(fd, STDIN_FILENO);
+            if (fd != STDOUT_FILENO) dup2(fd, STDOUT_FILENO);
+            if (fd != STDERR_FILENO) dup2(fd, STDERR_FILENO);
+            if (fd > STDERR_FILENO) close(fd);
+        }
+    }
+}
+
+/* Paranoid kmsg sink: every stub decision lands in pstore via
+ * /dev/kmsg, which survives reboot into console-ramoops. Best-effort:
+ * if kmsg is unavailable the boot proceeds exactly as before.
+ * Lines carry the "fox-stub: " tag for easy grepping. */
+static void fox_klog(const char* s) {
+    /* Single write: tag + message in one record. Two separate writes
+     * make the kernel split them into two pstore lines ("fox-stub: "
+     * alone, message on the next line). */
+    static const char tag[] = "<6>fox-stub: ";
+    char buf[256];
+    size_t tlen = sizeof(tag) - 1;
+    size_t slen = strlen(s);
+    size_t total = tlen + slen;
+    size_t left;
+    const char* p;
+    int fd;
+    if (total >= sizeof(buf)) {
+        slen = sizeof(buf) - 1 - tlen;
+        total = sizeof(buf) - 1;
+    }
+    memcpy(buf, tag, tlen);
+    memcpy(buf + tlen, s, slen);
+    buf[total] = '\0';
+    fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+        /* The stub runs as PID 1 before /dev exists: create the kmsg
+         * node ourselves on the writable initramfs root so the trail
+         * still reaches pstore. Major 1, minor 11. */
+        mkdir("/dev", 0755);
+        mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
+        fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+        if (fd < 0) return;
+    }
+    p = buf;
+    left = total;
+    while (left > 0) {
+        ssize_t w = write(fd, p, left);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        p += w;
+        left -= (size_t)w;
+    }
+    close(fd);
+}
+
 /* Best-effort append of one NUL-terminated line to the stub logs
- * (same files aioswap uses; flog.sh collects them). */
+ * (same files aioswap uses; flog.sh collects them). Mirrored to kmsg
+ * so the stub trail is also visible in pstore. */
 static void fox_log(const char* s) {
     static const char* const paths[] = { "/tmp/aio_stub.log", "/aio_stub.log", NULL };
     int i;
@@ -128,6 +305,7 @@ static void fox_log(const char* s) {
         }
         close(fd);
     }
+    fox_klog(s);
 }
 
 /* Copy the live canary bytes (17 incl NUL) to out. Volatile reads: the
@@ -249,9 +427,11 @@ static void fox_maybe_repatch(void) {
 
 static void exec_real(int argc, char** argv, char** envp) {
     (void)argc;
+    fox_klog("exec_real: handing off to fox.init\n");
     fox_maybe_repatch();
     execve(kFoxInit, argv, envp);
     /* execve returns only on error (ENOENT etc.): nothing sane left to do. */
+    fox_klog("exec_real: execve fox.init failed, rebooting\n");
     reboot_bootloader();
 }
 
@@ -308,26 +488,275 @@ static int root_init_is_self(void) {
     return strcmp(buf, "system/bin/init") == 0 || path_is_stock_init(buf);
 }
 
+/* file-like identity check of the lgz decoder before exec: size,
+ * ELF magic, e_type/e_machine and a fast FNV-1a over the bytes.
+ * Lets pstore prove WHICH binary ran instead of guessing versions. */
+static void fox_check_lgz(void) {
+    static const char hd[] = "0123456789abcdef";
+    unsigned char eh[64];
+    unsigned long sz = 0, h = 2166136261UL;
+    struct stat st;
+    int fd, i;
+    char line[192], *pp = line;
+    const char *pfx = "main: lgz file: ";
+    const char *tp;
+    if (stat(kLgzBin, &st) != 0) {
+        fox_klog("main: lgz file: missing\n");
+        return;
+    }
+    sz = (unsigned long)st.st_size;
+    fd = open(kLgzBin, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        fox_klog("main: lgz file: unopenable\n");
+        return;
+    }
+    {
+        ssize_t r = 0, got = 0;
+        while (got < (ssize_t)sizeof(eh)) {
+            r = read(fd, eh + got, sizeof(eh) - (size_t)got);
+            if (r <= 0) break;
+            got += r;
+        }
+        if (got != (ssize_t)sizeof(eh)) {
+            fox_klog("main: lgz file: short header\n");
+            close(fd);
+            return;
+        }
+        for (i = 0; i < (int)sizeof(eh); i++) {
+            h ^= eh[i];
+            h *= 16777619UL;
+        }
+        for (;;) {
+            unsigned char buf[65536];
+            ssize_t n = read(fd, buf, sizeof(buf));
+            int k;
+            if (n <= 0) break;
+            for (k = 0; k < n; k++) {
+                h ^= buf[k];
+                h *= 16777619UL;
+            }
+        }
+    }
+    close(fd);
+    while (*pfx) *pp++ = *pfx++;
+    if (sz == 0) {
+        *pp++ = '0';
+    } else {
+        char rbuf[24];
+        int rn = 0;
+        unsigned long t = sz;
+        while (t > 0 && rn < (int)sizeof(rbuf)) {
+            rbuf[rn++] = (char)('0' + (t % 10));
+            t /= 10;
+        }
+        while (rn > 0) *pp++ = rbuf[--rn];
+    }
+    tp = " magic=";
+    while (*tp) *pp++ = *tp++;
+    for (i = 0; i < 4; i++) {
+        *pp++ = hd[(eh[i] >> 4) & 0xF];
+        *pp++ = hd[eh[i] & 0xF];
+    }
+    {
+        unsigned etype = (unsigned)eh[16] | ((unsigned)eh[17] << 8);
+        unsigned emach = (unsigned)eh[18] | ((unsigned)eh[19] << 8);
+        int sh;
+        tp = " etype=";
+        while (*tp) *pp++ = *tp++;
+        *pp++ = hd[(etype >> 12) & 0xF];
+        *pp++ = hd[(etype >> 8) & 0xF];
+        *pp++ = hd[(etype >> 4) & 0xF];
+        *pp++ = hd[etype & 0xF];
+        tp = " emachine=";
+        while (*tp) *pp++ = *tp++;
+        *pp++ = hd[(emach >> 12) & 0xF];
+        *pp++ = hd[(emach >> 8) & 0xF];
+        *pp++ = hd[(emach >> 4) & 0xF];
+        *pp++ = hd[emach & 0xF];
+        tp = " fnv=";
+        while (*tp) *pp++ = *tp++;
+        for (sh = 28; sh >= 0; sh -= 4) *pp++ = hd[(h >> sh) & 0xF];
+    }
+    *pp++ = '\n';
+    *pp = '\0';
+    fox_klog(line);
+}
+
 int main(int argc, char** argv, char** envp) {
-    /* 1. Fast path: unpacked tree. Either marker suffices. */
-    if (path_exists(kMarkerRoot) || path_exists(kMarkerEtc))
+    fox_init_dev_and_stdio();
+    fox_klog("main: stub " FOX_STUB_VERSION " start\n");
+    /* Environment dump: argv, uid/gid, cwd and the environment block.
+     * Everything the child will inherit, visible in pstore. Bounded:
+     * at most 24 vars, values truncated, so a huge env cannot flood. */
+    {
+        char line[192], *pp;
+        const char *pfx = "main: env argc=";
+        int i, n;
+        pp = line;
+        while (*pfx) *pp++ = *pfx++;
+        if (argc < 0) argc = 0;
+        if (argc > 99) argc = 99;
+        *pp++ = (char)('0' + (argc / 10));
+        *pp++ = (char)('0' + (argc % 10));
+        *pp++ = ' ';
+        *pp++ = 'u';
+        *pp++ = 'i';
+        *pp++ = 'd';
+        *pp++ = '=';
+        {
+            unsigned u = (unsigned)getuid();
+            char rb[16];
+            int rn = 0;
+            if (u == 0) {
+                *pp++ = '0';
+            } else {
+                while (u > 0 && rn < (int)sizeof(rb)) {
+                    rb[rn++] = (char)('0' + (u % 10));
+                    u /= 10;
+                }
+                while (rn > 0) *pp++ = rb[--rn];
+            }
+        }
+        *pp++ = '\n';
+        *pp = '\0';
+        fox_klog(line);
+        for (i = 0; i < argc && i < 8; i++) {
+            const char *a = argv[i] ? argv[i] : "(null)";
+            char al[160];
+            char *q = al;
+            const char *ap = "main: argv: ";
+            int k = 0;
+            while (*ap) *q++ = *ap++;
+            while (a[k] != '\0' && k < 120) *q++ = a[k++];
+            *q++ = '\n';
+            *q = '\0';
+            fox_klog(al);
+        }
+        {
+            char cwd[160], *q;
+            const char *cp = "main: cwd: ";
+            q = cwd;
+            while (*cp) *q++ = *cp++;
+            if (getcwd(q, (size_t)(cwd + sizeof(cwd) - 2 - q)) == NULL) {
+                const char *nc = "(unknown)";
+                while (*nc) *q++ = *nc++;
+            }
+            *q++ = '\n';
+            *q = '\0';
+            fox_klog(cwd);
+        }
+        for (n = 0; envp && envp[n] && n < 24; n++) {
+            const char *e = envp[n];
+            char el[192], *q = el;
+            const char *ep = "main: env: ";
+            int k = 0;
+            while (*ep) *q++ = *ep++;
+            while (e[k] != '\0' && k < 150) *q++ = e[k++];
+            *q++ = '\n';
+            *q = '\0';
+            fox_klog(el);
+        }
+        if (envp) {
+            int total = 0;
+            while (envp[total]) total++;
+            if (total > n) fox_klog("main: env: (truncated)\n");
+        } else {
+            fox_klog("main: env: (none)\n");
+        }
+    }
+    if (path_exists(kMarkerRoot) || path_exists(kMarkerEtc)) {
+        fox_klog("main: unpack marker present, fast path\n");
         exec_real(argc, argv, envp);
+    }
+    fox_klog("main: no markers\n");
     /* 2. Real binary present without markers (markers lost, unpack done). */
-    if (path_exists(kFoxInit))
+    if (path_exists(kFoxInit)) {
+        fox_klog("main: fox.init present without markers\n");
         exec_real(argc, argv, envp);
+    }
+    fox_klog("main: fox.init missing\n");
 
     /* 3. Slow path: unpack the cluster now. recovery_mode gates the
      * bootloader reboot on unpack failure (a missing cluster means a plain
      * system boot image, which must never be failed by us). */
     int recovery_mode = path_exists(kRecovery) || path_exists(kCluster);
+    if (recovery_mode) {
+        fox_klog("main: recovery_mode=1\n");
+    } else {
+        fox_klog("main: recovery_mode=0\n");
+    }
+    /* Pre-flight the cluster before handing it to lgz: size + magic.
+     * A truncated/corrupt payload is the prime suspect when the
+     * decompressor dies instantly, and this check needs no child. */
+    {
+        struct stat st;
+        if (stat(kCluster, &st) == 0) {
+            char line[96];
+            int fd = open(kCluster, O_RDONLY | O_CLOEXEC);
+            /* "cluster bytes=N magic=........" (8 raw bytes as-is). */
+            unsigned long sz = (unsigned long)st.st_size;
+            char *pp = line;
+            const char *pfx = "main: cluster bytes=";
+            while (*pfx) *pp++ = *pfx++;
+            if (sz == 0) {
+                *pp++ = '0';
+            } else {
+                char rbuf[24];
+                int rn = 0;
+                while (sz > 0 && rn < (int)sizeof(rbuf)) {
+                    rbuf[rn++] = (char)('0' + (sz % 10));
+                    sz /= 10;
+                }
+                while (rn > 0) *pp++ = rbuf[--rn];
+            }
+            {
+                const char *mp = " magic=";
+                while (*mp) *pp++ = *mp++;
+            }
+            if (fd >= 0) {
+                unsigned char mg[8];
+                ssize_t rr = 0, got = 0;
+                while (got < 8) {
+                    rr = read(fd, mg + got, 8 - (size_t)got);
+                    if (rr <= 0) break;
+                    got += rr;
+                }
+                if (got == 8) {
+                    static const char hd[] = "0123456789abcdef";
+                    int k;
+                    for (k = 0; k < 8; k++) {
+                        *pp++ = hd[(mg[k] >> 4) & 0xF];
+                        *pp++ = hd[mg[k] & 0xF];
+                    }
+                } else {
+                    const char *me = "<short>";
+                    while (*me) *pp++ = *me++;
+                }
+                close(fd);
+            } else {
+                const char *me = "<unopenable>";
+                while (*me) *pp++ = *me++;
+            }
+            *pp++ = '\n';
+            *pp = '\0';
+            fox_klog(line);
+        } else {
+            fox_klog("main: cluster stat failed\n");
+        }
+    }
     int unpacked = 0;
     if (path_exists(kCluster)) {
+        fox_klog("main: cluster present\n");
         if (path_exists(kSnapshotManifest)) {
+            fox_klog("main: snapshot manifest present\n");
             /* Built-in snapshot (snapshot.c). The Rust ramdisk_snapshot
              * binary stays on board as fallback for the legacy init.cpp
              * path and emergencies — unused on the normal stub branch. */
             int snap_st = snapshot_run(kSnapshotManifest, kSnapshotDir);
-            if (snap_st != 0) {
+            if (snap_st == 0) {
+                fox_klog("main: builtin snapshot ok\n");
+            } else {
+                fox_klog("main: builtin snapshot failed, trying fallback\n");
                 char* const snap_argv[] = {
                     (char*)"ramdisk_snapshot",
                     (char*)kSnapshotManifest,
@@ -335,17 +764,31 @@ int main(int argc, char** argv, char** envp) {
                     NULL,
                 };
                 snap_st = run_child(kSnapshotBin, snap_argv);
+                if (snap_st == 0) {
+                    fox_klog("main: fallback snapshot ok\n");
+                } else {
+                    fox_klog("main: fallback snapshot failed\n");
+                }
             }
             (void)snap_st; /* snapshot is best-effort, never fatal */
+        } else {
+            fox_klog("main: no snapshot manifest\n");
         }
         char* const lgz_argv[] = {
             (char*)"lgz", (char*)"decompress", (char*)kCluster, (char*)"/", NULL,
         };
+        fox_check_lgz();
+        fox_klog("main: running lgz decompress\n");
         if (run_child(kLgzBin, lgz_argv) != 0) {
+            fox_klog("main: lgz decompress failed\n");
             if (recovery_mode) reboot_bootloader();
+            fox_klog("main: lgz failed, non-recovery, continuing\n");
         } else {
+            fox_klog("main: lgz decompress ok\n");
             unpacked = 1;
         }
+    } else {
+        fox_klog("main: no cluster\n");
     }
 
     /* AIO family swap (aioswap.c): the tree is fully unpacked here and the
@@ -356,20 +799,32 @@ int main(int argc, char** argv, char** envp) {
 
     /* Markers stay truthful: only when the cluster was actually unpacked.
      * Without an unpack there is no final tree to fast-path to. */
-    if (unpacked)
+    if (unpacked) {
+        fox_klog("main: marking unpacked\n");
         mark_unpacked();
+    } else {
+        fox_klog("main: nothing unpacked, no markers\n");
+    }
 
     /* 4. The unpack may have produced the real init: re-check before
      * falling through (covers markers-lost and just-unpacked alike). */
-    if (path_exists(kFoxInit))
+    if (path_exists(kFoxInit)) {
+        fox_klog("main: fox.init present after unpack\n");
         exec_real(argc, argv, envp);
+    }
+    fox_klog("main: fox.init still missing\n");
 
     /* 5. Last resort: no markers, no fox.init, no (usable) cluster.
      * Hand off to the kernel entry /init (possibly a Magisk/KSU hook);
      * if it resolves back to us there is nothing left to try. */
     if (!root_init_is_self()) {
+        fox_klog("main: handing off to /init\n");
         execve(kInitRoot, argv, envp);
+        fox_klog("main: /init execve failed\n");
+    } else {
+        fox_klog("main: /init resolves to self, no handoff\n");
     }
+    fox_klog("main: rebooting to bootloader\n");
     reboot_bootloader();
     return 127;
 }

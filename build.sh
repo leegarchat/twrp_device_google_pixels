@@ -160,6 +160,10 @@ unset DEVICE_BUILD_FLAG
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
+# Build wall-clock: start marker + elapsed time at the end.
+FOX_BUILD_T0=$SECONDS
+echo "[build] ===== start: $(date '+%F %T') ====="
+
 # nproc is banned in make recipe shells and may be missing elsewhere.
 fox_nproc() {
     local n
@@ -786,5 +790,13 @@ fi
 echo "=============================================="
 echo "  Artifacts in: $BUILDS_DIR/"
 echo "=============================================="
+# Build wall-clock: end marker + total elapsed from script start.
+_fox_build_dt=$((SECONDS - FOX_BUILD_T0))
+_fox_build_h=$((_fox_build_dt / 3600))
+_fox_build_m=$(((_fox_build_dt % 3600) / 60))
+_fox_build_s=$((_fox_build_dt % 60))
+printf '[build] ===== end: %s | elapsed: %dh %02dm %02ds (%ds) =====\n' \
+    "$(date '+%F %T')" "$_fox_build_h" "$_fox_build_m" "$_fox_build_s" "$_fox_build_dt"
+unset _fox_build_dt _fox_build_h _fox_build_m _fox_build_s
 # NOTE: FOX_BUILD_OK is set right after mka succeeds (above), not
 # here — the Telegram push/admin gates above must see it.
