@@ -1,0 +1,18 @@
+--- a/system/core/libmodprobe/libmodprobe.cpp
++++ b/system/core/libmodprobe/libmodprobe.cpp
+@@ -161,6 +161,15 @@
+     if (canonical_name.empty()) {
+         return false;
+     }
++    // FOX-TEST-HOOK: skip vestigial fips140. Stock ramdisks pin this FIPS
++    // canister to an older GKI release while it sits first in modules.load,
++    // so strict loading aborts the whole list on it and no other module
++    // (including the UFS stack) is ever attempted. fips140 has no hard
++    // dependents (ufs-exynos-core uses ufs-pixel-fips140 instead).
++    if (canonical_name == "fips140") {
++        LOG(INFO) << "Skipping vestigial module fips140 (test hook)";
++        return true;
++    }
+     this->module_load_.emplace_back(canonical_name);
+ 
+     return true;
