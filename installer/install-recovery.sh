@@ -9,14 +9,15 @@
 #      skipped otherwise, install proceeds)
 #   3. rebuild each snapshot with the payload via
 #      `install --file` (verify in, rebuild, verify out) + the
-#      per-device touch archive (modules/<codename>.lgz next to this
-#      script -> injected into the recovery payload at its root)
+#      per-device touch archive (bin/modules/<codename>.lgz next to
+#      this script -> injected into the recovery payload at its root)
 #   4. set the blocks writable (blockdev --setrw, best effort),
 #      dd the rebuilt images back, re-read + byte-compare proof
 #
 # Slots come from export.txt SLOT= (both|a|b|0|1|current, default
 # both); `current` resolves via ro.boot.slot_suffix. Payload and
-# binary live next to this script (bin/linux/, small build first).
+# binary live next to this script; the tool tree (bin/) is unpacked on
+# first run from the bin.lgz cluster via unpack_bin/ lean decoders.
 #
 # Overridable for testing (defaults are the production paths):
 #   RECOVERY_TMPDIR, RECOVERY_BYNAME, RECOVERY_SDCARDS (colon list),
@@ -79,6 +80,39 @@ case "$(uname -m 2>/dev/null || echo unknown)" in
     armv7l|armv6l|armv8l) ARCH="arm32";;
     i686|i386) ARCH="x86";;
 esac
+
+# ---- bin.lgz first-run unpack ----
+# The zip ships every tool as one lgz cluster (bin.lgz) plus per-OS lean
+# decoders in unpack_bin/. Unpack once into $ROOT/bin; the marker pins
+# the cluster byte size so re-runs skip and updates re-unpack.
+# RECOVERY_UNPACK_FORCE=1 (or FOX_UNPACK_FORCE=1) forces a refresh.
+# Without bin.lgz (classic layout) this block is a no-op.
+_UP_LGZ="$ROOT/bin.lgz"
+_UP_DST="$ROOT/bin"
+_UP_DEC="$ROOT/unpack_bin/lgz-lean-linux-$ARCH"
+if [ -f "$_UP_LGZ" ]; then
+    _UP_FORCE="${RECOVERY_UNPACK_FORCE:-${FOX_UNPACK_FORCE:-0}}"
+    _UP_NEED=1
+    if [ "$_UP_FORCE" != 1 ] && [ -f "$_UP_DST/.lgz-cluster-size" ]; then
+        _UP_WANT="$(wc -c < "$_UP_LGZ" | tr -d ' ')"
+        _UP_HAVE="$(cat "$_UP_DST/.lgz-cluster-size" 2>/dev/null | tr -d ' \r\n')"
+        if [ -n "$_UP_WANT" ] && [ "$_UP_WANT" = "$_UP_HAVE" ]; then
+            _UP_NEED=0
+        fi
+    fi
+    if [ "$_UP_NEED" = 1 ]; then
+        if [ -z "$ARCH" ] || [ ! -f "$_UP_DEC" ]; then
+            echo "no lgz decoder for linux/$ARCH (want unpack_bin/lgz-lean-linux-$ARCH next to install-recovery.sh)" >&2
+            exit 1
+        fi
+        chmod +x "$_UP_DEC" 2>/dev/null || true
+        [ -x "$_UP_DEC" ] || { echo "lgz decoder not executable: $_UP_DEC" >&2; exit 1; }
+        echo "Unpacking tools (bin.lgz)..."
+        "$_UP_DEC" decompress "$_UP_LGZ" "$_UP_DST" || { echo "bin.lgz unpack failed" >&2; exit 1; }
+        wc -c < "$_UP_LGZ" | tr -d ' ' > "$_UP_DST/.lgz-cluster-size"
+    fi
+fi
+unset _UP_LGZ _UP_DST _UP_DEC _UP_FORCE _UP_NEED _UP_WANT _UP_HAVE
 BIN=""
 if [ -n "$ARCH" ]; then
     for n in "install-small-linux-$ARCH" "install-linux-$ARCH"; do

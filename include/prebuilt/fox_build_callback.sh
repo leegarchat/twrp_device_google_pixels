@@ -440,7 +440,7 @@ lgz_manifest_entry() {
 #         (local harvest, gitignored; see .../touch/README). The ramdisk
 #         copy is the working set: the build system populates it from
 #         the source tree before --second-call runs.
-# Output: installer/modules/<device>.lgz — solid LGZ of
+# Output: installer/bin/modules/<device>.lgz — solid LGZ of
 #         system/lib64/modules/touch/<device>/... (root-relative, like
 #         the main cluster). The installer pushes the matching file INTO
 #         the main recovery payload at install time (--inject-lgz);
@@ -461,7 +461,7 @@ lgz_manifest_entry() {
 build_device_touch_cpios() {
     local ramdisk_root="$1"
     local touch_base="$ramdisk_root/system/lib64/modules/touch"
-    local out_dir="$TREE_ROOT/installer/modules"
+    local out_dir="$TREE_ROOT/installer/bin/modules"
     local lgz_bin
     lgz_bin="$(lgz_get_host_binary 2>/dev/null)" || {
         echo "    [TOUCH] WARNING: no lgz host binary, touch archives skipped"

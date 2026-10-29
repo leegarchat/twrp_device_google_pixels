@@ -28,7 +28,7 @@ if ! command -v unzip >/dev/null 2>&1; then
     exit 1
 fi
 unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$TMP" >/dev/null 2>&1 || { ui_print "cannot unpack installer zip"; exit 1; }
-chmod +x "$TMP/install-recovery.sh" "$TMP"/bin/linux/* 2>/dev/null || true
+chmod +x "$TMP/install-recovery.sh" "$TMP"/unpack_bin/* 2>/dev/null || true
 sh "$TMP/install-recovery.sh" >"$TMP/console.log" 2>&1
 rc=$?
 tail -n 20 "$TMP/console.log" 2>/dev/null | while IFS= read -r l; do ui_print "$l"; done

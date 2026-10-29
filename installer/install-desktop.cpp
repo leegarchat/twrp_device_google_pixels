@@ -43,6 +43,7 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string>
 #include <vector>
 
@@ -186,6 +187,28 @@ static bool try_bin(const std::wstring &p) {
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+static unsigned long long file_size_bytes(const std::wstring &p) {
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &d))
+        return 0;
+    return (static_cast<unsigned long long>(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
+}
+
+static bool run_and_wait(const std::wstring &exe, const std::wstring &args) {
+    std::wstring cmd = L"\"" + exe + L"\" " + args;
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(NULL, &cmd[0], NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        return false;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return code == 0;
+}
+
 int wmain() {
     // Own directory (this .exe lives next to export.txt + bin\).
     wchar_t self[MAX_PATH];
@@ -199,6 +222,54 @@ int wmain() {
     root = (bs == std::wstring::npos) ? L"." : root.substr(0, bs);
 
     std::wstring arch = arch_name();
+
+    // ---- bin.lgz first-run unpack ----
+    // The zip ships every tool as one lgz cluster (bin.lgz) plus per-OS
+    // lean decoders in unpack_bin\. Unpack once into root\bin; the marker
+    // pins the cluster byte size so re-runs skip and updates re-unpack.
+    // FOX_UNPACK_FORCE=1 forces a refresh. Without bin.lgz (classic
+    // layout) this block is a no-op.
+    {
+        std::wstring lgz = root + L"\\bin.lgz";
+        std::wstring dst = root + L"\\bin";
+        std::wstring dec = root + L"\\unpack_bin\\lgz-lean-windows-" + arch + L".exe";
+        if (try_bin(lgz)) {
+            bool need = true;
+            const wchar_t *force = _wgetenv(L"FOX_UNPACK_FORCE");
+            if (!force || wcscmp(force, L"1") != 0) {
+                unsigned long long want = file_size_bytes(lgz);
+                std::wstring mark = dst + L"\\.lgz-cluster-size";
+                FILE *f = _wfopen(mark.c_str(), L"r");
+                if (f) {
+                    unsigned long long have = 0;
+                    if (fwscanf(f, L"%llu", &have) == 1 && have == want && want != 0)
+                        need = false;
+                    fclose(f);
+                }
+            }
+            if (need) {
+                if (!try_bin(dec)) {
+                    fwprintf(stderr,
+                              L"no lgz decoder (expected unpack_bin\\lgz-lean-windows-%ls.exe next to this .exe)\n",
+                              arch.c_str());
+                    return 1;
+                }
+                fwprintf(stdout, L"Unpacking tools (bin.lgz)...\n");
+                std::wstring uargs = L"decompress \"" + lgz + L"\" \"" + dst + L"\"";
+                if (!run_and_wait(dec, uargs)) {
+                    fwprintf(stderr, L"bin.lgz unpack failed\n");
+                    return 1;
+                }
+                unsigned long long want = file_size_bytes(lgz);
+                std::wstring mark = dst + L"\\.lgz-cluster-size";
+                FILE *f = _wfopen(mark.c_str(), L"w");
+                if (f) {
+                    fwprintf(f, L"%llu", want);
+                    fclose(f);
+                }
+            }
+        }
+    }
 
     // Binary search, same order as install-desktop.bat.
     std::vector<std::wstring> probes;

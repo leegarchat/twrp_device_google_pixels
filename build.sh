@@ -32,7 +32,7 @@
 #                     exported as FOX_BUILD_NAME for orangefox.mk).
 #   -p, --patch N     Set FOX_MAINTAINER_PATCH_VERSION (numbers only).
 #                     E.g., "--patch 5" will result in version R11.3_5.
-#   -l, --level N     LGZ cluster compression level 0-3 (default 0=fast).
+#   -l, --level N     LGZ cluster compression level 0-3 (default 1=balanced).
 #                     Exported as LGZ_LEVEL for fox_build_callback.sh.
 #   -j N              Parallel build jobs (also as -jN). Default: nproc.
 #                     Exported as JOBS for the Soong/make invocation.
@@ -202,7 +202,7 @@ CLEAN=true
 JOBS="$(fox_nproc)"
 BUILD_NAME=""
 PATCH_VERSION=""
-LGZ_LEVEL="0"
+LGZ_LEVEL="1"
 FOX_BUILD_TYPE="Stable"
 FOX_GIT_TAG=""
 FOX_DIFF_TAG=""

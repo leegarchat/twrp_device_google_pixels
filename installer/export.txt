@@ -12,21 +12,25 @@
 # dropped, entry here missing) the launchers pop a system file picker.
 #
 # The binary picks the platform-tools dir by OS (PLATFORM_TOOLS_LINUX
-# on Linux, PLATFORM_TOOLS_WINDOWS on Windows); a bare FASTBOOT_BIN /
-# ADB_BIN value on Windows means the .exe. Paths are relative to the
-# directory holding THIS file; the tools live under bin/<os>/ next to
-# the installer binaries.
+# on Linux, PLATFORM_TOOLS_MACOS on macOS, PLATFORM_TOOLS_WINDOWS on
+# Windows); a bare FASTBOOT_BIN / ADB_BIN value on Windows means the
+# .exe. Paths are relative to the directory holding THIS file; the
+# tools live under bin/<os>/ next to the installer binaries. The macOS
+# platform-tools are universal binaries (Intel + Apple Silicon in one
+# file), so one bin/macos set covers both Macs.
 
 RECOVERY_IMG=OrangeFox-R12.0-test7.1-aio.ramdisk.lz4
 # Per-device touch archives (<device>.lgz), relative to the directory
-# holding THIS file. install-recovery.sh pushes the matching one into
+# holding THIS file. They live under bin/ so the whole tree packs into
+# the bin.lgz cluster; install-recovery.sh pushes the matching one into
 # the recovery payload (--inject-lgz); absent dir/file = install
 # without the touch archive (stock touch path + HW GUI fallback).
-MODULES_DIR=modules
+MODULES_DIR=bin/modules
 BACKUP_DIR=backup
 # Per-run logs live apart from image backups: logs/<datetime>/install.log.
 LOG_DIR=logs
 PLATFORM_TOOLS_LINUX=bin/linux/platform-tools
+PLATFORM_TOOLS_MACOS=bin/macos/platform-tools
 PLATFORM_TOOLS_WINDOWS=bin/windows/platform-tools
 FASTBOOT_BIN=fastboot
 ADB_BIN=adb

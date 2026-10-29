@@ -35,6 +35,42 @@ if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
   set "ARCH=x86_64"
 )
 
+rem ---- bin.lgz first-run unpack ----
+rem The zip ships every tool as one lgz cluster (bin.lgz) plus per-OS
+rem lean decoders in unpack_bin\. Unpack once into ROOT\bin; the marker
+rem pins the cluster byte size so re-runs skip and updates re-unpack.
+rem FOX_UNPACK_FORCE=1 forces a refresh. Without bin.lgz (classic
+rem layout) this block is a no-op.
+set "ULGZ=!ROOT!\bin.lgz"
+set "UDST=!ROOT!\bin"
+set "UDEC=!ROOT!\unpack_bin\lgz-lean-windows-!ARCH!.exe"
+if exist "!ULGZ!" (
+  set "UNEED=1"
+  if "!FOX_UNPACK_FORCE!"=="1" (
+    set "UNEED=1"
+  ) else if exist "!UDST!\.lgz-cluster-size" (
+    for %%f in ("!ULGZ!") do set "USZ=%%~zf"
+    set "UOLD="
+    set /p "UOLD=" < "!UDST!\.lgz-cluster-size"
+    if "!UOLD!"=="!USZ!" set "UNEED=0"
+  )
+  if "!UNEED!"=="1" (
+    if not exist "!UDEC!" (
+      echo no lgz decoder ^(expected unpack_bin\lgz-lean-windows-!ARCH!.exe next to install-desktop.bat^) 1>&2
+      set "RC=1"
+      goto finish
+    )
+    echo Unpacking tools ^(bin.lgz^)...
+    "!UDEC!" decompress "!ULGZ!" "!UDST!"
+    if errorlevel 1 (
+      echo bin.lgz unpack failed 1>&2
+      set "RC=1"
+      goto finish
+    )
+    for %%f in ("!ULGZ!") do echo %%~zf> "!UDST!\.lgz-cluster-size"
+  )
+)
+
 set "BIN="
 for %%n in (install-windows-!ARCH!.exe install-small-windows-!ARCH!.exe) do (
   if not defined BIN (
