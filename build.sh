@@ -683,21 +683,27 @@ if [[ -n "$LATEST_IMG" ]]; then
     rm -rf "$AIO_WORK"
 fi
 
-# --- Installer zip (AIO): pack the fresh payload via installer/ ---
-# The universal installer bundles the just-built ramdisk payload;
-# OFOX_PAYLOAD refreshes installer/ + export.txt RECOVERY_IMG so the
-# tree tracks the latest payload. Non-fatal: a pack failure must never fail
-# the build (the payload itself is already delivered).
+# --- Installer zips (AIO): pack the fresh payload via installer/ ---
+# Three variants, one payload each (OFOX_VARIANT loop):
+#   full_compressed — bin.lgz cluster + lean decoders (smallest);
+#   full            — raw bin/ with platform-tools (Windows fallback);
+#   minimal         — raw bin/ without platform-tools (PATH fallback).
+# Non-fatal: a pack failure must never fail the build (the payload
+# itself is already delivered).
 if [[ -n "${RAMDISK_DEST:-}" && -f "$RAMDISK_DEST" ]]; then
-    echo "[build] packing installer zip for $FAMILY_TAG ..."
-    OFOX_PAYLOAD="$RAMDISK_DEST" \
-    OFOX_NAME="OrangeFox" \
-    OFOX_TYPE="$(echo "$NAME_PREFIX" | cut -d'-' -f2)" \
-    OFOX_TAG="$OFOX_TAG_NAME" \
-    OFOX_FAMILY="$FAMILY_TAG" \
-    OFOX_BUILDS_DIR="$BUILDS_DIR" \
-    bash "$SCRIPT_DIR/installer/pack-module-zip.sh" \
-    || echo "[build] WARNING: installer pack failed (payload is fine: $RAMDISK_DEST)"
+    echo "[build] packing installer zips for $FAMILY_TAG ..."
+    for _v in full_compressed full minimal; do
+        OFOX_PAYLOAD="$RAMDISK_DEST" \
+        OFOX_VARIANT="$_v" \
+        OFOX_NAME="OrangeFox" \
+        OFOX_TYPE="$(echo "$NAME_PREFIX" | cut -d'-' -f2)" \
+        OFOX_TAG="$OFOX_TAG_NAME" \
+        OFOX_FAMILY="$FAMILY_TAG" \
+        OFOX_BUILDS_DIR="$BUILDS_DIR" \
+        bash "$SCRIPT_DIR/installer/pack-module-zip.sh" \
+        || echo "[build] WARNING: installer pack ($_v) failed (payload is fine: $RAMDISK_DEST)"
+    done
+    unset _v
 fi
 
 # --- Telegram push (AIO installer zip only, --push GROUP) ---
@@ -711,8 +717,8 @@ if [[ "${FOX_BUILD_OK:-}" != 1 ]]; then
     if [[ -n "${FOX_PUSH_GROUP:-}" ]]; then
         echo "[build] Push SKIPPED: build did not complete (no fresh zip; stale artifacts left untouched)"
     fi
-elif [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
-    _push_zip="$BUILDS_DIR/OrangeFox-$(echo "$NAME_PREFIX" | cut -d'-' -f2)-${OFOX_TAG_NAME}-aio.zip"
+    elif [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}" ]]; then
+        _push_base="$BUILDS_DIR/OrangeFox-$(echo "$NAME_PREFIX" | cut -d'-' -f2)-${OFOX_TAG_NAME}-aio"
     # -D/--diff-tag: range = previous reachable tag .. fresh -g tag (or
     # HEAD when built without -g). A fresh tag sits exactly on HEAD, so
     # step past it to find the previous one. Warns (zip-only) when the
@@ -749,13 +755,16 @@ elif [[ -n "${FOX_PUSH_GROUP:-}" && -n "${BUILDS_DIR:-}" && -n "${OFOX_PREFIX:-}
     if [[ -n "${FOX_PUSH_TEXT:-}" ]]; then
         _text_args=(--text "$FOX_PUSH_TEXT")
     fi
-    if [[ -f "$_push_zip" ]]; then
-        python3 "$SCRIPT_DIR/tools/tg_push.py" "$_push_zip" "$FOX_PUSH_GROUP" "${_diff_args[@]}" "${_text_args[@]}" \
-        || echo "[build] WARNING: telegram push failed (zip is fine: $_push_zip)"
-    else
-        echo "[build] WARNING: --push requested but no AIO zip at $_push_zip (aio pack skipped?)"
-    fi
-    unset _push_zip _diff_args _text_args
+    for _push_v in full_compressed full minimal; do
+        _push_zip="${_push_base}-${_push_v}.zip"
+        if [[ -f "$_push_zip" ]]; then
+            python3 "$SCRIPT_DIR/tools/tg_push.py" "$_push_zip" "$FOX_PUSH_GROUP" "${_diff_args[@]}" "${_text_args[@]}" \
+            || echo "[build] WARNING: telegram push failed (zip is fine: $_push_zip)"
+        else
+            echo "[build] WARNING: --push requested but no AIO zip at $_push_zip (aio pack skipped?)"
+        fi
+    done
+    unset _push_zip _push_base _push_v _diff_args _text_args
 fi
 # Build-OK admin ping (text-only, never fatal): one line per finished
 # build so completions and failures are equally visible in DMs.

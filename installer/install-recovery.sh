@@ -60,14 +60,10 @@ DEVICE_ARGS=""
 INJECT_ARGS=""
 if [ -n "$DEVICE" ]; then
     DEVICE_ARGS="--device $DEVICE"
-    MODULES_DIR="$(cfg MODULES_DIR)"; [ -n "$MODULES_DIR" ] || MODULES_DIR="modules"
-    _lgz="$ROOT/$MODULES_DIR/$DEVICE.lgz"
-    if [ -f "$_lgz" ]; then
-        INJECT_ARGS="--inject-lgz $_lgz"
-        say "  touch archive: $MODULES_DIR/$DEVICE.lgz -> payload root"
-    else
-        say "  WARNING: no $MODULES_DIR/$DEVICE.lgz next to installer, installing without touch archive"
-    fi
+    # Touch archive resolution lives AFTER the bin.lgz unpack block
+    # below: in the cluster layout bin/ only exists after unpack, so an
+    # early check would always miss (recovery path). Raw layouts (bin/
+    # shipped in the zip) resolve on that same late pass.
 else
     say "  WARNING: cannot detect device codename (getprop empty), installing without --device/touch archive"
 fi
@@ -113,6 +109,18 @@ if [ -f "$_UP_LGZ" ]; then
     fi
 fi
 unset _UP_LGZ _UP_DST _UP_DEC _UP_FORCE _UP_NEED _UP_WANT _UP_HAVE
+# Touch archive, resolved AFTER unpack: bin/modules/<device>.lgz exists
+# here in every layout (unpacked from bin.lgz, or shipped raw).
+if [ -n "$DEVICE" ]; then
+    MODULES_DIR="$(cfg MODULES_DIR)"; [ -n "$MODULES_DIR" ] || MODULES_DIR="modules"
+    _lgz="$ROOT/$MODULES_DIR/$DEVICE.lgz"
+    if [ -f "$_lgz" ]; then
+        INJECT_ARGS="--inject-lgz $_lgz"
+        say "  touch archive: $MODULES_DIR/$DEVICE.lgz -> payload root"
+    else
+        say "  WARNING: no $MODULES_DIR/$DEVICE.lgz next to installer, installing without touch archive"
+    fi
+fi
 BIN=""
 if [ -n "$ARCH" ]; then
     for n in "install-small-linux-$ARCH" "install-linux-$ARCH"; do
