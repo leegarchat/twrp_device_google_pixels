@@ -150,6 +150,33 @@
 </details>
 
 <details>
+<summary>🧵 Темы на XDA</summary>
+
+- [Pixel 6](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-6.4806927/)
+- [Pixel 6 Pro](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-6-pro.4806929/)
+- [Pixel 6a](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-6a.4806930/)
+- [Pixel 7](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-7.4783086/)
+- [Pixel 7 Pro](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-7-pro.4783087/)
+- [Pixel 7a](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-7a.4783088/)
+- [Pixel 8](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-8.4783089/)
+- [Pixel 8 Pro](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-8-pro.4783091/)
+- [Pixel 8a](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-8a.4783092/)
+- [Pixel 9](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-9.4783093/)
+- [Pixel 9 Pro / Pro XL](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-9-pro-pro-xl.4783094/)
+- [Pixel 9a](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-9a.4783096/)
+- [Pixel Fold](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-fold.4806920/)
+- [Pixel Tablet](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-tablet.4806921/)
+- [Pixel 9 Pro Fold](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-9-pro-fold.4806922/)
+- [Pixel 10](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-10.4806924/)
+- [Pixel 10 Pro / Pro XL](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-10-pro-pro-xl.4806925/)
+- [Pixel 10a](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-10a.4806923/)
+- [Pixel 10 Pro Fold](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-10-pro-fold.4806926/)
+- [Pixel 11](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-11.4806931/)
+- [Pixel 11 Pro / Pro XL](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-11-pro-pro-xl.4806932/)
+
+</details>
+
+<details>
 <summary>📖 Термины (коротко)</summary>
 
 - **`vendor_boot`** - раздел, где на всех Tensor Pixel живёт рекавери. `boot` / `dtbo` / `init_boot` ради рекавери шить не надо.
