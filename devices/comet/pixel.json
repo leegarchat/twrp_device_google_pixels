@@ -84,5 +84,43 @@
     "ro.product.device": "comet",
     "ro.product.name": "comet",
     "ro.product.model": "Pixel 9 Pro Fold"
-  }
+  },
+  "ota_boot": [
+
+    "boot",
+    "dtbo",
+    "init_boot",
+    "pvmfw",
+    "vbmeta",
+    "vbmeta_system",
+    "vbmeta_vendor",
+    "vendor_boot",
+    "vendor_kernel_boot"
+  ],
+  "ota_modem": [
+
+    "modem"
+  ],
+  "ota_bootloader": [
+
+    "abl",
+    "bl1",
+    "bl2",
+    "bl31",
+    "gcf",
+    "gsa",
+    "gsa_bl1",
+    "ldfw",
+    "pbl",
+    "tzsw"
+  ],
+  "ota_super": [
+
+    "product",
+    "system",
+    "system_dlkm",
+    "system_ext",
+    "vendor",
+    "vendor_dlkm"
+  ]
 }
