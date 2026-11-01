@@ -14,6 +14,9 @@
 
 pub mod backup;
 pub mod device;
+pub mod factory;
+pub mod ffbpk;
+pub mod fzip;
 pub mod live;
 pub mod ota;
 pub mod rebuild;

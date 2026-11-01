@@ -16,10 +16,62 @@ pub struct Args {
     pub tmpdir: String,
     pub threads: usize,
     pub readback: bool,
+    pub factory: bool,
 }
 
-/// Self RSS/peak + system MemAvailable, for RAM-budget tuning from the
-/// field logs. All values in MiB; zeros on parse failure (never fatal).
+/// Per-device stage table from /pixelrunatboot.json (merged device tree:
+/// ota_super->1, ota_boot->2, ota_modem->3, ota_bootloader->4).
+/// Missing file/device/keys = None (built-in sets apply).
+pub(crate) fn stage_table(device: &str) -> Option<HashMap<String, u8>> {
+    stage_table_at(device, &stage_table_path())
+}
+
+/// Ramdisk truth, overridable for host tests (FOX_PIXEL_JSON).
+fn stage_table_path() -> String {
+    std::env::var("FOX_PIXEL_JSON").unwrap_or_else(|_| "/pixelrunatboot.json".to_string())
+}
+
+fn stage_table_at(device: &str, path: &str) -> Option<HashMap<String, u8>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    // Minimal hand parse: find "device": {...} block, then the four arrays.
+    let mut table = HashMap::new();
+    let key = format!("\"{device}\"");
+    let i = text.find(&key)?;
+    // Bound the scan to this device object (next top-level key at 2-space
+    // indent ends it); pixel.json files are flat enough for this.
+    let rest = &text[i..];
+    let end = rest[1..].find("\n  \"").map(|p| p + 1).unwrap_or(rest.len());
+    let blk = &rest[..end];
+    for (k, w) in [
+        ("ota_super", weights::W_SUPER),
+        ("ota_boot", weights::W_BOOT),
+        ("ota_modem", weights::W_MODEM),
+        ("ota_bootloader", weights::W_REST),
+    ] {
+        let pat = format!("\"{k}\"");
+        if let Some(j) = blk.find(&pat) {
+            let after = &blk[j + pat.len()..];
+            if let Some(a) = after.find('[') {
+                let inner = &after[a + 1..];
+                let end2 = inner.find(']').unwrap_or(inner.len());
+                for tok in inner[..end2].split(',') {
+                    let t = tok.trim().trim_matches('"').trim();
+                    if !t.is_empty() {
+                        table.insert(t.to_string(), w);
+                    }
+                }
+            }
+        }
+    }
+    if table.is_empty() {
+        None
+    } else {
+        Some(table)
+    }
+}
+
+/// Self RSS/peak + system MemAvailable, for RAM-budget tuning from
+/// the field logs. All values in MiB; zeros on parse failure (never fatal).
 pub fn mem_snapshot() -> String {    let (rss, hwm) = std::fs::read_to_string("/proc/self/status")
         .map(|s| {
             let mut rss = 0u64;
@@ -72,6 +124,9 @@ fn fail(out: &mut Out, msg: &str, code: i32) -> i32 {
 }
 
 pub fn run(a: Args) -> i32 {
+    if a.factory {
+        return crate::factory::run(a);
+    }
     let mut out = Out::new(a.status_fd);
     // Progress bar starts at zero: an initial 1.0 would pin the GUI bar
     // at 100% and every later set_progress would jump backwards.
@@ -229,8 +284,32 @@ pub fn run(a: Args) -> i32 {
     }
 
     // --- 5. order: weights; backup critical (2+4) of the TARGET slot ---
+    // Stage table comes from the device pixel.json (ota_* arrays in
+    // /pixelrunatboot.json); the built-ins stay as fallback for names
+    // the tree does not know yet.
+    let stage = stage_table(&device);
+    if let Some(t) = &stage {
+        out.log(&format!("stage table: {} entries from pixel.json", t.len()));
+    } else {
+        out.log("stage table: none, built-in sets apply");
+    }
     let in_group = |n: &str| group_of.contains_key(n);
-    let w_of = |n: &str| weights::weight(n, in_group(n));
+    let w_of = |n: &str| weights::weight_with(n, in_group(n), stage.as_ref());
+    // Cross-check: manifest groups (payload truth) vs the json super set.
+    // Mismatches go to the log only — the table wins for stage order.
+    if let Some(t) = &stage {
+        for p in &parts {
+            let in_json_super = t.get(&p.name).copied() == Some(weights::W_SUPER);
+            if in_group(&p.name) != in_json_super {
+                out.log(&format!(
+                    "stage note: {} group={} json_super={}",
+                    p.name,
+                    in_group(&p.name),
+                    in_json_super
+                ));
+            }
+        }
+    }
     let present_target = |base: &str| -> Option<(String, u64)> {
         let full = format!("{base}_{target}");
         // Physical node backing a slot-suffixed partition.
@@ -827,7 +906,7 @@ pub enum Backed {
     Fresh { full: String },
 }
 
-fn rollback(out: &mut Out, siw: &str, backed: &[Backed]) {
+pub(crate) fn rollback(out: &mut Out, siw: &str, backed: &[Backed]) {
     out.ui_print("rollback: restoring critical partitions");
     for b in backed {
         match b {
@@ -842,5 +921,27 @@ fn rollback(out: &mut Out, siw: &str, backed: &[Backed]) {
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod stage_tests {
+    use super::*;
+
+    #[test]
+    fn table_parses_merged_tree() {
+        // /tmp/fake_pixelrunatboot.json is built by hand in dev (merged
+        // shape: {"_families": {...}, "<dev>": <full pixel.json>}).
+        let p = "/tmp/fake_pixelrunatboot.json";
+        if std::fs::metadata(p).is_err() {
+            return;
+        }
+        let t = stage_table_at("shiba", p).expect("table");
+        assert_eq!(t.get("system"), Some(&weights::W_SUPER));
+        assert_eq!(t.get("boot"), Some(&weights::W_BOOT));
+        assert_eq!(t.get("modem"), Some(&weights::W_MODEM));
+        assert_eq!(t.get("abl"), Some(&weights::W_REST));
+        assert!(t.get("nonexistent").is_none());
+        assert!(stage_table_at("nosuchdevice", p).is_none());
     }
 }

@@ -4,7 +4,7 @@ use hs_install::run;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: fox-hsinstall --zip PATH [--status-fd N] [--slot a|b] [--booted-slot a|b]\n                          [--sysroot DIR] [--tmpdir DIR] [--threads N] [--readback]"
+        "usage: fox-hsinstall --zip PATH [--status-fd N] [--slot a|b] [--booted-slot a|b]\n                          [--sysroot DIR] [--tmpdir DIR] [--threads N] [--readback] [--factory]"
     );
     // Distinct from the fallback codes 2/5: a broken invocation must be
     // loud, never masquerade as "not full OTA".
@@ -30,6 +30,7 @@ fn main() -> std::process::ExitCode {
     let sysroot = run::flag(&args, "--sysroot").unwrap_or_else(|| "/system/bin".to_string());
     let tmpdir = run::flag(&args, "--tmpdir").unwrap_or_else(|| "/tmp/hs_backup".to_string());
     let readback = args.iter().any(|a| a == "--readback");
+    let factory = args.iter().any(|a| a == "--factory");
     // Worker budget (peridot parity): min(ncpu,8), additionally capped by
     // free RAM (512MiB reserve + 96MiB per worker). --threads overrides.
     let auto_threads = || -> usize {
@@ -73,6 +74,7 @@ fn main() -> std::process::ExitCode {
         tmpdir,
         threads,
         readback,
+        factory,
     });
     std::process::ExitCode::from(code as u8)
 }
