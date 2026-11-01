@@ -304,6 +304,40 @@ static constexpr int HS_EXIT_NO_HELPERS = 5;
 
 enum class FoxHighSpeedResult { kNotApplicable, kAborted, kSucceeded };
 
+// Factory image detection: outer Google factory layout (flash-all.sh +
+// image-*.zip + bootloader-*.img at any nesting level). Only the outer
+// central directory is scanned — no extraction. Deep validation
+// (require board, version pins, inner layout) happens inside the
+// engine, which hard-fails on mismatch.
+static bool IsFactoryZip(ZipArchiveHandle zip) {
+	void* cookie = nullptr;
+	if (StartIteration(zip, &cookie, "") != 0)
+		return false;
+	bool has_flash_all = false, has_image = false, has_bootloader = false;
+	ZipEntry entry;
+	std::string name;
+	while (Next(cookie, &entry, &name) == 0) {
+		std::string base = name;
+		size_t slash = base.find_last_of('/');
+		if (slash != std::string::npos)
+			base = base.substr(slash + 1);
+		if (base == "flash-all.sh" || base == "flash-all.bat")
+			has_flash_all = true;
+		else if (base.compare(0, 6, "image-") == 0 &&
+		         base.size() > 10 &&
+		         base.compare(base.size() - 4, 4, ".zip") == 0)
+			has_image = true;
+		else if (base.compare(0, 11, "bootloader-") == 0 &&
+		         base.size() > 15 &&
+		         base.compare(base.size() - 4, 4, ".img") == 0)
+			has_bootloader = true;
+		if (has_flash_all && has_image && has_bootloader)
+			break;
+	}
+	EndIteration(cookie);
+	return has_flash_all && has_image && has_bootloader;
+}
+
 static std::string HsTargetSlot() {
 	// Opposite of the EFFECTIVE slot. Display tracks bootctrl active
 	// across live switches; ro.boot.* may be spoofed (session view) or
@@ -311,9 +345,13 @@ static std::string HsTargetSlot() {
 	return PartitionManager.Get_Active_Slot_Display() == "A" ? "b" : "a";
 }
 
-static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
-	if (DataManager::GetIntValue("tw_high_speed_flash") == 0)
+static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package, bool factory = false) {
+	if (!factory && DataManager::GetIntValue("tw_high_speed_flash") == 0)
 		return FoxHighSpeedResult::kNotApplicable;
+	if (factory)
+		DataManager::SetValue(FOX_ZIP_HS_FACTORY, 1);
+	else
+		DataManager::SetValue(FOX_ZIP_HS_FACTORY, 0);
 
 	// ADB sideload serves /sideload/package.zip as an on-demand FUSE
 	// stream. The FUSE layer keeps a 32 MiB LRU block cache (see the
@@ -405,8 +443,12 @@ static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package) {
 		dup2(pipe_fd[1], STDOUT_FILENO);
 		dup2(pipe_fd[1], STDERR_FILENO);
 		close(pipe_fd[0]);
-		execl(HS_ENGINE, "fox-hsinstall",
-			"--zip", package.c_str(), hs_booted_arg.c_str(), (char*)nullptr);
+		if (factory)
+			execl(HS_ENGINE, "fox-hsinstall",
+				"--zip", package.c_str(), hs_booted_arg.c_str(), "--factory", (char*)nullptr);
+		else
+			execl(HS_ENGINE, "fox-hsinstall",
+				"--zip", package.c_str(), hs_booted_arg.c_str(), (char*)nullptr);
 		printf("E:hs: can't execute '%s': %s\n", HS_ENGINE, strerror(errno));
 		_exit(-1);
 	}
@@ -760,7 +802,23 @@ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
 		} else {
 			std::string binary_name("ui.xml");
 			ZipEntry64 binary_entry;
-			if (FindEntry(Zip, binary_name, &binary_entry) == 0) {
+			if (IsFactoryZip(Zip)) {
+				LOGINFO("Factory zip (Google factory image)\n");
+				// Same HS conveyor as A/B ROMs: the engine validates
+				// (require board, versions, inner layout) and flashes
+				// the inactive slot in 4 stages. There is no stock path
+				// for factory images — update_engine cannot consume them.
+				FoxHighSpeedResult hs_res = FoxTryHighSpeedInstall(path, true);
+				if (hs_res == FoxHighSpeedResult::kSucceeded) {
+					DataManager::SetValue(FOX_ZIP_INSTALLER_CODE, 1); // mark as custom ROM install
+					run_rom_scripts = true;
+					ret_val = INSTALL_SUCCESS;
+				} else {
+					if (hs_res == FoxHighSpeedResult::kNotApplicable)
+						LOGINFO("factory: engine declined, no stock path available\n");
+					ret_val = INSTALL_ERROR;
+				}
+			} else if (FindEntry(Zip, binary_name, &binary_entry) == 0) {
 				LOGINFO("OrangeFox theme zip\n");
 				ret_val = Install_Theme(path, Zip);
 			} else {

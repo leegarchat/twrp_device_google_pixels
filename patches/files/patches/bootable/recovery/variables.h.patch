@@ -9,7 +9,15 @@
  #define BUILD_TYPE_STR 		FOX_BUILD_TYPE
  
  // OrangeFox - Values
-@@ -233,6 +233,8 @@
+@@ -106,6 +106,7 @@
+ #define FOX_MIUI_UPDATE_PATH_EU 	"META-INF/com/xiaomieu/xiaomieu.sh"  // Xiaomi.EU MIUI ROMs have this
+ #define FOX_FORCE_DEACTIVATE_PROCESS 	"fox_force_deactivate_process"
+ #define FOX_ZIP_INSTALLER_CODE 		"fox_zip_installer_code"
++#define FOX_ZIP_HS_FACTORY 		"fox_zip_hs_factory"
+ #define FOX_ZIP_INSTALLER_TREBLE 	"fox_zip_installer_treble"
+ #define FOX_DISABLE_OTA_AUTO_REBOOT 	"fox_disable_ota_auto_reboot_check"
+ #define FOX_STARTUP_SCRIPT 		"/sbin/foxstart.sh"
+@@ -233,6 +234,8 @@
  #define TW_SKIP_DIGEST_GENERATE_VAR "tw_skip_digest_generate"
  #define TW_SIGNED_ZIP_VERIFY_VAR    "tw_signed_zip_verify"
  #define TW_INSTALL_REBOOT_VAR       "tw_install_reboot"

@@ -106,6 +106,7 @@ static int Fox_Current_ROM_IsMIUI = 0; // is the currently installed ROM a MIUI 
 #define FOX_MIUI_UPDATE_PATH_EU 	"META-INF/com/xiaomieu/xiaomieu.sh"  // Xiaomi.EU MIUI ROMs have this
 #define FOX_FORCE_DEACTIVATE_PROCESS 	"fox_force_deactivate_process"
 #define FOX_ZIP_INSTALLER_CODE 		"fox_zip_installer_code"
+#define FOX_ZIP_HS_FACTORY 		"fox_zip_hs_factory"
 #define FOX_ZIP_INSTALLER_TREBLE 	"fox_zip_installer_treble"
 #define FOX_DISABLE_OTA_AUTO_REBOOT 	"fox_disable_ota_auto_reboot_check"
 #define FOX_STARTUP_SCRIPT 		"/sbin/foxstart.sh"
