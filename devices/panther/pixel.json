@@ -80,5 +80,41 @@
     "/sys/class/power_supply/usb-charger/online"
   ],
   "tcpc_driver": "max77759tcpc",
-  "thermal_soc_type": "soc_therm"
+  "thermal_soc_type": "soc_therm",
+  "ota_boot": [
+
+    "boot",
+    "dtbo",
+    "init_boot",
+    "pvmfw",
+    "vbmeta",
+    "vbmeta_system",
+    "vbmeta_vendor",
+    "vendor_boot",
+    "vendor_kernel_boot"
+  ],
+  "ota_modem": [
+
+    "modem"
+  ],
+  "ota_bootloader": [
+
+    "abl",
+    "bl1",
+    "bl2",
+    "bl31",
+    "gsa",
+    "ldfw",
+    "pbl",
+    "tzsw"
+  ],
+  "ota_super": [
+
+    "product",
+    "system",
+    "system_dlkm",
+    "system_ext",
+    "vendor",
+    "vendor_dlkm"
+  ]
 }
