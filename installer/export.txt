@@ -39,10 +39,24 @@ ADB_BIN=adb
 # fall back to fastboot/adb from PATH (each tool independently).
 # Off by default — set 1 (or true/yes/on) to allow it.
 FALLBACK_PATH=1
+# Stock source override (desktop installer only): when set to a
+# vendor_boot image file, the installer offers it as the stock source
+# next to (or instead of) the attached device. The board is read out
+# of the image ramdisk (init.recovery.<device>.rc), pool-checked.
+# Relative paths resolve against the directory holding THIS file;
+# absolute unix (/x/...) and Windows (C:\... / C:/...) forms work.
+# Empty (default) = device flow only.
+#VENDOR_BOOT_IMG=vendor_boot_stock.img
+# Where patched images land in no-flash flows (file-source save + the
+# save-vs-flash fork). Same relative/absolute rules as above, so unix,
+# Windows and on-device (/tmp, /data/...) layouts all work.
+# Empty (default) = the run log dir logs/<stamp>/, next to install.log.
+#OUTPUT_DIR=patched
 # Minimum free space (MiB) a flashed image must leave in the
-# partition. Enforced by the desktop installer (waivable with --force)
-# and by install-recovery.sh (strict, no bypass).
-MIN_FREE_MB=7
+# partition. Enforced by the desktop installer (waivable with --force
+# or answered by the 16K-strip question) and by install-recovery.sh
+# (strict, no bypass).
+MIN_FREE_MB=10
 # SLOT is used by install-recovery.sh (on-device install, no menus):
 # both (default) | a | b | 0 (=a) | 1 (=b) | current (active slot
 # from the ro.boot.slot_suffix property).

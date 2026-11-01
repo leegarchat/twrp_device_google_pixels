@@ -46,7 +46,7 @@ PAYLOAD_NAME="$(cfg RECOVERY_IMG)"; [ -n "$PAYLOAD_NAME" ] || PAYLOAD_NAME="Oran
 SLOT_CFG="$(cfg SLOT)"; [ -n "$SLOT_CFG" ] || SLOT_CFG="both"
 PAYLOAD="$ROOT/$PAYLOAD_NAME"
 [ -f "$PAYLOAD" ] || { echo "missing recovery payload: $PAYLOAD"; exit 1; }
-MIN_FREE_MB="$(cfg MIN_FREE_MB)"; [ -n "$MIN_FREE_MB" ] || MIN_FREE_MB=7
+MIN_FREE_MB="$(cfg MIN_FREE_MB)"; [ -n "$MIN_FREE_MB" ] || MIN_FREE_MB=10
 case "$MIN_FREE_MB" in ''|*[!0-9]*|'0') echo "bad MIN_FREE_MB in export.txt: '$MIN_FREE_MB' (want positive MiB integer)"; exit 1;; esac
 MIN_FREE_BYTES=$(( MIN_FREE_MB * 1048576 ))
 
