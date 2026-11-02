@@ -1,0 +1,14 @@
+--- a/bootable/recovery/gui/console.cpp
++++ b/bootable/recovery/gui/console.cpp
+@@ -270,6 +270,11 @@
+ 	pthread_mutex_unlock(&console_lock);
+ }
+ 
++void gui_err(Message msg)
++{
++	gui_msg(msg);
++}
++
+ void GUIConsole::Translate_Now()
+ {
+ 	pthread_mutex_lock(&console_lock);
