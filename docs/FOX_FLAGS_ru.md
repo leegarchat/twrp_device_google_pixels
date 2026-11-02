@@ -134,7 +134,7 @@
 | `OF_FORCE_DATA_FORMAT_F2FS=1` | Формат только в F2FS | `BoardConfig.mk:215` (mk, не env) |
 | `OF_FL_PATH1="cmd:/system/bin/recovery-pixel-boot torch"` | Хук фонарика на наш Rust-демон | (:216) |
 | `OF_WORKAROUND_BACKUP_BUG=1` | Форсирован `1` в mk | дефолт (не трогаем) |
-| `OF_DONT_KEEP_LOG_HISTORY=0`, `FOX_INSTALLER_DISABLE_AUTOREBOOT=0`, `FOX_USE_DATA_RECOVERY_FOR_SETTINGS=0` | Явное выключение (дефолты отличались бы) | (:252-254) |
+| `OF_DONT_KEEP_LOG_HISTORY=0`, `FOX_INSTALLER_DISABLE_AUTOREBOOT=0`, `OF_USE_DATA_RECOVERY_FOR_SETTINGS=0` | Явное выключение (дефолты отличались бы) | (:252-254) |
 
 ### 3.7 MTP / USB / crypto (tree, сторона mk)
 

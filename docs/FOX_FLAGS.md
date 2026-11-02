@@ -134,7 +134,7 @@ Legend: **tree** = set by `pixels/` (vendorsetup.sh unless noted).
 | `OF_FORCE_DATA_FORMAT_F2FS=1` | Force F2FS on format | `BoardConfig.mk:215` (mk, not env) |
 | `OF_FL_PATH1="cmd:/system/bin/recovery-pixel-boot torch"` | Torch hook wired to our Rust daemon | (:216) |
 | `OF_WORKAROUND_BACKUP_BUG=1` | Forced `1` in mk | default (untouched) |
-| `OF_DONT_KEEP_LOG_HISTORY=0`, `FOX_INSTALLER_DISABLE_AUTOREBOOT=0`, `FOX_USE_DATA_RECOVERY_FOR_SETTINGS=0` | Explicit off (defaults would differ) | (:252-254) |
+| `OF_DONT_KEEP_LOG_HISTORY=0`, `FOX_INSTALLER_DISABLE_AUTOREBOOT=0`, `OF_USE_DATA_RECOVERY_FOR_SETTINGS=0` | Explicit off (defaults would differ) | (:252-254) |
 
 ### 3.7 MTP / USB / crypto (tree, mk side)
 

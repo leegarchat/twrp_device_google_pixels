@@ -213,7 +213,9 @@ export OF_USE_LEGACY_BATTERY_SERVICES=0
 # --- Logging ---
 export OF_DONT_KEEP_LOG_HISTORY=0
 export FOX_INSTALLER_DISABLE_AUTOREBOOT=0
-export FOX_USE_DATA_RECOVERY_FOR_SETTINGS=0
+# Upstream renamed this to OF_* (make var + -D define); the FOX_ name is
+# dead on both layers (orangefox.mk + orangefox_defaults.go).
+export OF_USE_DATA_RECOVERY_FOR_SETTINGS=0
 
 
 # --- KernelSU ---
