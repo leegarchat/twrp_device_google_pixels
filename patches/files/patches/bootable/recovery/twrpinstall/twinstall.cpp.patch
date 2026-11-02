@@ -1,6 +1,6 @@
 --- a/bootable/recovery/twrpinstall/twinstall.cpp
 +++ b/bootable/recovery/twrpinstall/twinstall.cpp
-@@ -282,6 +282,283 @@
+@@ -282,6 +282,316 @@
  	return INSTALL_SUCCESS;
  }
  
@@ -65,6 +65,39 @@
 +	// across live switches; ro.boot.* may be spoofed (session view) or
 +	// stale, so neither is the right "inactive slot" definition here.
 +	return PartitionManager.Get_Active_Slot_Display() == "A" ? "b" : "a";
++}
++
++// Post-ROM AVB step (tw_disable_avb toggle): keep AVB verification and
++// dm-verity disabled on the freshly flashed slot. The target is the
++// bootctrl-active slot at this point: every ROM path (HS classic/live,
++// stock update_engine) leaves bootctrl pointing at the fresh slot before
++// this runs. Only the top-level vbmeta_<slot> flags word is OR-ed (both
++// bits); chained vbmeta_system/vendor are never touched — non-zero flags
++// there are INVALID_METADATA for the bootloader and first-stage init
++// (bootloop even on unlocked).
++static void FoxMaybeDisableAvb(void) {
++	if (DataManager::GetIntValue(TW_DISABLE_AVB_VAR) == 0)
++		return;
++	std::string active = PartitionManager.Get_Bootctrl_Active_Slot();
++	std::string slot;
++	if (active == "A" || active == "a")
++		slot = "a";
++	else if (active == "B" || active == "b")
++		slot = "b";
++	else
++		slot = HsTargetSlot();
++	std::string slot_up = (slot == "b") ? "B" : "A";
++	std::string node = "/dev/block/by-name/vbmeta_" + slot;
++	std::string out;
++	int r1 = TWFunc::Exec_Cmd("/system/bin/fox_avbctl --image " + node + " disable-verification", out);
++	int r2 = TWFunc::Exec_Cmd("/system/bin/fox_avbctl --image " + node + " disable-verity", out);
++	LOGINFO("avb: disable on %s -> verification=%d verity=%d (%s)\n",
++		node.c_str(), r1, r2, out.c_str());
++	if (r1 == 0 && r2 == 0) {
++		gui_msg(Msg("fox_avb_disabled=Disabled AVB verification and verity on slot {1}.")(slot_up));
++	} else {
++		gui_err(Msg(msg::kError, "fox_avb_disable_fail=Failed to disable AVB on slot {1}. See the log for details.")(slot_up));
++	}
 +}
 +
 +static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package, bool factory = false) {
@@ -284,7 +317,7 @@
  int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
  {
    int ret_val, zip_verify = 1, unmount_system = 1, reflashtwrp = 0, unmount_vendor = 1;
-@@ -433,7 +710,53 @@
+@@ -433,7 +743,53 @@
  		ZipEntry64 ab_binary_entry;
  		if (FindEntry(Zip, ab_binary_name, &ab_binary_entry) == 0) {
  			LOGINFO("AB zip\n");
@@ -339,7 +372,7 @@
  			// We need this so backuptool can do its magic
  			bool system_mount_state = PartitionManager.Is_Mounted_By_Path(PartitionManager.Get_Android_Root_Path());
  			bool vendor_mount_state = PartitionManager.Is_Mounted_By_Path("/vendor");
-@@ -461,16 +784,41 @@
+@@ -461,16 +817,41 @@
  				PartitionManager.UnMount_By_Path("/vendor", false);
  			if (!system_mount_state)
  				PartitionManager.UnMount_By_Path(PartitionManager.Get_Android_Root_Path(), false);
@@ -387,3 +420,16 @@
  				LOGINFO("OrangeFox theme zip\n");
  				ret_val = Install_Theme(path, Zip);
  			} else {
+@@ -544,6 +925,12 @@
+       TWFunc::Check_OrangeFox_Overwrite_FromROM(false, path);
+    }
+ 
++   if (ret_val == INSTALL_SUCCESS && DataManager::GetIntValue(FOX_ZIP_INSTALLER_CODE) != 0)
++   {
++      // Post-ROM AVB step, before Fox_Post_Zip_Install (OTA_BAK, reflash).
++      FoxMaybeDisableAvb();
++   }
++
+    if (run_rom_scripts && TWFunc::Path_Exists(FOX_POST_ROM_FLASH_SCRIPT)) {
+    	usleep(2048);
+    	TWFunc::RunFoxScript(FOX_POST_ROM_FLASH_SCRIPT, path);

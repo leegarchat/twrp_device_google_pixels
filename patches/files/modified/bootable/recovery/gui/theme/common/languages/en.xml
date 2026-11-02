@@ -63,6 +63,9 @@
 		<string name="inject_twrp_chk">Inject OrangeFox after install</string>
 		<string name="high_speed_flash_chk">High-speed flash (Experimental)</string>
 		<string name="live_switch_chk">Live switch slot (Experimental)</string>
+		<string name="disable_avb_chk">Disable AVB verification and verity</string>
+		<string name="fox_avb_disabled">Disabled AVB verification and verity on slot {1}.</string>
+		<string name="fox_avb_disable_fail">Failed to disable AVB on slot {1}. See the log for details.</string>
 		<string name="hs_failed">High-speed install failed. See the log for details.</string>
 		<string name="hs_no_booted_slot">Cannot read the booted slot. Refusing to flash.</string>
 		<string name="hs_slot_fail">High-speed install wrote the update but the slot switch failed.</string>

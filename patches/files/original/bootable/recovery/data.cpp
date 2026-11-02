@@ -48,6 +48,7 @@ extern "C"
 #include "twcommon.h"
 #include "gui/pages.h"
   void gui_notifyVarChange(const char *name, const char *value);
+  void gui_fox_progress_overall(const int percent);
 }
 #include "minuitwrp/minui.h"
 
@@ -316,7 +317,7 @@ int DataManager::RestorePasswordBackup(void) {
 
 int DataManager::LoadPersistValues(void)
 {
-#if defined(OF_DEVICE_WITHOUT_PERSIST) || defined(FOX_SETTINGS_ROOT_DIRECTORY)
+#if defined(OF_DEVICE_WITHOUT_PERSIST) || defined(OF_SETTINGS_ROOT_DIRECTORY)
 	//LOGINFO("OF_DEVICE_WITHOUT_PERSIST is set - avoiding /persist...\n");
 	return -1;
 #endif
@@ -369,7 +370,7 @@ int DataManager::SaveValues()
   #ifndef OF_DEVICE_WITHOUT_PERSIST
   if (PartitionManager.Mount_By_Path("/persist", false))
     {
-      #ifndef FOX_SETTINGS_ROOT_DIRECTORY
+      #ifndef OF_SETTINGS_ROOT_DIRECTORY
       mPersist.SetFile(PERSIST_SETTINGS_FILE);
       mPersist.SetFileVersion(FILE_VERSION);
       pthread_mutex_lock(&m_valuesLock);
@@ -418,13 +419,19 @@ int DataManager::GetValue(const string & varName, string & value)
   if (localStr.length() > 2 && localStr[0] == '%'
       && localStr[localStr.length() - 1] == '%')
     {
-      std::regex pattern(R"(%([^%]+)%)");
-      std::smatch match;
+      // Expand each %name% reference. Equivalent to the regex %([^%]+)%, but a
+      // manual scan: std::regex (libstdc++) recurses per character and blows the
+      // stack on long values, and re-compiling the pattern every lookup is slow.
       string retVal;
-      while (std::regex_search(localStr, match, pattern))
+      size_t start;
+      while ((start = localStr.find('%')) != string::npos)
         {
-          ret = GetValue(match[1].str(), retVal) ? 1 : ret ? 1 : 0;
-          localStr.replace(match.position(0), match.length(0), retVal);
+          size_t end = localStr.find('%', start + 1);
+          if (end == string::npos || end == start + 1)
+            break; // no closing %, or empty %% (regex needs 1+ inner char)
+          string inner = localStr.substr(start + 1, end - start - 1);
+          ret = GetValue(inner, retVal) ? 1 : ret ? 1 : 0;
+          localStr.replace(start, end - start + 1, retVal);
         }
       value = localStr;
       return ret;
@@ -624,8 +631,15 @@ int DataManager::_SetProgress(float Fraction) {
 		Fraction = 0;
 	if (Fraction > 1.0)
 		Fraction = 1;
-	if (SetValue("ui_progress", (float) ((Portion_Start + (Portion_Size * Fraction)) * 100.0)) != 0)
+	float percent = (Portion_Start + (Portion_Size * Fraction)) * 100.0;
+	if (SetValue("ui_progress", percent) != 0)
 		return -1;
+	// Mirror the overall progress to a running fox CLI client (no-op unless a
+	// fox command is active). Emitting here -- rather than on every ui_progress
+	// SetValue -- avoids the transient 0 that SetProgress() writes via its
+	// ShowProgress(1, 0) reset just before this real value lands. Per-item
+	// progress is emitted separately from ProgressTracking::UpdateDisplayDetails.
+	gui_fox_progress_overall((int)percent);
 	return (SetValue("ui_progress_portion", 0) != 0);
 }
 
@@ -737,7 +751,7 @@ void DataManager::SetDefaultValues()
   mConst.SetValue("fox_branch", FOX_BRANCH);
 
 #ifdef OF_ENABLE_FRP_ADDON
-  if (TWFunc::Path_Exists("/dev/block/bootdevice/by-name/frp") || TWFunc::Path_Exists("/dev/block/by-name/frp") || TWFunc::Fox_Property_Get("ro.frp.pst") != "") {
+  if (TWFunc::Path_Exists("/dev/block/bootdevice/by-name/frp") || TWFunc::Fox_Property_Get("ro.frp.pst") != "") {
 	mConst.SetValue("enable_frp_addon", "1");
   }
 #endif
@@ -796,7 +810,7 @@ void DataManager::SetDefaultValues()
   mPersist.SetValue("of_keep_storage_data", "1");
 
   //[f/d] UI Vars
-  #ifdef FOX_USE_NANO_EDITOR
+  #ifdef OF_USE_NANO_EDITOR
   	mConst.SetValue("fox_use_nano_editor", "1");
   #else
     	mConst.SetValue("fox_use_nano_editor", "0");
@@ -844,7 +858,7 @@ void DataManager::SetDefaultValues()
 	lnum = (cv * 90);
 	if (lnum > lnum2)
 		lnum2 = lnum;
-
+		
   lnum_group = (cv * 144 + (144 * 2));
   #endif
   mConst.SetValue("options_list_num", lnum);
@@ -958,6 +972,13 @@ void DataManager::SetDefaultValues()
 	mPersist.SetValue("tw_button_vibrate", "0");
 	mPersist.SetValue("tw_keyboard_vibrate", "0");
 	mPersist.SetValue("tw_action_vibrate", "0");
+#endif
+
+#ifdef TW_ENABLE_NETWORK
+    LOGINFO("TW_ENABLE_NETWORK := true\n");
+    mConst.SetValue("tw_enable_network", "1");
+#else
+    mConst.SetValue("tw_enable_network", "0");
 #endif
 
   TWPartition *store = PartitionManager.Get_Default_Storage_Partition();
@@ -1101,7 +1122,8 @@ void DataManager::SetDefaultValues()
 		mData.SetValue(TW_IS_SUPER, "0");
 		mData.SetValue(TW_FASTBOOT_MODE, "0");
 		mData.SetValue("fox_dynamic_device", "0");
-		TWFunc::Fox_Property_Set("ro.fastbootd.available", "0");
+		if (TWFunc::Fox_Property_Get("ro.fastbootd.available").empty())
+			TWFunc::Fox_Property_Set("ro.fastbootd.available", "0");
 		TWFunc::Fox_Property_Set("orangefox.super.partition", "false");
 	}
 	else {
@@ -1111,10 +1133,12 @@ void DataManager::SetDefaultValues()
 		#ifdef OF_NO_REBOOT_FASTBOOT
 		printf("OF_NO_REBOOT_FASTBOOT := 1\n");
 		mData.SetValue(TW_FASTBOOT_MODE, "0");
-		TWFunc::Fox_Property_Set("ro.fastbootd.available", "0");
+		if (TWFunc::Fox_Property_Get("ro.fastbootd.available").empty())
+			TWFunc::Fox_Property_Set("ro.fastbootd.available", "0");
 		#else
 		mData.SetValue(TW_FASTBOOT_MODE, "1");
-		TWFunc::Fox_Property_Set("ro.fastbootd.available", "1");
+		if (TWFunc::Fox_Property_Get("ro.fastbootd.available").empty())
+			TWFunc::Fox_Property_Set("ro.fastbootd.available", "1");
 		#endif
 	}
 #else
@@ -1261,11 +1285,7 @@ void DataManager::SetDefaultValues()
   mPersist.SetValue(TW_TIME_ZONE_GUISEL, OF_DEFAULT_TIMEZONE);
   mPersist.SetValue(TW_TIME_ZONE_GUIOFFSET, "0");
   mPersist.SetValue(TW_TIME_ZONE_GUIDST, "1");
-  #ifdef OF_NO_REFLASH_CURRENT_ORANGEFOX
-	mPersist.SetValue(TW_AUTO_REFLASHTWRP_VAR, "0");
-  #else
-	mPersist.SetValue(TW_AUTO_REFLASHTWRP_VAR, "1");
-  #endif
+  mPersist.SetValue(TW_AUTO_REFLASHTWRP_VAR, "1");
 
   // avb2.0 disable
   // by patching boot image
@@ -1631,7 +1651,7 @@ void DataManager::ReadSettingsFile(void)
 #ifndef TW_OEM_BUILD
   // Load up the values for TWRP - Sleep to let the card be ready
   char mkdir_path[255], settings_file[255];
-#ifndef FOX_SETTINGS_ROOT_DIRECTORY
+#ifndef OF_SETTINGS_ROOT_DIRECTORY
   int is_enc, has_data_media;
 
   GetValue(TW_IS_ENCRYPTED, is_enc);
@@ -1652,7 +1672,7 @@ void DataManager::ReadSettingsFile(void)
 	}
   }
 
-#endif // FOX_SETTINGS_ROOT_DIRECTORY
+#endif // OF_SETTINGS_ROOT_DIRECTORY
   memset(mkdir_path, 0, sizeof(mkdir_path));
   memset(settings_file, 0, sizeof(settings_file));
   sprintf(mkdir_path, "%s", GetSettingsStoragePath().c_str());
@@ -1692,7 +1712,7 @@ string DataManager::GetCurrentPartPath(void)
 
 string DataManager::GetSettingsStoragePath(void)
 {
-#ifdef FOX_SETTINGS_ROOT_DIRECTORY
+#ifdef OF_SETTINGS_ROOT_DIRECTORY
   return Fox_Settings_Path;
 #else
   return GetStrValue("tw_settings_path");

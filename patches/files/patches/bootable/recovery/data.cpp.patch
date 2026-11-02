@@ -8,7 +8,7 @@
  #include <private/android_filesystem_config.h>
  #include "variables.h"
  #include "data.hpp"
-@@ -323,6 +324,20 @@
+@@ -324,6 +325,20 @@
    static bool loaded = false;
    string dev_id;
  
@@ -29,7 +29,7 @@
    // Only run this function once, and make sure normal settings file has not yet been read
    if (loaded || !mBackingFile.empty()
        || !TWFunc::Path_Exists(PERSIST_SETTINGS_FILE))
-@@ -802,16 +817,52 @@
+@@ -816,16 +831,52 @@
      	mConst.SetValue("fox_use_nano_editor", "0");
    #endif
  
@@ -87,7 +87,7 @@
    mConst.SetValue(OF_HIDE_NOTCH_S, OF_HIDE_NOTCH);
    mConst.SetValue(OF_STATUS_INDENT_LEFT_S, OF_STATUS_INDENT_LEFT);
    mConst.SetValue(OF_STATUS_INDENT_RIGHT_S, OF_STATUS_INDENT_RIGHT);
-@@ -948,9 +999,9 @@
+@@ -962,9 +1013,9 @@
    //[f/d]
   
  #ifndef TW_NO_HAPTICS
@@ -100,7 +100,7 @@
  	mConst.SetValue("tw_disable_haptics", "0");
  #else
  	LOGINFO("TW_NO_HAPTICS := true\n");
-@@ -1227,6 +1278,38 @@
+@@ -1251,6 +1302,38 @@
    mPersist.SetValue("lock_btn", "0");
  #endif
  
@@ -139,7 +139,7 @@
    mConst.SetValue(FOX_SURVIVAL_FOLDER_VAR, FOX_SURVIVAL_FOLDER);
    mConst.SetValue(FOX_SURVIVAL_BACKUP_NAME, FOX_SURVIVAL_BACKUP);
    mConst.SetValue(FOX_ACTUAL_BUILD_VAR, FOX_BUILD);
-@@ -1247,10 +1330,12 @@
+@@ -1271,10 +1354,12 @@
  
    mPersist.SetValue(TW_INSTALL_REBOOT_VAR, "0");
    mPersist.SetValue(TW_SIGNED_ZIP_VERIFY_VAR, "0");
@@ -153,7 +153,15 @@
    mPersist.SetValue(TW_RM_RF_VAR, "0");
    mPersist.SetValue(TW_SKIP_DIGEST_CHECK_VAR, "0");
    mPersist.SetValue(TW_SKIP_DIGEST_GENERATE_VAR, "0");
-@@ -1319,7 +1404,7 @@
+@@ -1303,6 +1388,7 @@
+   #endif
+ 
+   mPersist.SetValue(TW_AUTO_DISABLE_AVB2_VAR, "0");
++  mPersist.SetValue(TW_DISABLE_AVB_VAR, "0");
+   // avb2.0
+ 
+   mData.SetValue(TW_ACTION_BUSY, "0");
+@@ -1339,7 +1425,7 @@
    mConst.SetValue("tw_screen_timeout_secs", "0");
    mConst.SetValue("tw_no_screen_timeout", "1");
  #else
@@ -162,7 +170,7 @@
    mPersist.SetValue("tw_no_screen_timeout", "0");
  #endif
  
-@@ -1377,11 +1462,29 @@
+@@ -1397,11 +1483,29 @@
        mConst.SetValue("tw_has_brightnesss_file", "1");
        mConst.SetValue("tw_brightness_file", findbright);
        string maxBrightness;
@@ -192,7 +200,7 @@
        // Attempt to locate the max_brightness file
        string maxbrightpath =
  	findbright.insert(findbright.rfind('/') + 1, "max_");
-@@ -1406,6 +1509,7 @@
+@@ -1426,6 +1530,7 @@
  	  maxVal << 255;
  	  maxBrightness = maxVal.str();
  	}

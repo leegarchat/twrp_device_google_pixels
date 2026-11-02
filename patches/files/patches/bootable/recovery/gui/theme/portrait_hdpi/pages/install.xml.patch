@@ -14,7 +14,7 @@
  				<listitem name="{@auto_reflashtwrp_chk}">
  					<condition var1="fox_branch" op="&gt;=" var2="11"/>
  					<condition var1="fox_vab_device" var2="1"/>
-@@ -61,13 +54,28 @@
+@@ -61,13 +54,32 @@
  					<condition var1="fox_disable_reflash_current" op="!=" var2="1"/>
  					<data variable="tw_auto_reflashtwrp"/>
  				</listitem>
@@ -27,6 +27,10 @@
 +				<listitem name="{@live_switch_chk}">
 +					<condition var1="tw_has_boot_slots" var2="1"/>
 +					<data variable="tw_live_switch"/>
++				</listitem>
++				<listitem name="{@disable_avb_chk}">
++					<condition var1="tw_has_boot_slots" var2="1"/>
++					<data variable="tw_disable_avb"/>
 +				</listitem>
 +				<listitem name="{@zip_sig_chk}">
 +					<data variable="tw_signed_zip_verify"/>
@@ -45,7 +49,7 @@
  				<listitem name="{@auto_disable_avb2=Disable vbmeta AVB2.0}">
  					<condition var1="fox_auto_disable_vbmeta_avb2" var2="1"/>
  					<data variable="tw_auto_disable_avb2"/>
-@@ -217,13 +225,6 @@
+@@ -217,13 +229,6 @@
  			<listbox style="settingslist">
  				<condition var1="tw_fileexists" var2="1"/>
  				<placement x="0" y="%row3_2a_y%" w="%screen_w%" h="%options_list_num%"/>
@@ -59,7 +63,7 @@
  				<listitem name="{@auto_reflashtwrp_chk}">
  					<condition var1="fox_branch" op="&gt;=" var2="11"/>
  					<condition var1="fox_vab_device" var2="1"/>
-@@ -232,13 +233,28 @@
+@@ -232,13 +237,32 @@
  					<condition var1="fox_disable_reflash_current" op="!=" var2="1"/>
  					<data variable="tw_auto_reflashtwrp"/>
  				</listitem>
@@ -72,6 +76,10 @@
 +				<listitem name="{@live_switch_chk}">
 +					<condition var1="tw_has_boot_slots" var2="1"/>
 +					<data variable="tw_live_switch"/>
++				</listitem>
++				<listitem name="{@disable_avb_chk}">
++					<condition var1="tw_has_boot_slots" var2="1"/>
++					<data variable="tw_disable_avb"/>
 +				</listitem>
 +				<listitem name="{@zip_sig_chk}">
 +					<data variable="tw_signed_zip_verify"/>

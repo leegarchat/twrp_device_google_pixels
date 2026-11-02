@@ -345,6 +345,39 @@ static std::string HsTargetSlot() {
 	return PartitionManager.Get_Active_Slot_Display() == "A" ? "b" : "a";
 }
 
+// Post-ROM AVB step (tw_disable_avb toggle): keep AVB verification and
+// dm-verity disabled on the freshly flashed slot. The target is the
+// bootctrl-active slot at this point: every ROM path (HS classic/live,
+// stock update_engine) leaves bootctrl pointing at the fresh slot before
+// this runs. Only the top-level vbmeta_<slot> flags word is OR-ed (both
+// bits); chained vbmeta_system/vendor are never touched — non-zero flags
+// there are INVALID_METADATA for the bootloader and first-stage init
+// (bootloop even on unlocked).
+static void FoxMaybeDisableAvb(void) {
+	if (DataManager::GetIntValue(TW_DISABLE_AVB_VAR) == 0)
+		return;
+	std::string active = PartitionManager.Get_Bootctrl_Active_Slot();
+	std::string slot;
+	if (active == "A" || active == "a")
+		slot = "a";
+	else if (active == "B" || active == "b")
+		slot = "b";
+	else
+		slot = HsTargetSlot();
+	std::string slot_up = (slot == "b") ? "B" : "A";
+	std::string node = "/dev/block/by-name/vbmeta_" + slot;
+	std::string out;
+	int r1 = TWFunc::Exec_Cmd("/system/bin/fox_avbctl --image " + node + " disable-verification", out);
+	int r2 = TWFunc::Exec_Cmd("/system/bin/fox_avbctl --image " + node + " disable-verity", out);
+	LOGINFO("avb: disable on %s -> verification=%d verity=%d (%s)\n",
+		node.c_str(), r1, r2, out.c_str());
+	if (r1 == 0 && r2 == 0) {
+		gui_msg(Msg("fox_avb_disabled=Disabled AVB verification and verity on slot {1}.")(slot_up));
+	} else {
+		gui_err(Msg(msg::kError, "fox_avb_disable_fail=Failed to disable AVB on slot {1}. See the log for details.")(slot_up));
+	}
+}
+
 static FoxHighSpeedResult FoxTryHighSpeedInstall(const std::string& package, bool factory = false) {
 	if (!factory && DataManager::GetIntValue("tw_high_speed_flash") == 0)
 		return FoxHighSpeedResult::kNotApplicable;
@@ -890,6 +923,12 @@ int TWinstall_zip(const char *path, int *wipe_cache, bool check_for_digest)
    {
       usleep(16);
       TWFunc::Check_OrangeFox_Overwrite_FromROM(false, path);
+   }
+
+   if (ret_val == INSTALL_SUCCESS && DataManager::GetIntValue(FOX_ZIP_INSTALLER_CODE) != 0)
+   {
+      // Post-ROM AVB step, before Fox_Post_Zip_Install (OTA_BAK, reflash).
+      FoxMaybeDisableAvb();
    }
 
    if (run_rom_scripts && TWFunc::Path_Exists(FOX_POST_ROM_FLASH_SCRIPT)) {
