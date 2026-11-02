@@ -1,0 +1,11 @@
+[package]
+name = "fox-avbctl"
+version = "1.0.0"
+edition = "2021"
+
+# Host-side cargo build alias. The recovery build uses Android.bp
+# (Soong rust_binary fox_avbctl); this file is only for `cargo build`
+# / `cargo test` on the workstation.
+[[bin]]
+name = "fox_avbctl"
+path = "src/main.rs"

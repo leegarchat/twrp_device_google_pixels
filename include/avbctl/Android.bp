@@ -1,0 +1,17 @@
+// Soong build for TWRP/OrangeFox recovery.
+//
+// Standalone zero-dependency analog of AOSP avbctl: flips the flags word
+// in a vbmeta image (bit0 HASHTREE_DISABLED / bit1 VERIFICATION_DISABLED)
+// by explicit file/block path. Always-force (no lock checks — meaningless
+// for files). Same pattern as recovery-pixel-boot: recovery binary,
+// rlib std, only liblibc.
+rust_binary {
+    name: "fox_avbctl",
+    srcs: ["src/main.rs"],
+    crate_name: "fox_avbctl",
+    recovery: true,
+    rustlibs: [
+        "liblibc",
+    ],
+    prefer_rlib: true,
+}

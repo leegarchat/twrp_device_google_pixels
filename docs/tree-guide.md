@@ -57,6 +57,7 @@ Each file - what it is, why it exists, who reads it (build / runtime / developer
 |---|---|
 | `include/recovery-pixel-boot/` | Rust boot engine: init, modules, OTG, thermal, flashlight (see `recovery-engine.md`) |
 | `include/recovery-tensor-daemon/` | Rust daemon: storageproxy + weaver for FBE (see `decrypt.md`) |
+| `include/avbctl/` (`fox_avbctl`) | Standalone zero-dep avbctl analog: flips top-level vbmeta flags by path (Soong `rust_binary`, post-ROM AVB step) |
 | `include/recovery-init-stub/` | Static PID 1 (`stub.c` + `snapshot.c`, see `boot-chain.md`) |
 | `include/ramdisk_snapshot/` | Rust ramdisk-snapshot fallback (normally built into the stub) |
 | `include/prebuilt/lgz_compress_full_x64` / `lgz_compress_lean_arm64` | Host packer / on-device unpacker for the LGZ cluster (prebuilt utilities) |

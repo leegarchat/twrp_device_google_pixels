@@ -114,6 +114,12 @@ PRODUCT_PACKAGES += \
     recovery-tensor-daemon \
     recovery-pixel-boot
 
+# Standalone vbmeta flag flipper (zero-dep Rust avbctl analog, explicit
+# path, always-force). Used by the install post-step to keep AVB/verity
+# disabled on the freshly flashed slot.
+PRODUCT_PACKAGES += \
+    fox_avbctl
+
 # KeyMint HALs from source (AIO-only: both always ship in the universal
 # payload). Rust (system/core/trusty/keymint) talks KeyMint AIDL to the
 # Trusty TA; C++ (system/core/trusty/keymaster) auto-negotiates via

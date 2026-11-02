@@ -57,6 +57,7 @@
 |---|---|
 | `include/recovery-pixel-boot/` | Rust boot-движок: init, модули, OTG, термал, фонарик (см. `recovery-engine_ru.md`) |
 | `include/recovery-tensor-daemon/` | Rust-демон: storageproxy + weaver для FBE (см. `decrypt_ru.md`) |
+| `include/avbctl/` (`fox_avbctl`) | Стендалон-аналог avbctl без зависимостей: флаги top-level vbmeta по пути (Soong `rust_binary`, пост-шаг AVB) |
 | `include/recovery-init-stub/` | Статический PID 1 (`stub.c` + `snapshot.c`, см. `boot-chain_ru.md`) |
 | `include/ramdisk_snapshot/` | Rust-фолбэк снапшота рамдиска (обычно встроен в стаб) |
 | `include/prebuilt/lgz_compress_full_x64` / `lgz_compress_lean_arm64` | Хост-пакеровщик / девайсный распаковщик LGZ-кластера (пребилд-утилиты) |
