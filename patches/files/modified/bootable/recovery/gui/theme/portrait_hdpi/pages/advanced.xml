@@ -7,6 +7,13 @@
 				<action function="set">aroma_help=0</action>
 			</action>
 
+			<!-- Modernized: both groups live in one scrollable viewport. Each
+			     group header + list auto-stacks below the previous group's real
+			     height (no hand-tuned y per item count), and the whole content
+			     scrolls when it overflows. The listboxes self-size (no inner
+			     scroll). Action bar / navbar / gestures stay fixed (outside). -->
+			<scroll x="0" y="%ab_h%" w="%screen_w%" h="%scroll_nav_h%" spacing="20" paddingtop="10" paddingbottom="40" itemheight="48">
+
 			<text style="caption">
 				<placement x="%gl_text_x%" y="%row0_a_y%"/>
 				<text>{@listbox_group_main}</text>
@@ -36,12 +43,12 @@
 			</listbox>
 
 			<text style="caption">
-				<placement x="%gl_text_x%" y="%row4_3_y%"/>
+				<placement x="%gl_text_x%" y="%row5_3_y%"/>
 				<text>{@listbox_group_additions}</text>
 			</text>
 
 			<listbox style="group_list">
-				<placement x="0" y="%row5_1_y%" w="%screen_w%" h="%adv_additions_h%"/>
+				<placement x="0" y="%row6_1_y%" w="%screen_w%" h="%adv_additions_h%"/>
 				<listitem name="{@reflash_twrp}">
 					<icon res="wrench"/>
 					<condition var1="fox_branch" op="&gt;=" var2="11"/>
@@ -115,6 +122,8 @@
 					<action function="page">fox_other_additions</action>
 				</listitem>
 			</listbox>
+
+			</scroll>
 
 			<template name="base_nav"/>
 
@@ -898,7 +907,7 @@
 
 			<text style="text_ab_switch_off">
 				<condition var1="fox_adb" op="!=" var2="1"/>
-				<placement x="%gl_text_x%" y="%ab_bc2_y%"/>
+				<placement x="%switch_text_x%" y="%ab_bc2_y%"/>
 				<text>ADB</text>
 			</text>
 

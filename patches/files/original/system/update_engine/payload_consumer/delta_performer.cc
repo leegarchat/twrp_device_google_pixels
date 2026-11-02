@@ -33,7 +33,7 @@
 #include <base/format_macros.h>
 #include <base/metrics/histogram_macros.h>
 #include <base/strings/string_number_conversions.h>
-#include <base/strings/stringprintf.h>
+#include <android-base/stringprintf.h>
 #include <base/time/time.h>
 #include <brillo/data_encoding.h>
 #include <bsdiff/bspatch.h>
@@ -89,7 +89,7 @@ void DeltaPerformer::LogProgress(const char* message_prefix) {
   if (num_total_operations_) {
     total_operations_str = std::to_string(num_total_operations_);
     // Upcasting to 64-bit to avoid overflow, back to size_t for formatting.
-    completed_percentage_str = base::StringPrintf(
+    completed_percentage_str = android::base::StringPrintf(
         " (%" PRIu64 "%%)",
         IntRatio(next_operation_num_, num_total_operations_, 100));
   }
@@ -101,7 +101,7 @@ void DeltaPerformer::LogProgress(const char* message_prefix) {
   if (payload_size) {
     payload_size_str = std::to_string(payload_size);
     // Upcasting to 64-bit to avoid overflow, back to size_t for formatting.
-    downloaded_percentage_str = base::StringPrintf(
+    downloaded_percentage_str = android::base::StringPrintf(
         " (%" PRIu64 "%%)", IntRatio(total_bytes_received_, payload_size, 100));
   }
 
@@ -506,7 +506,9 @@ bool DeltaPerformer::Write(const void* bytes, size_t count, ErrorCode* error) {
     if (!CanPerformInstallOperation(op))
       return true;
     if (!ProcessOperation(&op, error)) {
-      LOG(ERROR) << "unable to process operation: " << *error;
+      LOG(ERROR) << "unable to process operation: "
+                 << InstallOperationTypeName(op.type())
+                 << " Error: " << utils::ErrorCodeToString(*error);
       return false;
     }
 
@@ -599,6 +601,15 @@ bool DeltaPerformer::ParseManifest(const char** c_bytes,
   // new_cow_size per partition = partition_size - (#blocks in Copy
   // operations part of the partition)
   if (install_plan_->vabc_none) {
+    size_t cowOpsize = android::snapshot::GetCowOpSize(
+        manifest_.dynamic_partition_metadata().cow_version());
+    if (cowOpsize == 0) {
+      cowOpsize = sizeof(android::snapshot::CowOperationV2);
+      LOG(WARNING) << "Failed to determine cow op size for COW version "
+                   << manifest_.dynamic_partition_metadata().cow_version()
+                   << ", defaulting to " << cowOpsize;
+    }
+
     LOG(INFO) << "Setting Virtual AB Compression algorithm to none. This "
                  "would also disable VABC XOR as XOR only saves space if "
                  "compression is enabled.";
@@ -629,13 +640,11 @@ bool DeltaPerformer::ParseManifest(const char** c_bytes,
       // Every block written to COW device will come with a header which
       // stores src/dst block info along with other data.
       const auto cow_metadata_size = partition.new_partition_info().size() /
-                                     manifest_.block_size() *
-                                     sizeof(android::snapshot::CowOperation);
+                                     manifest_.block_size() * cowOpsize;
       // update_engine will emit a label op every op or every two seconds,
       // whichever one is longer. In the worst case, we add 1 label per
       // InstallOp. So take size of label ops into account.
-      const auto label_ops_size =
-          partition.operations_size() * sizeof(android::snapshot::CowOperation);
+      const auto label_ops_size = partition.operations_size() * cowOpsize;
       // Adding extra 2MB headroom just for any unexpected space usage.
       // If we overrun reserved COW size, entire OTA will fail
       // and no way for user to retry OTA
@@ -999,7 +1008,8 @@ bool DeltaPerformer::ExtentsToBsdiffPositionsString(
     uint64_t this_length =
         min(full_length - length,
             static_cast<uint64_t>(extent.num_blocks()) * block_size);
-    ret += base::StringPrintf("%" PRIi64 ":%" PRIu64 ",", start, this_length);
+    ret += android::base::StringPrintf(
+        "%" PRIi64 ":%" PRIu64 ",", start, this_length);
     length += this_length;
   }
   TEST_AND_RETURN_FALSE(length == full_length);
@@ -1491,8 +1501,8 @@ bool DeltaPerformer::CheckpointUpdateProgress(bool force) {
     return false;
   }
   Terminator::set_exit_blocked(true);
-  LOG_IF(WARNING, !prefs_->StartTransaction())
-      << "unable to start transaction in checkpointing";
+  //LOG_IF(WARNING, !prefs_->StartTransaction())
+  //    << "unable to start transaction in checkpointing";
   DEFER {
     prefs_->CancelTransaction();
   };
@@ -1549,7 +1559,7 @@ bool DeltaPerformer::CheckpointUpdateProgress(bool force) {
   TEST_AND_RETURN_FALSE(
       prefs_->SetInt64(kPrefsUpdateStateNextOperation, next_operation_num_));
   if (!prefs_->SubmitTransaction()) {
-    LOG(ERROR) << "Failed to submit transaction in checkpointing";
+    //LOG(ERROR) << "Failed to submit transaction in checkpointing";
   }
   return true;
 }

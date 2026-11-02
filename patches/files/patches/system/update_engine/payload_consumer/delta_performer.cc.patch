@@ -44,7 +44,7 @@
    return true;
  }
  
-@@ -1222,12 +1189,12 @@
+@@ -1232,12 +1199,12 @@
    }
  
    // For non-partial updates, check max_timestamp first.

@@ -1,6 +1,6 @@
 --- a/bootable/recovery/gui/theme/portrait_hdpi/resources/vars.xml
 +++ b/bootable/recovery/gui/theme/portrait_hdpi/resources/vars.xml
-@@ -383,12 +383,33 @@
+@@ -433,12 +433,33 @@
  		<!-- Battery -->
  		<variable name="battery_12_x" value="880-%status_indent_right%"/>
  		<variable name="battery_24_x" value="940-%status_indent_right%"/>

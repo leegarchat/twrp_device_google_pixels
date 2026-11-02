@@ -262,7 +262,7 @@ uint64_t tmp;
 /* return whether there is a real vendor partition */
 bool TWFunc::Has_Vendor_Partition(void)
 {
-   if (TWFunc::Path_Exists ("/dev/block/bootdevice/by-name/vendor") || TWFunc::Path_Exists ("/dev/block/by-name/vendor"))
+   if (TWFunc::Path_Exists ("/dev/block/bootdevice/by-name/vendor"))
        return true;
    else
       return false;
@@ -351,7 +351,7 @@ void TWFunc::Run_Before_Reboot(void)
     // logs & stuff
     string Logs_Dir = Fox_Logs_Dir;
     bool failed_decryption = (TWFunc::Fox_Property_Get("of_decryption_failed") == "true");
-#if defined(FOX_USE_DATA_RECOVERY_FOR_SETTINGS) || !defined(FOX_MISCELLANEOUS_ROOT_DIRECTORY)
+#if defined(OF_USE_DATA_RECOVERY_FOR_SETTINGS) || !defined(OF_MISCELLANEOUS_ROOT_DIRECTORY)
     // check whether decryption failed, and, if so, store the lastrecovery log under /data/recovery/
     if (failed_decryption) {
     	Logs_Dir = TW_STORAGE_PATH;
@@ -388,15 +388,15 @@ void TWFunc::Run_Before_Reboot(void)
 
     // if decryption failed, don't backup historic logs
     if (failed_decryption) {
-	#ifdef FOX_MISCELLANEOUS_ROOT_DIRECTORY
-	std::string tmp1 = FOX_MISCELLANEOUS_ROOT_DIRECTORY;
+	#ifdef OF_MISCELLANEOUS_ROOT_DIRECTORY
+	std::string tmp1 = OF_MISCELLANEOUS_ROOT_DIRECTORY;
 	if (tmp1.find("/sdcard/") != string::npos) {
 		// if we're trying to write to /sdcard with decryption failure, bail out
 		return;
 	}
 	#endif
 
-	#ifdef FOX_USE_DATA_RECOVERY_FOR_SETTINGS
+	#ifdef OF_USE_DATA_RECOVERY_FOR_SETTINGS
 		// we aren't writing to /sdcard, so continue
 	#else
 		return;
@@ -2837,32 +2837,36 @@ int TWFunc::Check_MIUI_Treble(void)
 
 void TWFunc::Welcome_Message(void)
 {
-   if (Fox_Has_Welcomed > 0)
-    return;
+    if (Fox_Has_Welcomed > 0) {
+        return;
+    }
+
     gui_print("--------------------------\n");
     gui_msg(Msg(msg::kGreen, "fox_welcome=Welcome to OrangeFox Recovery!"));
     gui_msg(Msg("fox_release=[Release]   : {1}")(FOX_BUILD));
     gui_msg(Msg("fox_variant=[Variant]   : {1}")(FOX_VARIANT));
-    gui_msg(Msg("fox_codebase=[Codebase]  : {1}, {2}")(Fox_Property_Get("ro.build.version.sdk").c_str())(FOX_CURRENT_DEV_STR));
+    gui_msg(Msg("fox_codebase=[Codebase]  : {1}, {2}")
+        (Fox_Property_Get("ro.build.version.sdk").c_str())
+        (FOX_CURRENT_DEV_STR));
     gui_print("[Branch]    : %s\n", OF_CURRENT_BRANCH);
-#ifdef FOX_SETTINGS_ROOT_DIRECTORY
+#ifdef OF_SETTINGS_ROOT_DIRECTORY
     gui_msg(Msg("fox_settings=[Settings]  : {1}")(Fox_Settings_Path.c_str()));
 #endif
-#ifdef FOX_MISCELLANEOUS_ROOT_DIRECTORY
+#ifdef OF_MISCELLANEOUS_ROOT_DIRECTORY
     gui_msg(Msg("fox_misc=[Misc]      : {1}")(Fox_Home.c_str()));
 #endif
     gui_msg(Msg("fox_build_date=[Build date]: {1}")(DataManager::GetStrValue("FOX_BUILD_DATE_REAL").c_str()));
-    
+
     if (uppercase(FOX_BUILD) == "UNOFFICIAL")
-      	gui_msg(Msg(msg::kWarning, "fox_build_type_unofficial=[Build type]: Unofficial. No official support for unofficial builds"));
+        gui_msg(Msg(msg::kWarning, "fox_build_type_unofficial=[Build type]: Unofficial. No official support for unofficial builds"));
     else {
-    	gui_msg(Msg("fox_build_type=[Build type]: {1}")(FOX_BUILD_TYPE));
-    	if (uppercase(FOX_BUILD_TYPE) == "BETA" || uppercase(FOX_BUILD_TYPE) == "STABLE") {
-    	    string tg_link = "https://t.me/OrangeFoxChat";
-    	    gui_msg(Msg("fox_support=[Support]   : {1}")(tg_link.c_str()));
-    	} else {
-    	    gui_msg(Msg(msg::kWarning, "fox_nosupport=[Support]   : No official support for unknown builds"));
-    	}
+        gui_msg(Msg("fox_build_type=[Build type]: {1}")(FOX_BUILD_TYPE));
+        if (uppercase(FOX_BUILD_TYPE) == "BETA" || uppercase(FOX_BUILD_TYPE) == "STABLE") {
+            string tg_link = "https://t.me/OrangeFoxChat";
+            gui_msg(Msg("fox_support=[Support]   : {1}")(tg_link.c_str()));
+        } else {
+            gui_msg(Msg(msg::kWarning, "fox_nosupport=[Support]   : No official support for unknown builds"));
+        }
     }
 #ifdef OF_ENABLE_LAB
     gui_print_color("error", "\n*** CONFIDENTIAL ALPHA. NOT FOR RELEASE!! ***\n\n");
@@ -3013,14 +3017,13 @@ void TWFunc::OrangeFox_Startup(void)
     {
       std::string balance = TWFunc::Get_Balanced_Governor();
       DataManager::SetValue(FOX_GOVERNOR_STABLE, balance);
-
       for (i = 0; i < 9; i++)
-	{
-	  std::string k = to_string(i);
-	  a = cpu_one + k + cpu_two;
-	  if (TWFunc::Path_Exists(a))
-	    TWFunc::write_to_file(a, balance);
-	}
+    {
+      std::string k = to_string(i);
+      a = cpu_one + k + cpu_two;
+      if (TWFunc::Path_Exists(a))
+        TWFunc::write_to_file(a, balance);
+    }
     }
   //string info = TWFunc::System_Property_Get("ro.build.display.id");
   string info = GetInstalledRom();
@@ -3076,7 +3079,7 @@ void TWFunc::OrangeFox_Startup(void)
   TWFunc::Fresh_Fox_Install();
 
 //==== themes version matching
-#ifndef FOX_ALLOW_EARLY_SETTINGS_LOAD
+#ifndef OF_ALLOW_EARLY_SETTINGS_LOAD
   TWFunc::FoxThemeCheck();
 #endif
 //====

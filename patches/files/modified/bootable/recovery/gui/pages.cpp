@@ -2,7 +2,7 @@
 	Copyright 2013 bigbiff/Dees_Troy TeamWin
 	This file is part of TWRP/TeamWin Recovery Project.
 
-	Copyright (C) 2018-2025 OrangeFox Recovery Project
+	Copyright (C) 2018-2026 OrangeFox Recovery Project
 	This file is part of the OrangeFox Recovery Project.
 
 	TWRP is free software: you can redistribute it and/or modify
@@ -42,6 +42,10 @@
 
 #include <string>
 #include <algorithm>
+#include <map>
+#include <mutex>
+#include <vector>
+#include <functional>
 
 
 #include <ziparchive/zip_archive.h>
@@ -124,6 +128,25 @@ int ConvertStrToColor(std::string str, COLOR* color)
 	return 0;
 }
 
+// Look up `nodename` in style `name`, following an `extends="base"` chain so a
+// style can inherit a base style's nodes (the derived style wins). Bounded loop
+// guards against extends cycles. Returns NULL if not found anywhere in the chain.
+static xml_node<>* FindStyleChainNode(const std::string& name, const char* nodename, int depth)
+{
+	std::string cur = name;
+	for (int guard = 0; !cur.empty() && guard < 12; guard++) {
+		xml_node<>* node = PageManager::FindStyle(cur);
+		if (!node)
+			return NULL;
+		xml_node<>* stylenode = FindNode(node, nodename, depth + 1);
+		if (stylenode)
+			return stylenode;
+		xml_attribute<>* ext = node->first_attribute("extends");
+		cur = ext ? ext->value() : "";
+	}
+	return NULL;
+}
+
 // Helper APIs
 xml_node<>* FindNode(xml_node<>* parent, const char* nodename, int depth /* = 0 */)
 {
@@ -147,14 +170,9 @@ xml_node<>* FindNode(xml_node<>* parent, const char* nodename, int depth /* = 0 
 				continue;
 			} else {
 				std::string name = style->first_attribute("name")->value();
-				xml_node<>* node = PageManager::FindStyle(name);
-
-				if (node) {
-					// We found the style that was named
-					xml_node<>* stylenode = FindNode(node, nodename, depth + 1);
-					if (stylenode)
-						return stylenode;
-				}
+				xml_node<>* stylenode = FindStyleChainNode(name, nodename, depth);
+				if (stylenode)
+					return stylenode;
 			}
 			style = style->next_sibling("style");
 		}
@@ -168,12 +186,9 @@ xml_node<>* FindNode(xml_node<>* parent, const char* nodename, int depth /* = 0 
 			attr = parent->first_attribute("type");
 		// if there's no attribute type, the object type must be the element name
 		std::string stylename = attr ? attr->value() : parent->name();
-		xml_node<>* node = PageManager::FindStyle(stylename);
-		if (node) {
-			xml_node<>* stylenode = FindNode(node, nodename, depth + 1);
-			if (stylenode)
-				return stylenode;
-		}
+		xml_node<>* stylenode = FindStyleChainNode(stylename, nodename, depth);
+		if (stylenode)
+			return stylenode;
 	}
 	return NULL;
 }
@@ -195,13 +210,36 @@ int LoadAttrInt(xml_node<>* element, const char* attrname, int defaultvalue)
 	return value.empty() ? defaultvalue : atoi(value.c_str());
 }
 
+// A bare "NN%" literal (not a %var% reference) means a percentage of the
+// framebuffer dimension. Returns true and fills *out when value is such a
+// literal. "%foo%" (variable reference) starts with '%' and is left alone.
+static bool ParsePercentDim(const std::string& value, bool isX, int* out)
+{
+	size_t n = value.size();
+	if (n < 2 || value[0] == '%' || value[n - 1] != '%')
+		return false;
+	for (size_t i = 0; i + 1 < n; i++) {
+		if (value[i] < '0' || value[i] > '9')
+			return false;
+	}
+	int pct = atoi(value.c_str());
+	*out = (isX ? gr_fb_width() : gr_fb_height()) * pct / 100;
+	return true;
+}
+
 int LoadAttrIntScaleX(xml_node<>* element, const char* attrname, int defaultvalue)
 {
+	int pctval;
+	if (ParsePercentDim(LoadAttrString(element, attrname), true, &pctval))
+		return pctval;
 	return scale_theme_x(LoadAttrInt(element, attrname, defaultvalue));
 }
 
 int LoadAttrIntScaleY(xml_node<>* element, const char* attrname, int defaultvalue)
 {
+	int pctval;
+	if (ParsePercentDim(LoadAttrString(element, attrname), false, &pctval))
+		return pctval;
 	return scale_theme_y(LoadAttrInt(element, attrname, defaultvalue));
 }
 
@@ -259,16 +297,73 @@ AnimationResource* LoadAttrAnimation(xml_node<>* element, const char* attrname)
 		return PageManager::GetResources()->FindAnimation(name);
 }
 
+// ---- Relative / anchor placement (FoxUiEngine) ------------------------------
+// Elements may carry id="name"; later elements anchor to them via:
+//   y="below:name[+/-N]"   x="rightof:name[+/-N]"   (place after an edge)
+//   y="top:name"  y="bottom:name"  x="left:name"  x="right:name"  (align edges)
+// Resolved at load against rects recorded as objects are constructed in document
+// order, so the referenced element must appear earlier on the page. Containers
+// (column/row/scroll) reposition their children, so don't anchor into those.
+struct LayoutRect { int x, y, w, h; };
+static std::map<std::string, LayoutRect> g_layout_ids;
+
+static bool ResolveRelativeDim(const std::string& value, bool isX, int* out)
+{
+	size_t colon = value.find(':');
+	if (colon == std::string::npos)
+		return false;
+	std::string anchor = value.substr(0, colon);
+	std::string rest = value.substr(colon + 1);
+
+	int offset = 0;
+	size_t sign = rest.find_first_of("+-");
+	std::string id = rest;
+	if (sign != std::string::npos) {
+		id = rest.substr(0, sign);
+		offset = atoi(rest.c_str() + sign);
+	}
+
+	std::map<std::string, LayoutRect>::iterator it = g_layout_ids.find(id);
+	if (it == g_layout_ids.end())
+		return false;
+	const LayoutRect& r = it->second;
+
+	if (!isX && anchor == "below")        *out = r.y + r.h;
+	else if (!isX && anchor == "bottom")  *out = r.y + r.h;
+	else if (!isX && anchor == "top")     *out = r.y;
+	else if (isX && anchor == "rightof")  *out = r.x + r.w;
+	else if (isX && anchor == "right")    *out = r.x + r.w;
+	else if (isX && anchor == "left")     *out = r.x;
+	else if (isX && anchor == "leftof")   *out = r.x;
+	else
+		return false;
+
+	*out += isX ? scale_theme_x(offset) : scale_theme_y(offset);
+	return true;
+}
+
 bool LoadPlacement(xml_node<>* node, int* x, int* y, int* w /* = NULL */, int* h /* = NULL */, Placement* placement /* = NULL */)
 {
 	if (!node)
 		return false;
 
-	if (node->first_attribute("x"))
-		*x = LoadAttrIntScaleX(node, "x") + tw_x_offset;
+	if (node->first_attribute("x")) {
+		if (!ResolveRelativeDim(LoadAttrString(node, "x"), true, x))
+			*x = LoadAttrIntScaleX(node, "x") + tw_x_offset;
+	}
 
-	if (node->first_attribute("y"))
-		*y = LoadAttrIntScaleY(node, "y") + tw_y_offset;
+	if (node->first_attribute("y")) {
+		if (!ResolveRelativeDim(LoadAttrString(node, "y"), false, y))
+			*y = LoadAttrIntScaleY(node, "y") + tw_y_offset;
+	}
+
+	// Safe-area inset: cutout="1" pushes the element down by the camera cutout
+	// height (%cutout_w%) so authors don't fold it into every y by hand.
+	if (node->first_attribute("cutout") && std::string(node->first_attribute("cutout")->value()) == "1") {
+		int cut = 0;
+		DataManager::GetValue("cutout_w", cut);
+		*y += scale_theme_y(cut);
+	}
 
 	if (w && node->first_attribute("w"))
 		*w = LoadAttrIntScaleX(node, "w");
@@ -348,6 +443,10 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 		return false;
 	}
 
+	// Fresh id->rect registry for relative/anchor placement on each page.
+	if (depth == 0)
+		g_layout_ids.clear();
+
 	for (xml_node<>* child = page->first_node(); child; child = child->next_sibling())
 	{
 		std::string type = child->name();
@@ -362,6 +461,11 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 			xml_attribute<>* attr = child->first_attribute("type");
 			type = attr ? attr->value() : "*unspecified*";
 		}
+
+		// Meta nodes that may appear as children of a container element
+		// (<scroll>/<column>/<row>) - they configure the parent, not objects.
+		if (type == "placement" || type == "condition")
+			continue;
 
 		if (type == "text")
 		{
@@ -392,6 +496,12 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 		else if (type == "fill")
 		{
 			GUIFill* element = new GUIFill(child);
+			mObjects.push_back(element);
+			mRenders.push_back(element);
+		}
+		else if (type == "spacer" || type == "divider")
+		{
+			GUIDivider* element = new GUIDivider(child);
 			mObjects.push_back(element);
 			mRenders.push_back(element);
 		}
@@ -431,6 +541,13 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 			mRenders.push_back(element);
 			mActions.push_back(element);
 		}
+		else if (type == "toggle")
+		{
+			GUIToggle* element = new GUIToggle(child);
+			mObjects.push_back(element);
+			mRenders.push_back(element);
+			mActions.push_back(element);
+		}
 		else if (type == "fileselector")
 		{
 			GUIFileSelector* element = new GUIFileSelector(child);
@@ -441,6 +558,12 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 		else if (type == "animation")
 		{
 			GUIAnimation* element = new GUIAnimation(child);
+			mObjects.push_back(element);
+			mRenders.push_back(element);
+		}
+		else if (type == "spinningimage")
+		{
+			GUISpinningImage* element = new GUISpinningImage(child);
 			mObjects.push_back(element);
 			mRenders.push_back(element);
 		}
@@ -508,6 +631,163 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 			mRenders.push_back(element);
 			mActions.push_back(element);
 		}
+		else if (type == "column" || type == "row")
+		{
+			// Auto-placement container (prototype). Children are laid out along
+			// one axis from an origin, instead of each carrying an absolute
+			// <placement>. The container itself is NOT a GUIObject: its children
+			// are registered as normal page objects (so render order, focus and
+			// touch all work via the existing Page machinery); we only rewrite
+			// their positions after construction.
+			//
+			//   <column x="40" y="300" spacing="20" itemheight="60"> ... </column>
+			//   <row    x="40" y="300" spacing="16" itemwidth="120"> ... </row>
+			//
+			// `direction` overrides the element default ("vertical" for column,
+			// "horizontal" for row), so <column direction="horizontal"> works too.
+			int origin_x = 0, origin_y = 0;
+			if (child->first_attribute("x"))
+				origin_x = LoadAttrIntScaleX(child, "x") + tw_x_offset;
+			if (child->first_attribute("y"))
+				origin_y = LoadAttrIntScaleY(child, "y") + tw_y_offset;
+
+			bool horizontal = (type == "row");
+			if (child->first_attribute("direction"))
+				horizontal = (std::string(child->first_attribute("direction")->value()) == "horizontal");
+
+			// `spacing` is the gap between items along the layout axis.
+			int spacing = horizontal ? LoadAttrIntScaleX(child, "spacing", 0)
+						 : LoadAttrIntScaleY(child, "spacing", 0);
+			// Main-axis advance fallback for items with no intrinsic size.
+			int defaultItemSize = horizontal ? LoadAttrIntScaleX(child, "itemwidth", 0)
+							 : LoadAttrIntScaleY(child, "itemheight", 0);
+
+			// Optional sizing for cross-axis align + main-axis weights:
+			//   column: w = cross extent, h = main extent
+			//   row:    h = cross extent, w = main extent
+			int box_w = child->first_attribute("w") ? LoadAttrIntScaleX(child, "w", 0) : 0;
+			int box_h = child->first_attribute("h") ? LoadAttrIntScaleY(child, "h", 0) : 0;
+			int crossExtent = horizontal ? box_h : box_w;
+			int mainExtent  = horizontal ? box_w : box_h;
+
+			// align: start (default) | center | end (cross axis)
+			int align = 0;
+			if (child->first_attribute("align"))
+			{
+				std::string a = child->first_attribute("align")->value();
+				if (a == "center")
+					align = 1;
+				else if (a == "end")
+					align = 2;
+			}
+
+			// Per-child main-axis weights, in document order (meta nodes skipped
+			// the same way ProcessNode skips them).
+			std::vector<int> weights;
+			for (xml_node<>* gc = child->first_node(); gc; gc = gc->next_sibling())
+			{
+				std::string gn = gc->name();
+				if (gn == "placement" || gn == "condition")
+					continue;
+				weights.push_back(LoadAttrInt(gc, "weight", 0));
+			}
+
+			size_t firstObject = mObjects.size();
+			if (!ProcessNode(child, templates, depth + 1))
+				return false;
+			LayoutContainer(firstObject, origin_x, origin_y, spacing, horizontal,
+					defaultItemSize, crossExtent, align, mainExtent, weights);
+		}
+		else if (type == "card")
+		{
+			// A content-sizing rounded panel that OWNS its children (so it nests
+			// and re-measures dynamic content): GUICard lays them out, sizes
+			// itself to fit, and draws a rounded background + optional outline.
+			// Same adoption as <scroll>: children stay in mObjects for lifetime /
+			// var-change but are removed from page-level render/touch dispatch.
+			GUICard* element = new GUICard(child);
+
+			size_t firstObj = mObjects.size();
+			size_t firstRender = mRenders.size();
+			size_t firstAction = mActions.size();
+			size_t firstInput = mInputs.size();
+
+			if (!ProcessNode(child, templates, depth + 1))
+				return false;
+
+			for (size_t i = firstObj; i < mObjects.size(); i++)
+			{
+				GUIObject* obj = mObjects[i];
+				element->Adopt(obj, dynamic_cast<RenderObject*>(obj), dynamic_cast<ActionObject*>(obj));
+			}
+
+			mRenders.erase(mRenders.begin() + firstRender, mRenders.end());
+			mActions.erase(mActions.begin() + firstAction, mActions.end());
+			mInputs.erase(mInputs.begin() + firstInput, mInputs.end());
+
+			mRenders.insert(mRenders.begin() + firstRender, element);
+			mActions.insert(mActions.begin() + firstAction, element);
+			mObjects.push_back(element);
+		}
+		else if (type == "scroll")
+		{
+			// Scrollable viewport container. Like <column> it auto-places its
+			// children vertically, but it OWNS them: it renders them clipped to
+			// its viewport at a scroll offset and handles drag/fling. Build the
+			// children as normal page objects, then hand them to the container
+			// and remove them from the page-level render/touch dispatch so only
+			// the container drives them. They stay in mObjects for lifetime and
+			// var-change notification.
+			GUIScrollContainer* element = new GUIScrollContainer(child);
+
+			size_t firstObj = mObjects.size();
+			size_t firstRender = mRenders.size();
+			size_t firstAction = mActions.size();
+			size_t firstInput = mInputs.size();
+
+			if (!ProcessNode(child, templates, depth + 1))
+				return false;
+
+			for (size_t i = firstObj; i < mObjects.size(); i++)
+			{
+				GUIObject* obj = mObjects[i];
+				element->Adopt(obj, dynamic_cast<RenderObject*>(obj), dynamic_cast<ActionObject*>(obj));
+			}
+
+			// Everything appended during the recursion above belongs to this
+			// container, so the adopted ranges run to the end of each vector.
+			mRenders.erase(mRenders.begin() + firstRender, mRenders.end());
+			mActions.erase(mActions.begin() + firstAction, mActions.end());
+			mInputs.erase(mInputs.begin() + firstInput, mInputs.end());
+
+			// Slot the container into the z-position the children occupied.
+			mRenders.insert(mRenders.begin() + firstRender, element);
+			mActions.insert(mActions.begin() + firstAction, element);
+			mObjects.push_back(element);
+		}
+		else if (type == "when")
+		{
+			// Responsive breakpoint: process children only if the current
+			// framebuffer matches. Attributes (raw px): minw, maxw, minh, maxh,
+			// and orientation="portrait|landscape".
+			bool ok = true;
+			if (child->first_attribute("minw"))
+				ok = ok && (gr_fb_width() >= LoadAttrInt(child, "minw"));
+			if (child->first_attribute("maxw"))
+				ok = ok && (gr_fb_width() <= LoadAttrInt(child, "maxw"));
+			if (child->first_attribute("minh"))
+				ok = ok && (gr_fb_height() >= LoadAttrInt(child, "minh"));
+			if (child->first_attribute("maxh"))
+				ok = ok && (gr_fb_height() <= LoadAttrInt(child, "maxh"));
+			if (child->first_attribute("orientation"))
+			{
+				bool landscape = gr_fb_width() > gr_fb_height();
+				std::string o = child->first_attribute("orientation")->value();
+				ok = ok && ((o == "landscape") == landscape);
+			}
+			if (ok && !ProcessNode(child, templates, depth + 1))
+				return false;
+		}
 		else if (type == "template")
 		{
 			if (!templates || !child->first_attribute("name"))
@@ -520,6 +800,22 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 				xml_node<>* node;
 				bool node_found = false;
 
+				// Parameterized templates: any attribute on the <template> call
+				// other than "name" is a parameter exposed to the template body
+				// as a %attr% DataManager value for the duration of expansion.
+				// e.g. <template name="toggle" var="tw_x" label="ADB"/> lets the
+				// template use %var% and %label%. Previous values are saved and
+				// restored so params don't leak (supports nesting/reuse).
+				std::vector<std::pair<std::string, std::string> > saved;
+				for (xml_attribute<>* a = child->first_attribute(); a; a = a->next_attribute())
+				{
+					std::string an = a->name();
+					if (an == "name")
+						continue;
+					saved.push_back(std::make_pair(an, DataManager::GetStrValue(an)));
+					DataManager::SetValue(an, std::string(a->value()));
+				}
+
 				// We need to find the correct template
 				for (std::vector<xml_node<>*>::iterator itr = templates->begin(); itr != templates->end(); itr++) {
 					node = (*itr)->first_node("template");
@@ -531,8 +827,11 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 
 						if (name == node->first_attribute("name")->value())
 						{
-							if (!ProcessNode(node, templates, depth + 1))
+							if (!ProcessNode(node, templates, depth + 1)) {
+								for (size_t s = 0; s < saved.size(); s++)
+									DataManager::SetValue(saved[s].first, saved[s].second);
 								return false;
+							}
 							else {
 								node_found = true;
 								break;
@@ -544,21 +843,164 @@ bool Page::ProcessNode(xml_node<>* page, std::vector<xml_node<>*> *templates, in
 					}
 					// [check] why is there no if (node_found) here too?
 				}
+
+				// Restore any parameters we shadowed.
+				for (size_t s = 0; s < saved.size(); s++)
+					DataManager::SetValue(saved[s].first, saved[s].second);
 			}
 		}
 		else
 		{
 			LOGERR("Unknown object type: %s.\n", type.c_str());
 		}
+
+		// Load-time validation: an explicit style="X" that doesn't resolve is
+		// almost always a typo - surface it precisely instead of silently
+		// rendering an unstyled element.
+		if (xml_attribute<>* st = child->first_attribute("style"))
+		{
+			if (!PageManager::FindStyle(st->value()))
+				LOGINFO("FoxUiEngine: <%s> on page '%s' references unknown style \"%s\"\n",
+						type.c_str(), mName.c_str(), st->value());
+		}
+
+		// Record this element's rect under its id (if any) so later elements can
+		// anchor to it via relative placement (below:/rightof:/...).
+		if (child->first_attribute("id") && !mObjects.empty())
+		{
+			RenderObject* ro = dynamic_cast<RenderObject*>(mObjects.back());
+			if (ro)
+			{
+				int rx, ry, rw, rh;
+				ro->GetRenderPos(rx, ry, rw, rh);
+				LayoutRect rect = { rx, ry, rw, rh };
+				g_layout_ids[child->first_attribute("id")->value()] = rect;
+			}
+		}
 	}
 	return true;
 }
 
+void Page::LayoutContainer(size_t firstObject, int originX, int originY,
+		int spacing, bool horizontal, int defaultItemSize,
+		int crossExtent, int align, int mainExtent,
+		const std::vector<int>& weights)
+{
+	// Pass 1 - gather the renderable children (skipping non-rendering objects
+	// like <action>) with their measured main- and cross-axis sizes.
+	std::vector<size_t> idx;
+	std::vector<int> mainSize, crossSize;
+	for (size_t i = firstObject; i < mObjects.size(); i++)
+	{
+		RenderObject* ro = dynamic_cast<RenderObject*>(mObjects[i]);
+		if (!ro)
+			continue;
+
+		int cx, cy, cw, ch;
+		ro->GetRenderPos(cx, cy, cw, ch);
+
+		// Main-axis advance: prefer intrinsic size; measure bounded-less text
+		// (as GUIButton does for its label); fall back to itemwidth/itemheight.
+		int advance = horizontal ? cw : ch;
+		if (advance <= 0)
+		{
+			GUIText* txt = dynamic_cast<GUIText*>(mObjects[i]);
+			if (txt)
+			{
+				int tw, th;
+				txt->GetCurrentBounds(tw, th);
+				advance = horizontal ? tw : th;
+			}
+		}
+		if (advance <= 0)
+			advance = defaultItemSize;
+
+		idx.push_back(i);
+		mainSize.push_back(advance);
+		crossSize.push_back(horizontal ? ch : cw);
+	}
+
+	// Weight distribution: give weighted children a share of the leftover
+	// main-axis space. Only when a main extent is known and the weights line up
+	// 1:1 with the renderable children (templates/conditions would break that).
+	bool useWeights = (mainExtent > 0 && weights.size() == idx.size());
+	if (useWeights)
+	{
+		long sumW = 0;
+		int fixed = 0;
+		for (size_t k = 0; k < idx.size(); k++)
+		{
+			if (weights[k] > 0)
+				sumW += weights[k];
+			else
+				fixed += mainSize[k];
+		}
+		int totalSpacing = idx.empty() ? 0 : spacing * (int)(idx.size() - 1);
+		int leftover = mainExtent - fixed - totalSpacing;
+		if (leftover < 0)
+			leftover = 0;
+		if (sumW > 0)
+		{
+			for (size_t k = 0; k < idx.size(); k++)
+				if (weights[k] > 0)
+					mainSize[k] = (int)((long)leftover * weights[k] / sumW);
+		}
+	}
+
+	// Pass 2 - place each child along the main axis, aligned on the cross axis.
+	int cursor = horizontal ? originX : originY;
+	for (size_t k = 0; k < idx.size(); k++)
+	{
+		RenderObject* ro = dynamic_cast<RenderObject*>(mObjects[idx[k]]);
+		int cx, cy, cw, ch;
+		ro->GetRenderPos(cx, cy, cw, ch);
+
+		// Cross-axis alignment within crossExtent (start by default).
+		int crossPos = horizontal ? originY : originX;
+		if (crossExtent > 0 && align != 0)
+		{
+			int cs = crossSize[k];
+			if (align == 1)
+				crossPos += (crossExtent - cs) / 2; // center
+			else if (align == 2)
+				crossPos += (crossExtent - cs);     // end
+		}
+
+		int newX = horizontal ? cursor : crossPos;
+		int newY = horizontal ? crossPos : cursor;
+		// Weighted children get their computed main-axis size; others keep theirs.
+		int newW = cw, newH = ch;
+		if (useWeights && weights[k] > 0)
+		{
+			if (horizontal)
+				newW = mainSize[k];
+			else
+				newH = mainSize[k];
+		}
+		ro->SetRenderPos(newX, newY, newW, newH);
+
+		// Move the hit-region in lockstep (GUIButton::SetRenderPos already did
+		// its own; re-reading picks up any weighted resize for those too).
+		ActionObject* ao = dynamic_cast<ActionObject*>(mObjects[idx[k]]);
+		if (ao)
+		{
+			int ax, ay, aw, ah;
+			ao->GetActionPos(ax, ay, aw, ah);
+			ao->SetActionPos(newX, newY, aw, ah);
+		}
+
+		cursor += mainSize[k] + spacing;
+	}
+}
+
 int Page::Render(void)
 {
-	// Render background
-	gr_color(mBackground.red, mBackground.green, mBackground.blue, mBackground.alpha);
-	gr_fill(0, 0, gr_fb_width(), gr_fb_height());
+	// Render background. A fully-transparent background (e.g. an overlay like the
+	// toast) draws nothing but still costs a full-screen alpha blend - skip it.
+	if (mBackground.alpha != 0) {
+		gr_color(mBackground.red, mBackground.green, mBackground.blue, mBackground.alpha);
+		gr_fill(0, 0, gr_fb_width(), gr_fb_height());
+	}
 
 	// Render remaining objects
 	std::vector<RenderObject*>::iterator iter;
@@ -1018,6 +1460,16 @@ int PageSet::SetPage(std::string page)
 
 int PageSet::SetOverlay(Page* page)
 {
+	// Re-entrancy guard: SetOverlay runs NotifyVarChange on the overlay's
+	// objects, which can run an <action> that requests an overlay again. That
+	// would recurse until the stack overflows. Block only the nested call (a
+	// normal, sequential SetOverlay is unaffected).
+	static bool in_set_overlay = false;
+	if (in_set_overlay)
+		return 0;
+	struct ReentryGuard { bool& f; ~ReentryGuard() { f = false; } } rg{in_set_overlay};
+	in_set_overlay = true;
+
 	if (page) {
 		if (mOverlays.size() >= 10) {
 			LOGERR("Too many overlays requested, max is 10.\n");
@@ -1761,10 +2213,89 @@ void PageManager::LoadCursorData(xml_node<>* node)
 	mMouseCursor->LoadData(node);
 }
 
+// Deferred work marshalled onto the GUI thread via gui_run_on_main(). Drained at
+// the top of PageManager::Update(); the producer side (which may be any thread)
+// only touches the mutex-guarded queue, never page state.
+static std::mutex g_deferred_mutex;
+static std::vector<std::function<void()>> g_deferred_actions;
+
+void gui_run_on_main(std::function<void()> fn)
+{
+	if (!fn)
+		return;
+	std::lock_guard<std::mutex> lk(g_deferred_mutex);
+	g_deferred_actions.push_back(std::move(fn));
+}
+
+void PageManager::RunDeferredActions(void)
+{
+	std::vector<std::function<void()>> actions;
+	{
+		std::lock_guard<std::mutex> lk(g_deferred_mutex);
+		if (g_deferred_actions.empty())
+			return;
+		actions.swap(g_deferred_actions);
+	}
+	for (auto& fn : actions)
+		fn();
+	// A deferred action (toast overlay, page reload) may not otherwise dirty the
+	// frame; force a render so worker-driven UI updates show even while idle.
+	gui_forceRender();
+}
+
+// Transient toast/snackbar: gui_toast() shows the "toast" overlay with a message
+// and a frame countdown; PageManager::Update ticks it down and auto-dismisses.
+static int g_toast_frames = 0;
+
+void gui_toast(const std::string& text, int frames)
+{
+	// Optional bootstrap-style severity marker at the very start of the message:
+	//   [success] / [warning] / [info] / [error]   (default: info).
+	// It selects the toast's icon + outline colour and is stripped from the text.
+	std::string msg = text;
+	std::string type = "info";
+	const char* colorVar = "toast_c_info";    // theme colour var name per type
+	if (msg.size() > 2 && msg[0] == '[') {
+		size_t close = msg.find(']');
+		if (close != std::string::npos) {
+			std::string tag = msg.substr(1, close - 1);
+			bool known = true;
+			if (tag == "success")      colorVar = "toast_c_success";
+			else if (tag == "warning") colorVar = "toast_c_warning";
+			else if (tag == "error")   colorVar = "toast_c_error";
+			else if (tag == "info")    colorVar = "toast_c_info";
+			else                       known = false;
+			if (known) {
+				type = tag;
+				// strip "[tag]" and any single following space
+				size_t start = close + 1;
+				if (start < msg.size() && msg[start] == ' ')
+					start++;
+				msg = msg.substr(start);
+			}
+		}
+	}
+
+	DataManager::SetValue("toast_text", msg);
+	DataManager::SetValue("toast_type", type);
+	DataManager::SetValue("toast_outline", DataManager::GetStrValue(colorVar));
+	g_toast_frames = frames > 0 ? frames : 1;
+	PageManager::ChangeOverlay("toast");
+}
+
 int PageManager::Update(void)
 {
+	// Run any work marshalled from other threads first, on the GUI thread, so it
+	// can safely mutate page/overlay state.
+	RunDeferredActions();
+
 	if (blankTimer.isScreenOff())
 		return 0;
+
+	// Auto-dismiss an active toast once its time runs out (done before the set
+	// Update so we don't tear down the overlay mid-iteration).
+	if (g_toast_frames > 0 && --g_toast_frames == 0)
+		ChangeOverlay("");
 
 	if (RunReload())
 		return -2;
@@ -1878,6 +2409,32 @@ int Page::MoveFocusIndex(Page::Direction direction) {
 					return nextIndex; // Stay here
 				} else {
 					// End of scrollList
+					focusedElement->SetFocus(0);
+					continue; // Searching new index
+				}
+			} else {
+				continue;
+			}
+		} else if (name == "GUIScrollContainer") {
+			// A scroll viewport navigates like a list: its focusable children
+			// (embedded listboxes) are chained into one selection sequence and
+			// auto-scrolled into view. See GUIScrollContainer.
+			GUIScrollContainer* scroll = dynamic_cast<GUIScrollContainer*>(focusedElement);
+			if (scroll && scroll->GetItemCount() != 0) {
+				if (!focusedElement->HasFocus()) {
+					if (direction == Page::Direction::Down)
+						scroll->SetSelectedItem(0);
+					else
+						scroll->SetSelectedItem(scroll->GetItemCount() - 1);
+					gui_forceRender();
+					keepFocusIndex = true;
+					return nextIndex; // Stay here
+				} else if ((direction == Page::Direction::Down && scroll->MoveSelectionDown()) || (direction == Page::Direction::Up && scroll->MoveSelectionUp())) {
+					gui_forceRender();
+					keepFocusIndex = true;
+					return nextIndex; // Stay here
+				} else {
+					// End of the scroll container
 					focusedElement->SetFocus(0);
 					continue; // Searching new index
 				}

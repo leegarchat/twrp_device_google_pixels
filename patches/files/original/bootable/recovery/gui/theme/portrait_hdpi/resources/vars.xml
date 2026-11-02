@@ -3,7 +3,7 @@
 	<variables>
 		<!-- Cutout -->
 		<variable name="center_clock" value="2" persist="1"/> <!-- default clock placement (0 - right; 1 - center; 2 - left) -->
-		
+
 		<!-- OrangeFox vars -->
 		<variable name="ota_back_file" value="0"/>
 		<variable name="update_fonts" value="0"/>
@@ -12,7 +12,7 @@
 		<variable name="update_accent" value="0"/>
 		<variable name="update_style" value="0"/>
 		<variable name="update_action" value="0"/>
-		
+
 		<variable name="of_decrypt_from_menu" value="0"/>
 
 		<variable name="ap_path" value="/data/adb/ap"/>
@@ -34,7 +34,8 @@
 		<variable name="tw_enable_keys" value="1" persist="1"/>
 		<variable name="adb_startup" value="1" persist="1"/>
 		<variable name="fox_adv_backup" value="0" persist="1"/>
-		
+
+
 		<!-- Favorites menu -->
 		<variable name="book_1" value="/sdcard/Fox" persist="1"/>
 		<variable name="book_2" value="/sdcard/Fox/logs" persist="1"/>
@@ -45,16 +46,16 @@
 		<variable name="book_7" value="notset" persist="1"/>
 		<variable name="book_8" value="notset" persist="1"/>
 		<variable name="book_9" value="notset" persist="1"/>
-		
+
 		<!-- Lock -->
 		<variable name="fox_use_pass" value="0" persist="1"/>
 		<variable name="fox_pass_true" value="4ee92c7c7909dc2a1ddaefe93ed97efa27a9b8cab8f1b90c199f917756d00f940155bade0da13e717f0c4a1069de9582e0dd5b1affef427fc7303aa9b593740c" persist="1"/> <!-- qwerty -->
 		<variable name="fox_pass_type" value="0" persist="1"/>
-		
+
 		<!-- Backups -->
 		<variable name="tw_backup_list_quick" value="/data;/boot;" persist="1"/>
 		<variable name="auto_generate" value="2" persist="1"/>
-		
+
 		<!-- Design -->
 		<variable name="enable_battery" value="1" persist="1"/>
 		<variable name="navbar_style" value="1" persist="1"/>
@@ -66,7 +67,7 @@
 		<variable name="navbar_sams" value="0" persist="1"/>
 		<variable name="show_slideout" value="1" persist="1"/>
 		<variable name="style_battery" value="2" persist="1"/>
-		<variable name="hide_notch" value="0" persist="1"/> 
+		<variable name="hide_notch" value="0" persist="1"/>
 		<variable name="auto_show_btns" value="1" persist="1"/>
 		<variable name="instant_apply" value="1" persist="1"/>
 		<variable name="key_allow_swipe" value="1" persist="1"/>
@@ -76,16 +77,16 @@
 		<variable name="gst_back_left" value="1" persist="1"/>
 		<variable name="gst_back_right" value="1" persist="1"/>
 		<variable name="gst_console" value="1" persist="1"/>
-		
+
 		<!-- Other... -->
 		<variable name="of_hide_data_hint" value="0" persist="1"/>
 		<variable name="of_hide_app_hint" value="1" persist="1"/>
 		<variable name="fm_auto_open" value="1" persist="1"/>
-		<variable name="tw_hidden_files" value="0" persist="1"/> 
-		<variable name="need_reboot" value="0" /> 
-		<variable name="fox_reboot_saveload_aromafm_check" value="0" /> 
+		<variable name="tw_hidden_files" value="0" persist="1"/>
+		<variable name="need_reboot" value="0" />
+		<variable name="fox_reboot_saveload_aromafm_check" value="0" />
 		<variable name="tw_crypto_user_id_list" value="init" /> <!-- requred to make list update -->
-		
+
 		<!-- Default values -->
 		<variable name="tw_hide_kb" value="0"/>
 		<variable name="tw_backup_list" value=""/>
@@ -105,7 +106,7 @@
 		<variable name="welcome_text" value="%center_y%+180"/>
 		<variable name="welcome_text2" value="%center_y%+260"/>
 		<variable name="empty_text_y" value="%center_y%+288"/>
-		
+
 		<!-- Screen size -->
 		<variable name="cutout_w" value="%status_h%-72"/>
 		<variable name="center_x" value="540"/>
@@ -121,7 +122,7 @@
 		<variable name="ota_update_progress_y" value="%center_y%+400"/>
 		<variable name="ota_update_progress_x" value="326"/>
 		<variable name="ota_update_log_y" value="%center_y%+600"/>
-		
+
 		<!-- FAB above NavPanel -->
 		<variable name="btn_float_size" value="168"/>
 		<variable name="btn_float_x" value="948"/>
@@ -130,7 +131,7 @@
 		<variable name="btn_sfloat_1_y" value="%screen_h%-1104"/>
 		<variable name="btn_sfloat_2_y" value="%screen_h%-924"/>
 		<variable name="btn_sfloat_3_y" value="%screen_h%-744"/>
-		
+
 		<!-- NavPanel -->
 		<variable name="nav_item_w" value="270"/>
 		<variable name="nav_panel_h" value="216"/>
@@ -148,38 +149,37 @@
 		<variable name="nav_item_4" value="909"/>
 		<variable name="nav_path_w" value="648"/>
 
-		
+
 		<variable name="np_pill_w" value="192"/>
 		<variable name="np_pill_h" value="96"/>
 		<variable name="np_pill_y" value="%screen_h%-330"/>
-		<variable name="np_pill_x1" value="75"/> <!-- 48 + 27 -->
-		<variable name="np_pill_x2" value="321"/> <!-- 48 + 27 + np_pill_w + 27 + 27 -->
+		<variable name="np_pill_x1" value="75"/>
+		<variable name="np_pill_x2" value="321"/>
 		<variable name="np_pill_x3" value="567"/>
 		<variable name="np_pill_x4" value="813"/>
-		
+
 		<!-- File Selector w/ NavPanel -->
 		<variable name="files_np_w" value="%screen_min_cut%-600"/>
 		<variable name="files_np_mm_y" value="408+%cutout_w%"/>
-		
+
 		<!-- UI w/ NavPanel -->
 		<variable name="slider_np_y" value="%screen_h%-534"/>
 		<variable name="slider_text_np_y" value="%screen_h%-642"/>
 		<variable name="slider_text_y_l" value="%screen_original_h%-281"/>
-		
+
 		<!-- Wait screens -->
 		<variable name="busy_text" value="%screen_original_h%-144"/>
-		
+
 		<!-- AR UI -->
 		<variable name="magisk_list_h" value="%screen_min_cut%-882"/>
 		<variable name="fullscreen_list_h" value="%screen_min_cut%-504"/>
 		<variable name="fullscreen_list_info_h" value="%screen_min_cut%-732"/>
-		<variable name="part_list_btns_h" value="%screen_min_cut%-1446"/> <!-- Backup parts -->
+		<variable name="part_list_btns_h" value="%screen_min_cut%-1446"/>
 		<variable name="part_backup_info_y" value="%screen_h%-678"/>
 		<variable name="part_backup_line_y" value="%screen_h%-696"/>
-		<variable name="part_list_btns_9_h" value="%screen_min_cut%-1188"/> <!-- Wipe parts -->
-		<variable name="part_list_mount_h" value="%screen_min_cut%-654"/> <!-- Mount parts -->
-		
-		<!--variable name="flash_img_part_expanded" value="%screen_min_cut%-1122"/-->
+		<variable name="part_list_btns_9_h" value="%screen_min_cut%-1188"/>
+		<variable name="part_list_mount_h" value="%screen_min_cut%-654"/>
+
 		<variable name="flash_img_part" value="%screen_min_cut%-1396"/>
 		<variable name="restore_part" value="%screen_min_cut%-1506"/>
 
@@ -193,18 +193,18 @@
 		<variable name="ws_cards_x2" value="412"/>
 		<variable name="ws_cards_x3" value="668"/>
 		<variable name="ws_cards_x4" value="924"/>
-		
+
 		<!-- Splash -->
 		<variable name="spl_preview_h" value="720"/>
 		<variable name="spl_preview_bg" value="%screen_h%-%row4_3_y%"/>
 		<variable name="spl_list_h" value="%screen_min_cut%-1104"/>
-		
+
 		<!-- Favorites -->
 		<variable name="book_edit" value="0"/>
 		<variable name="bs_del" value="936"/>
 		<variable name="bs_del_i" value="972"/>
 		<variable name="bs_del_w" value="144"/>
-		
+
 		<!-- Password -->
 		<variable name="pass_enter" value=""/>
 		<variable name="pass_enter_hash" value=""/>
@@ -212,7 +212,7 @@
 		<variable name="pass_open" value="0"/>
 		<variable name="pass_new_1" value=""/>
 		<variable name="pass_new_2" value=""/>
-		
+
 		<!-- Debug -->
 		<variable name="dbg" value="page"/>
 		<variable name="dbg_b" value="main"/>
@@ -221,7 +221,7 @@
 		<variable name="pc_y" value="%cutout_w%+108"/>
 		<variable name="pc_icon_y" value="%cutout_w%+240"/>
 		<variable name="pc_text_y" value="%cutout_w%+320"/>
-		
+
 		<!-- Content placement -->
 		<variable name="col1_x" value="48"/>
 		<variable name="col1_x_neg" value="1032"/>
@@ -231,7 +231,7 @@
 		<variable name="col1_x_caption" value="216"/>
 		<variable name="input_w" value="984"/>
 		<variable name="input_backup_w" value="905"/>
-		
+
 		<variable name="col_col_center_x" value="386"/>
 		<variable name="col_x_color3" value="724"/>
 		<variable name="col2_x" value="708"/>
@@ -246,7 +246,7 @@
 
 		<variable name="warn_center_y" value="%center_y%-40"/>
 		<variable name="warn_center2_y" value="%center_y%+40"/>
-		
+
 		<!-- button list height -->
 		<variable name="bl_h1" value="144"/>
 		<variable name="bl_h2" value="288"/>
@@ -254,9 +254,29 @@
 		<variable name="bl_h4" value="576"/>
 		<variable name="bl_h5" value="720"/>
 		<variable name="bl_h6" value="864"/>
-		
+
 		<variable name="bl_fullscreen_h" value="%screen_min_cut%-384"/>
 		<variable name="bl_files_h" value="%screen_min_cut%-600"/>
+		<!-- height of a FoxUiEngine <scroll> viewport that sits between the action
+		     bar (top, %ab_h%) and the floating nav panel (bottom, %nav_panel_y%) -->
+		<variable name="scroll_nav_h" value="%nav_panel_y%-%ab_h%"/>
+
+		<!-- FoxUiEngine design tokens: a consistent spacing/radius scale. Prefer
+		     these over hard-coded pixel gaps so layouts rescale together.
+		     Used as spacing=/padding= on layout containers, radius= on shapes. -->
+		<variable name="space_xs" value="8"/>
+		<variable name="space_s"  value="16"/>
+		<variable name="space_m"  value="24"/>
+		<variable name="space_l"  value="40"/>
+		<variable name="space_xl" value="64"/>
+		<variable name="radius_s" value="16"/>
+		<variable name="radius_m" value="32"/>
+		<variable name="radius_l" value="48"/>
+
+		<!-- full-width <card> toast: bottom baseline (just above nav panel) + a
+		     small side margin so it spans almost the whole screen width -->
+		<variable name="toast_bottom" value="%nav_panel_y%-30"/>
+		<variable name="toast_w" value="%screen_w%-110"/> <!-- ~80px side margins -->
 		<variable name="input_btn_list_y" value="674+%cutout_w%"/>
 
 		<variable name="down_menu_btn_y" value="%screen_h%-576"/>
@@ -286,20 +306,32 @@
 		<variable name="chtxt_x_x" value="738"/>
 		<variable name="chtxt_y" value="%cutout_w%+697"/>
 		<variable name="chtxt_sph_y" value="%cutout_w%+1135"/>
-		<!-- row6_1_y -->
 
 		<!-- About -->
 		<variable name="about_title_h" value="576+%cutout_w%"/>
 		<variable name="tab_title_h" value="360+%cutout_w%"/>
 		<variable name="tab_btn_y" value="240+%cutout_w%"/>
 		<variable name="credits_listbox_h" value="%screen_min_cut%-552"/>
+
+		<!-- WiFi pages (Connection / Apps, separate pages with a tab bar). The
+		     Connection tab keeps the old toggle-card cluster, shifted down by 120
+		     to sit below the tab bar; the network list fills to above the navbar. -->
+		<variable name="wifi_card_y" value="420+%cutout_w%"/>
+		<variable name="wifi_switch_icon_y" value="504+%cutout_w%"/>
+		<variable name="wifi_switch_text_y" value="462+%cutout_w%"/>
+		<variable name="wifi_caption_y" value="636+%cutout_w%"/>
+		<variable name="wifi_btn_row_y" value="648+%cutout_w%"/>
+		<variable name="wifi_list_y" value="708+%cutout_w%"/>
+		<variable name="wifi_list_h" value="%screen_min_cut%-1068"/>
+		<variable name="wifi_apps_list_y" value="432+%cutout_w%"/>
+		<variable name="wifi_apps_list_h" value="%screen_min_cut%-852"/>
 		<variable name="about_logo_y" value="280+%cutout_w%"/>
 		<variable name="about_logo_x" value="96"/>
 		<variable name="about_txt_x" value="370"/>
 		<variable name="about_txt2_y" value="370+%cutout_w%"/>
 		<variable name="about_txt3_y" value="420+%cutout_w%"/>
 		<variable name="about_txt4_y" value="470+%cutout_w%"/>
-		
+
 		<variable name="cardtxt_1" value="718+%cutout_w%"/>
 		<variable name="cardtxt_2" value="778+%cutout_w%"/>
 		<variable name="cardtxt_3" value="1006+%cutout_w%"/>
@@ -308,13 +340,13 @@
 		<variable name="cardtxt_6" value="1354+%cutout_w%"/>
 		<variable name="cardtxt_7" value="1582+%cutout_w%"/>
 		<variable name="cardtxt_8" value="1642+%cutout_w%"/>
-		
+
 		<variable name="card1_y" value="576+%cutout_w%"/>
 		<variable name="card2_y" value="864+%cutout_w%"/>
 		<variable name="card3_y" value="1152+%cutout_w%"/>
 		<variable name="card4_y" value="1440+%cutout_w%"/>
 		<variable name="card4_btn_y" value="1604+%cutout_w%"/>
-		
+
 		<variable name="card1_mtag_x" value="744"/>
 		<variable name="card1_ctag_x" value="748"/>
 		<variable name="card1_mtag_y" value="636+%cutout_w%"/>
@@ -330,12 +362,12 @@
 		<variable name="card_img2_y" value="936+%cutout_w%"/>
 		<variable name="card_img3_y" value="1224+%cutout_w%"/>
 		<variable name="card_img4_y" value="1512+%cutout_w%"/>
-		
+
 		<variable name="card_txt_x" value="300"/>
 		<variable name="card_img_x" value="72"/>
-		
+
 		<variable name="btn_float_center_y" value="%screen_h%-294"/>
-		
+
 		<!-- NavBar -->
 		<variable name="row_nav_text_y" value="%row_nav_y%+%bs_text_offset%"/>
 		<variable name="row_nav_y" value="%screen_h%-144"/>
@@ -344,13 +376,31 @@
 		<variable name="back_button_x" value="237"/>
 		<variable name="slideout_button_x" value="843"/>
 		<variable name="nav_h" value="144"/>
-		
+
 		<!-- Status Bar -->
 		<variable name="status_right_x" value="1060-%status_indent_right%"/>
-		
+
+		<!-- OrangeFox updater -->
+		<variable name="fox_update_allow_beta" value="0" persist="1"/>
+		<variable name="fox_update_available_count" value="0"/>
+		<variable name="fox_update_release_selection" value=""/>
+
+		<!-- NAS -->
+		<variable name="tw_nas_mounted" value="0"/>
+		<variable name="tw_nas_status_text" value="NAS not mounted"/>
+		<variable name="tw_nas_type" value="sftp" persist="1"/>
+		<variable name="tw_nas_host" value="" persist="1"/>
+		<variable name="tw_nas_port" value="22" persist="1"/>
+		<variable name="tw_nas_share" value="Backups" persist="1"/>
+		<variable name="tw_nas_path" value="" persist="1"/>
+		<variable name="tw_nas_user" value="" persist="1"/>
+		<variable name="tw_nas_pass" value="" persist="1"/>
+		<variable name="tw_nas_domain" value="WORKGROUP" persist="1"/>
+		<variable name="tw_nas_cache_mode" value="off" persist="1"/>
+
 		<!-- Big invisible button -->
 		<variable name="mb_h_hide" value="120"/>
-		
+
 		<!-- Listbox height -->
 		<variable name="lb_l1" value="90"/>
 		<variable name="lb_l2" value="180"/>
@@ -395,7 +445,7 @@
 		<variable name="fileselector_terminal_height" value="%screen_min_cut%-600"/>
 		<variable name="fileselector_separatorheight" value="2"/>
 		<variable name="fileselector_spacing" value="0"/>
-		
+
 		<!-- Title / Title buttons -->
 		<variable name="search_files_h" value="%screen_min_cut%-722"/>
 		<variable name="search_files_y" value="360+%cutout_w%"/>
@@ -419,7 +469,7 @@
 		<variable name="ab_btn3_x" value="708"/>
 		<variable name="ab_btn01_x" value="468"/>
 		<variable name="ab_btn02_x" value="612"/>
-		
+
 		<variable name="ab_back_x" value="84"/>
 		<variable name="ab_bc_y" value="115+%cutout_w%"/>
 		<variable name="ab_bc_fox_y" value="115+%cutout_w%"/>
@@ -430,7 +480,7 @@
 		<variable name="ab_ex_h" value="456+%cutout_w%"/>
 		<variable name="row_ab_ex_y" value="456+%cutout_w%"/>
 		<variable name="ab_btn_h" value="168"/>
-		
+
 		<variable name="tab_w" value="312"/>
 		<variable name="tab_h" value="8"/>
 
@@ -465,7 +515,7 @@
 		<variable name="ab_menu_inst_4_text_y" value="%ab_menu_inst_4_y%-%ab_menu_text_offset%"/>
 		<variable name="ab_menu_inst_5_text_y" value="%ab_menu_inst_5_y%-%ab_menu_text_offset%"/>
 		<variable name="ab_menu_inst_6_text_y" value="%ab_menu_inst_6_y%-%ab_menu_text_offset%"/>
-		
+
 		<!-- Bottom Warning -->
 		<variable name="row_warn_y" value="%screen_h%-380"/>
 		<variable name="row_warn2_y" value="%screen_h%-300"/>
@@ -481,23 +531,23 @@
 		<variable name="btn_w" value="471"/>
 		<variable name="btn_half_w" value="207"/>
 		<variable name="btn_h" value="108"/>
-		
+
 		<!-- Progress -->
 		<variable name="progressbar_x" value="0"/>
 		<variable name="progressbar_y" value="456+%cutout_w%"/>
-		
+
 		<!-- Keyboard -->
 		<variable name="keyboard_y" value="%screen_h%-788"/>
 		<variable name="keyboard_terminal_y" value="%screen_h%-884"/>
 		<variable name="keyboard_num_y" value="%screen_h%-900"/>
 		<variable name="keyboard_term_num_y" value="%screen_h%-992"/>
-		
+
 		<!-- Input fields -->
 		<variable name="input_encr_width" value="696"/>
 		<variable name="input_height" value="60"/>
 		<variable name="input_line_height" value="3"/>
 		<variable name="input_cursor_width" value="2"/>
-		
+
 		<!-- Terminal / Console -->
 		<variable name="console_width" value="984"/>
 		<variable name="console_height" value="%screen_min_cut%-475"/>
@@ -515,7 +565,7 @@
 		<variable name="terminal_nokb_height" value="%screen_min_cut%-270"/>
 		<variable name="console_brightness_y" value="%screen_h%-325"/>
 		<variable name="console_flash_y" value="%screen_h%-228"/>
-		
+
 		<!-- Dialogs -->
 		<variable name="dialog_w" value="840"/>
 		<variable name="db_left_x" value="380"/>
@@ -546,13 +596,13 @@
 		<variable name="snackbar_button_y" value="%screen_h%-294"/>
 		<variable name="dlg_input_cap" value="570"/>
 		<variable name="dlg_input_line" value="690"/>
-		
+
 		<!-- Fast scroll -->
 		<variable name="fastscroll_w" value="16"/>
 		<variable name="fastscroll_linew" value="0"/>
 		<variable name="fastscroll_rectw" value="16"/>
 		<variable name="fastscroll_recth" value="48"/>
-		
+
 		<!-- Sliders -->
 		<variable name="slider_x" value="88"/>
 		<variable name="slider_y" value="%screen_h%-320"/>
@@ -565,30 +615,36 @@
 		<variable name="slider_y_l" value="%screen_original_h%-176"/>
 
 		<variable name="unlock_gest_y" value="%screen_original_h%-48"/>
-		
+
 		<!-- Decrypt (gesture key) -->
 		<variable name="pattern_x" value="216"/>
 		<variable name="pattern_dot_dia" value="32"/>
 		<variable name="pattern_line_w" value="12"/>
 		<variable name="pattern_size" value="648"/>
-		
+
 		<!-- Colors -->
 		<variable name="transparent" value="#00000000"/>
 		<variable name="text_success" value="#68B60B"/>
 		<variable name="text_fail" value="#FF0101"/>
 		<variable name="warning" value="#FF6600"/>
 		<variable name="error" value="#FF0000"/>
+		<!-- Pastel toast/snackbar severity colours (outline + matching icon tint).
+		     Info is a soft, slightly-tinted orange to fit the OrangeFox accent. -->
+		<variable name="toast_c_info"    value="#F2A85C"/> <!-- pastel orange (default) -->
+		<variable name="toast_c_success" value="#A5D6A7"/> <!-- pastel green -->
+		<variable name="toast_c_warning" value="#FFCC80"/> <!-- pastel amber -->
+		<variable name="toast_c_error"   value="#EF9A9A"/> <!-- pastel red -->
 		<variable name="unactive_title" value="#80868B"/>
 		<variable name="highlight" value="%accent%"/>
-		
+
 		<!-- Centered title with icon (for decryption and setup wizard) -->
 		<variable name="centered_title_1" value="222+%cutout_w%"/>
 		<variable name="centered_title_2" value="312+%cutout_w%"/>
-		
+
 		<!-- Gesture -->
 		<variable name="gst_keyboard_y" value="%keyboard_y%-%ab_h%"/>
 		<variable name="gst_line_y" value="%screen_h%-123"/>
-		
+
 		<!-- Rows -->
 		<variable name="row0_y" value="240+%cutout_w%"/>
 		<variable name="row0_a_y" value="270+%cutout_w%"/>
@@ -641,7 +697,7 @@
 		<variable name="row8_3_y" value="1680+%cutout_w%"/>
 		<variable name="row8_3a_y" value="1710+%cutout_w%"/>
 		<variable name="row9_1_y" value="1740+%cutout_w%"/>
-		
+
 		<!-- Group list -->
 		<variable name="gl_text_x" value="60"/>
 

@@ -1,6 +1,6 @@
 --- a/bootable/recovery/install/install.cpp
 +++ b/bootable/recovery/install/install.cpp
-@@ -365,10 +365,10 @@
+@@ -376,10 +376,10 @@
  }
  
  static bool PerformPowerwashIfRequired(ZipArchiveHandle zip) {

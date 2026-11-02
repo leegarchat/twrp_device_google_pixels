@@ -1,6 +1,6 @@
 --- a/system/update_engine/aosp/dynamic_partition_control_android.cc
 +++ b/system/update_engine/aosp/dynamic_partition_control_android.cc
-@@ -917,6 +917,14 @@
+@@ -968,6 +968,14 @@
    }
  
    uint64_t full_space = builder->AllocatableSpace();

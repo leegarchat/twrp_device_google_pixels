@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <chrono>  // NOLINT(build/c++11) - using libsnapshot / liblp API
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <set>
@@ -31,8 +32,7 @@
 #include <android-base/strings.h>
 #include <base/files/file_util.h>
 #include <base/logging.h>
-#include <base/strings/string_util.h>
-#include <base/strings/stringprintf.h>
+#include <android-base/stringprintf.h>
 #include <bootloader_message/bootloader_message.h>
 #include <fs_mgr.h>
 #include <fs_mgr_dm_linear.h>
@@ -57,6 +57,7 @@
 using android::base::GetBoolProperty;
 using android::base::GetProperty;
 using android::base::Join;
+using android::base::StringPrintf;
 using android::dm::DeviceMapper;
 using android::dm::DmDeviceState;
 using android::fs_mgr::CreateLogicalPartition;
@@ -72,7 +73,6 @@ using android::snapshot::Return;
 using android::snapshot::SnapshotManager;
 using android::snapshot::SnapshotManagerStub;
 using android::snapshot::UpdateState;
-using base::StringPrintf;
 
 namespace chromeos_update_engine {
 
@@ -101,7 +101,11 @@ constexpr std::chrono::milliseconds kMapTimeout{1000};
 constexpr std::chrono::milliseconds kMapSnapshotTimeout{10000};
 
 DynamicPartitionControlAndroid::~DynamicPartitionControlAndroid() {
-  UnmapAllPartitions();
+  std::set<std::string> mapped = mapped_devices_;
+  LOG(INFO) << "Destroying [" << Join(mapped, ", ") << "] from device mapper";
+  for (const auto& device_name : mapped) {
+    ignore_result(UnmapPartitionOnDeviceMapper(device_name));
+  }
   metadata_device_.reset();
 }
 
@@ -185,28 +189,44 @@ bool DynamicPartitionControlAndroid::OptimizeOperation(
   return false;
 }
 
+constexpr auto&& kRWSourcePartitionSuffix = "_ota";
+std::string DynamicPartitionControlAndroid::GetDeviceName(
+    std::string partition_name, uint32_t slot) const {
+  if (partition_name.ends_with(kRWSourcePartitionSuffix)) {
+    return partition_name;
+  }
+  if (!partition_name.ends_with("_a") && !partition_name.ends_with("_b")) {
+    partition_name += slot ? "_b" : "_a";
+  }
+  if (slot == source_slot_) {
+    return partition_name + kRWSourcePartitionSuffix;
+  }
+  return partition_name;
+}
+
 bool DynamicPartitionControlAndroid::MapPartitionInternal(
     const std::string& super_device,
     const std::string& target_partition_name,
     uint32_t slot,
     bool force_writable,
     std::string* path) {
+  auto device_name = GetDeviceName(target_partition_name, slot);
   CreateLogicalPartitionParams params = {
       .block_device = super_device,
       .metadata_slot = slot,
       .partition_name = target_partition_name,
       .force_writable = force_writable,
-  };
+      .device_name = device_name};
   bool success = false;
   if (GetVirtualAbFeatureFlag().IsEnabled() && target_supports_snapshot_ &&
-      force_writable && ExpectMetadataMounted()) {
+      slot != source_slot_ && force_writable && ExpectMetadataMounted()) {
     // Only target partitions are mapped with force_writable. On Virtual
     // A/B devices, target partitions may overlap with source partitions, so
     // they must be mapped with snapshot.
     // One exception is when /metadata is not mounted. Fallback to
     // CreateLogicalPartition as snapshots are not created in the first place.
     params.timeout_ms = kMapSnapshotTimeout;
-    success = snapshot_->MapUpdateSnapshot(params, path);
+    success = GetSnapshotManager()->MapUpdateSnapshot(params, path);
   } else {
     params.timeout_ms = kMapTimeout;
     success = CreateLogicalPartition(params, path);
@@ -220,7 +240,7 @@ bool DynamicPartitionControlAndroid::MapPartitionInternal(
   LOG(INFO) << "Succesfully mapped " << target_partition_name
             << " to device mapper (force_writable = " << force_writable
             << "); device path at " << *path;
-  mapped_devices_.insert(target_partition_name);
+  mapped_devices_.insert(params.device_name);
   return true;
 }
 
@@ -230,9 +250,10 @@ bool DynamicPartitionControlAndroid::MapPartitionOnDeviceMapper(
     uint32_t slot,
     bool force_writable,
     std::string* path) {
-  DmDeviceState state = GetState(target_partition_name);
+  auto device_name = GetDeviceName(target_partition_name, slot);
+  DmDeviceState state = GetState(device_name);
   if (state == DmDeviceState::ACTIVE) {
-    if (mapped_devices_.find(target_partition_name) != mapped_devices_.end()) {
+    if (mapped_devices_.find(device_name) != mapped_devices_.end()) {
       if (GetDmDevicePathByName(target_partition_name, path)) {
         LOG(INFO) << target_partition_name
                   << " is mapped on device mapper: " << *path;
@@ -246,12 +267,13 @@ bool DynamicPartitionControlAndroid::MapPartitionOnDeviceMapper(
     // Note that for source partitions, if GetState() == ACTIVE, callers (e.g.
     // BootControlAndroid) should not call MapPartitionOnDeviceMapper, but
     // should directly call GetDmDevicePathByName.
-    if (!UnmapPartitionOnDeviceMapper(target_partition_name)) {
+    LOG(INFO) << "Destroying `" << device_name << "` from device mapper";
+    if (!UnmapPartitionOnDeviceMapper(device_name)) {
       LOG(ERROR) << target_partition_name
                  << " is mapped before the update, and it cannot be unmapped.";
       return false;
     }
-    state = GetState(target_partition_name);
+    state = GetState(device_name);
     if (state != DmDeviceState::INVALID) {
       LOG(ERROR) << target_partition_name << " is unmapped but state is "
                  << static_cast<std::underlying_type_t<DmDeviceState>>(state);
@@ -271,59 +293,74 @@ bool DynamicPartitionControlAndroid::MapPartitionOnDeviceMapper(
 
 bool DynamicPartitionControlAndroid::UnmapPartitionOnDeviceMapper(
     const std::string& target_partition_name) {
-  if (DeviceMapper::Instance().GetState(target_partition_name) !=
+  auto device_name = target_partition_name;
+  if (target_partition_name.ends_with("_a") ||
+      target_partition_name.ends_with("_b")) {
+    auto slot = target_partition_name.ends_with("_a") ? 0 : 1;
+    device_name = GetDeviceName(target_partition_name, slot);
+  }
+  if (DeviceMapper::Instance().GetState(device_name) !=
       DmDeviceState::INVALID) {
     // Partitions at target slot on non-Virtual A/B devices are mapped as
     // dm-linear. Also, on Virtual A/B devices, system_other may be mapped for
     // preopt apps as dm-linear.
     // Call DestroyLogicalPartition to handle these cases.
-    bool success = DestroyLogicalPartition(target_partition_name);
+    bool success = DestroyLogicalPartition(device_name);
 
     // On a Virtual A/B device, |target_partition_name| may be a leftover from
     // a paused update. Clean up any underlying devices.
-    if (ExpectMetadataMounted()) {
-      success &= snapshot_->UnmapUpdateSnapshot(target_partition_name);
+    if (ExpectMetadataMounted() &&
+        !device_name.ends_with(kRWSourcePartitionSuffix)) {
+      success &= GetSnapshotManager()->UnmapUpdateSnapshot(device_name);
     } else {
-      LOG(INFO) << "Skip UnmapUpdateSnapshot(" << target_partition_name
-                << ") because metadata is not mounted";
+      LOG(INFO) << "Skip UnmapUpdateSnapshot(" << device_name << ")";
     }
 
     if (!success) {
-      LOG(ERROR) << "Cannot unmap " << target_partition_name
-                 << " from device mapper.";
+      LOG(ERROR) << "Cannot unmap " << device_name << " from device mapper.";
       return false;
     }
-    LOG(INFO) << "Successfully unmapped " << target_partition_name
+    LOG(INFO) << "Successfully unmapped " << device_name
               << " from device mapper.";
   }
-  mapped_devices_.erase(target_partition_name);
+  mapped_devices_.erase(device_name);
   return true;
 }
 
 bool DynamicPartitionControlAndroid::UnmapAllPartitions() {
-  snapshot_->UnmapAllSnapshots();
+  GetSnapshotManager()->UnmapAllSnapshots();
   if (mapped_devices_.empty()) {
     return false;
   }
   // UnmapPartitionOnDeviceMapper removes objects from mapped_devices_, hence
   // a copy is needed for the loop.
-  std::set<std::string> mapped = mapped_devices_;
+  std::set<std::string> mapped;
+  std::copy_if(mapped_devices_.begin(),
+               mapped_devices_.end(),
+               std::inserter(mapped, mapped.end()),
+               [](auto&& device_name) {
+                 return !std::string_view(device_name)
+                             .ends_with(kRWSourcePartitionSuffix);
+               });
   LOG(INFO) << "Destroying [" << Join(mapped, ", ") << "] from device mapper";
-  for (const auto& partition_name : mapped) {
-    ignore_result(UnmapPartitionOnDeviceMapper(partition_name));
+  for (const auto& device_name : mapped) {
+    ignore_result(UnmapPartitionOnDeviceMapper(device_name));
   }
   return true;
 }
 
 void DynamicPartitionControlAndroid::Cleanup() {
-  UnmapAllPartitions();
+  std::set<std::string> mapped = mapped_devices_;
+  LOG(INFO) << "Destroying [" << Join(mapped, ", ") << "] from device mapper";
+  for (const auto& device_name : mapped) {
+    ignore_result(UnmapPartitionOnDeviceMapper(device_name));
+  }
+  LOG(INFO) << "UnmapAllPartitions done";
   metadata_device_.reset();
   if (GetVirtualAbFeatureFlag().IsEnabled()) {
-    snapshot_ = SnapshotManager::New();
-  } else {
-    snapshot_ = SnapshotManagerStub::New();
+    // Release ISnapshotManager instance so GSID can be gracefully shutdown
+    snapshot_ = nullptr;
   }
-  CHECK(snapshot_ != nullptr) << "Cannot initialize SnapshotManager.";
 }
 
 bool DynamicPartitionControlAndroid::DeviceExists(const std::string& path) {
@@ -370,6 +407,16 @@ DynamicPartitionControlAndroid::LoadMetadataBuilder(
                  << BootControlInterface::SlotName(source_slot) << " in "
                  << super_device;
     return nullptr;
+  }
+  // The super table already on the device can record a smaller size than
+  // the real partition, for example when an earlier install was made for a
+  // different super size. The payload then does not fit in the recorded size
+  // even though the device has room for it.
+  // So in recovery, grow the recorded size to match the real device size.
+  // It never shrinks.
+  if (IsRecovery() && builder->GrowBlockDevicesToLiveSize(PartitionOpener())) {
+    LOG(INFO) << "Raised recorded super size to the live device size in "
+              << super_device;
   }
   LOG(INFO) << "Created metadata for new update from slot "
             << BootControlInterface::SlotName(source_slot) << " in "
@@ -545,7 +592,7 @@ bool DynamicPartitionControlAndroid::PreparePartitionsForUpdate(
     // should not proceed because during next boot, snapshots will overlay on
     // the devices incorrectly.
     if (ExpectMetadataMounted()) {
-      TEST_AND_RETURN_FALSE(snapshot_->CancelUpdate());
+      TEST_AND_RETURN_FALSE(GetSnapshotManager()->CancelUpdate());
     } else {
       LOG(INFO) << "Skip canceling previous update because metadata is not "
                 << "mounted";
@@ -771,6 +818,8 @@ bool DynamicPartitionControlAndroid::GetSystemOtherPath(
   // In recovery, metadata might not be mounted, and
   // UnmapPartitionOnDeviceMapper might fail. However,
   // it is unusual that system_other has already been mapped. Hence, just skip.
+  LOG(INFO) << "Destroying `" << partition_name_suffix
+            << "` from device mapper";
   TEST_AND_RETURN_FALSE(UnmapPartitionOnDeviceMapper(partition_name_suffix));
   // Use CreateLogicalPartition directly to avoid mapping with existing
   // snapshots.
@@ -812,6 +861,8 @@ bool DynamicPartitionControlAndroid::EraseSystemOtherAvbFooter(
   // should be called. If DestroyLogicalPartition does fail, it is still okay
   // to skip the error here and let Prepare*() fail later.
   if (should_unmap) {
+    LOG(INFO) << "Destroying `" << partition_name_suffix
+              << "` from device mapper";
     TEST_AND_RETURN_FALSE(UnmapPartitionOnDeviceMapper(partition_name_suffix));
   }
 
@@ -949,7 +1000,8 @@ bool DynamicPartitionControlAndroid::CheckSuperPartitionAllocatableSpace(
     }
     case SpaceLimit::ERROR_IF_EXCEEDED_SUPER: {
       if (sum_groups > full_space) {
-        LOG(ERROR) << base::StringPrintf(fmt, sum_groups, "", full_space);
+        LOG(ERROR) << android::base::StringPrintf(
+            fmt, sum_groups, "", full_space);
         return false;
       }
       break;
@@ -957,6 +1009,20 @@ bool DynamicPartitionControlAndroid::CheckSuperPartitionAllocatableSpace(
   }
 
   return true;
+}
+
+android::snapshot::ISnapshotManager*
+DynamicPartitionControlAndroid::GetSnapshotManager() {
+  if (snapshot_ == nullptr) {
+    if (GetVirtualAbFeatureFlag().IsEnabled()) {
+      snapshot_ = SnapshotManager::New();
+    } else {
+      snapshot_ = SnapshotManagerStub::New();
+    }
+  }
+  CHECK(snapshot_ != nullptr) << "Cannot initialize SnapshotManager.";
+  LOG(INFO) << "SnapshotManager initialized.";
+  return snapshot_.get();
 }
 
 bool DynamicPartitionControlAndroid::PrepareSnapshotPartitionsForUpdate(
@@ -981,11 +1047,11 @@ bool DynamicPartitionControlAndroid::PrepareSnapshotPartitionsForUpdate(
   TEST_AND_RETURN_FALSE(
       CheckSuperPartitionAllocatableSpace(builder.get(), manifest, true));
 
-  if (!snapshot_->BeginUpdate()) {
+  if (!GetSnapshotManager()->BeginUpdate()) {
     LOG(ERROR) << "Cannot begin new update.";
     return false;
   }
-  auto ret = snapshot_->CreateUpdateSnapshots(manifest);
+  auto ret = GetSnapshotManager()->CreateUpdateSnapshots(manifest);
   if (!ret) {
     LOG(ERROR) << "Cannot create update snapshots: " << ret.string();
     if (required_size != nullptr &&
@@ -1087,9 +1153,9 @@ bool DynamicPartitionControlAndroid::UpdatePartitionMetadata(
 
 bool DynamicPartitionControlAndroid::FinishUpdate(bool powerwash_required) {
   if (ExpectMetadataMounted()) {
-    if (snapshot_->GetUpdateState() == UpdateState::Initiated) {
+    if (GetSnapshotManager()->GetUpdateState() == UpdateState::Initiated) {
       LOG(INFO) << "Snapshot writes are done.";
-      return snapshot_->FinishedSnapshotWrites(powerwash_required);
+      return GetSnapshotManager()->FinishedSnapshotWrites(powerwash_required);
     }
   } else {
     LOG(INFO) << "Skip FinishedSnapshotWrites() because /metadata is not "
@@ -1167,12 +1233,13 @@ DynamicPartitionControlAndroid::GetPartitionDevice(
   std::string device;
   if (GetDynamicPartitionsFeatureFlag().IsEnabled() &&
       (slot == current_slot || is_target_dynamic_)) {
-    switch (GetDynamicPartitionDevice(device_dir,
-                                      partition_name_suffix,
-                                      slot,
-                                      current_slot,
-                                      not_in_payload,
-                                      &device)) {
+    auto status = GetDynamicPartitionDevice(device_dir,
+                                            partition_name_suffix,
+                                            slot,
+                                            current_slot,
+                                            not_in_payload,
+                                            &device);
+    switch (status) {
       case DynamicPartitionDeviceStatus::SUCCESS:
         return {{.rw_device_path = device,
                  .readonly_device_path = device,
@@ -1182,6 +1249,7 @@ DynamicPartitionControlAndroid::GetPartitionDevice(
         break;
       case DynamicPartitionDeviceStatus::ERROR:  // fallthrough
       default:
+        LOG(ERROR) << "Unhandled dynamic partition status " << (int)status;
         return {};
     }
   }
@@ -1217,6 +1285,7 @@ DynamicPartitionControlAndroid::GetDynamicPartitionDevice(
     std::string* device) {
   std::string super_device =
       device_dir.Append(GetSuperPartitionName(slot)).value();
+  auto device_name = GetDeviceName(partition_name_suffix, slot);
 
   auto builder = LoadMetadataBuilder(super_device, slot);
   if (builder == nullptr) {
@@ -1239,13 +1308,12 @@ DynamicPartitionControlAndroid::GetDynamicPartitionDevice(
   }
 
   if (slot == current_slot) {
-    if (GetState(partition_name_suffix) != DmDeviceState::ACTIVE) {
-      LOG(WARNING) << partition_name_suffix << " is at current slot but it is "
+    if (GetState(device_name) != DmDeviceState::ACTIVE) {
+      LOG(WARNING) << device_name << " is at current slot but it is "
                    << "not mapped. Now try to map it.";
     } else {
-      if (GetDmDevicePathByName(partition_name_suffix, device)) {
-        LOG(INFO) << partition_name_suffix
-                  << " is mapped on device mapper: " << *device;
+      if (GetDmDevicePathByName(device_name, device)) {
+        LOG(INFO) << device_name << " is mapped on device mapper: " << *device;
         return DynamicPartitionDeviceStatus::SUCCESS;
       }
       LOG(ERROR) << partition_name_suffix << "is mapped but path is unknown.";
@@ -1253,7 +1321,7 @@ DynamicPartitionControlAndroid::GetDynamicPartitionDevice(
     }
   }
 
-  bool force_writable = (slot != current_slot) && !not_in_payload;
+  const bool force_writable = !not_in_payload;
   if (MapPartitionOnDeviceMapper(
           super_device, partition_name_suffix, slot, force_writable, device)) {
     return DynamicPartitionDeviceStatus::SUCCESS;
@@ -1294,7 +1362,7 @@ DynamicPartitionControlAndroid::GetCleanupPreviousUpdateAction(
     return std::make_unique<NoOpAction>();
   }
   return std::make_unique<CleanupPreviousUpdateAction>(
-      prefs, boot_control, snapshot_.get(), delegate);
+      prefs, boot_control, GetSnapshotManager(), delegate);
 }
 
 bool DynamicPartitionControlAndroid::ResetUpdate(PrefsInterface* prefs) {
@@ -1316,7 +1384,7 @@ bool DynamicPartitionControlAndroid::ResetUpdate(PrefsInterface* prefs) {
       prefs, false /* quick */, false /* skip dynamic partitions metadata */));
 
   if (ExpectMetadataMounted()) {
-    TEST_AND_RETURN_FALSE(snapshot_->CancelUpdate());
+    TEST_AND_RETURN_FALSE(GetSnapshotManager()->CancelUpdate());
   } else {
     LOG(INFO) << "Skip cancelling update in ResetUpdate because /metadata is "
               << "not mounted";
@@ -1417,7 +1485,7 @@ bool DynamicPartitionControlAndroid::EnsureMetadataMounted() {
   }
 
   if (metadata_device_ == nullptr) {
-    metadata_device_ = snapshot_->EnsureMetadataMounted();
+    metadata_device_ = GetSnapshotManager()->EnsureMetadataMounted();
   }
   return metadata_device_ != nullptr;
 }
@@ -1441,7 +1509,7 @@ DynamicPartitionControlAndroid::OpenCowWriter(
       .timeout_ms = kMapSnapshotTimeout};
   // TODO(zhangkelvin) Open an APPEND mode CowWriter once there's an API to do
   // it.
-  return snapshot_->OpenSnapshotWriter(params, label);
+  return GetSnapshotManager()->OpenSnapshotWriter(params, label);
 }  // namespace chromeos_update_engine
 
 std::unique_ptr<FileDescriptor> DynamicPartitionControlAndroid::OpenCowFd(
@@ -1475,7 +1543,13 @@ std::optional<base::FilePath> DynamicPartitionControlAndroid::GetSuperDevice() {
 }
 
 bool DynamicPartitionControlAndroid::MapAllPartitions() {
-  return snapshot_->MapAllSnapshots(kMapSnapshotTimeout);
+  // This flag tells us if VAB is enabled. In the case it's not (e.g. for
+  // secondary payloads) we are falling back on A/B and MapAllPartitions should
+  // just be a no-op
+  if (!target_supports_snapshot_) {
+    return true;
+  }
+  return GetSnapshotManager()->MapAllSnapshots(kMapSnapshotTimeout);
 }
 
 bool DynamicPartitionControlAndroid::IsDynamicPartition(
@@ -1499,7 +1573,7 @@ bool DynamicPartitionControlAndroid::IsDynamicPartition(
 
 bool DynamicPartitionControlAndroid::UpdateUsesSnapshotCompression() {
   return GetVirtualAbFeatureFlag().IsEnabled() &&
-         snapshot_->UpdateUsesCompression();
+         GetSnapshotManager()->UpdateUsesCompression();
 }
 
 FeatureFlag

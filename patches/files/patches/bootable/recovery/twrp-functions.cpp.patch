@@ -225,7 +225,7 @@
  #else
    gui_msg(Msg("fox_platform=* Platform:   {1}")(DataManager::GetStrValue(FOX_COMPATIBILITY_DEVICE).c_str()));
  #endif
-@@ -5003,7 +5165,13 @@
+@@ -5006,7 +5168,13 @@
  	std::string dir = "/data/media/0";
  	LOGINFO("Recreating %s...\n", dir.c_str());
  	TWFunc::Recursive_Mkdir(dir, false);

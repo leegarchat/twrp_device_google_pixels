@@ -1,6 +1,6 @@
 --- a/bootable/recovery/gui/objects.hpp
 +++ b/bootable/recovery/gui/objects.hpp
-@@ -1389,6 +1389,8 @@
+@@ -1641,6 +1641,8 @@
  
  protected:
  	void CalculateDotPositions();
@@ -9,7 +9,7 @@
  	void ResetActiveDots();
  	void ConnectDot(int dot_idx);
  	void ConnectIntermediateDots(int dot_idx);
-@@ -1423,7 +1425,10 @@
+@@ -1675,7 +1677,10 @@
  	ImageResource *mActiveDotImage;
  	gr_surface mDotCircle;
  	gr_surface mActiveDotCircle;

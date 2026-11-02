@@ -39,6 +39,7 @@ using namespace rapidxml;
 #include "pages.hpp"
 #include "../partitions.hpp"
 #include "gui/placement.h"
+#include "tween.hpp"
 
 #ifndef TW_X_OFFSET
 #define TW_X_OFFSET 0
@@ -276,6 +277,205 @@ protected:
 	gr_surface mCircle;
 };
 
+// GUIDivider - layout helpers for use inside <column>/<row>/<scroll>:
+//   <spacer  h="24"/>            an invisible box that just reserves space
+//   <divider/>                   a thin themed rule (default full width, 2px)
+// Both read x/y/w/h directly as attributes (a layout container overrides the
+// position). <divider> paints; <spacer> is transparent. See fill.cpp.
+class GUIDivider : public GUIObject, public RenderObject
+{
+public:
+	GUIDivider(xml_node<>* node);
+
+public:
+	virtual int Render(void);
+
+protected:
+	COLOR mColor;
+	bool mPaint; // true for <divider>, false for <spacer>
+};
+
+class GUIAction;  // defined below; GUIToggle holds a GUIAction* member
+
+// GUIToggle - a self-contained on/off switch row: a label (the node's <text>)
+// on the left and a drawn pill switch on the right, bound to a DataManager
+// variable. Tapping flips the variable (0<->1) and runs any child <action>s.
+//   <toggle var="fox_adb"><placement x="0" y="%y%" w="%screen_w%" h="%row_h%"/>
+//     <text>ADB</text><font resource="..."/>
+//     <action function="adb">toggle</action></toggle>
+// Reads its variable directly (no template/param indirection). See toggle.cpp.
+class GUIToggle : public GUIObject, public RenderObject, public ActionObject
+{
+public:
+	GUIToggle(xml_node<>* node);
+	virtual ~GUIToggle();
+
+public:
+	virtual int Render(void);
+	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
+	virtual int NotifyVarChange(const std::string& varName, const std::string& value);
+	virtual std::string GetObjectType() const { return "GUIToggle"; }
+
+protected:
+	std::string mVar;     // DataManager variable holding 0/1
+	GUIText* mLabel;      // the row label (left)
+	GUIAction* mAction;   // optional side-effect actions on toggle
+	COLOR mTrackOn, mTrackOff, mKnob;
+	bool mPressed;        // a touch press began inside this toggle's region
+};
+
+// GUIScrollContainer - a scrollable vertical viewport that owns a set of
+// adopted child objects. Children are laid out top-to-bottom (auto-placement:
+// each lands below the previous one's actual height); the whole stack scrolls
+// as one when it is taller than the viewport. The container does not own the
+// children's lifetime (the Page still does, via mObjects) - it only drives
+// their layout, clipped render and touch routing. See gui/pages.cpp ProcessNode
+// (<scroll>) and gui/scrollcontainer.cpp.
+class GUIScrollContainer : public GUIObject, public RenderObject, public ActionObject
+{
+public:
+	GUIScrollContainer(xml_node<>* node);
+
+public:
+	virtual int Render(void);
+	virtual int Update(void);
+	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
+	virtual int NotifyVarChange(const std::string& varName, const std::string& value);
+	virtual void SetPageFocus(int inFocus);
+	virtual void SetFocus(bool focus);
+	virtual int GetFocusedItemActionPos(int& x, int& y, int& w, int& h);
+	virtual std::string GetObjectType() const { return "GUIScrollContainer"; }
+
+	// Hardware-key navigation surface (mirrors IInteractiveScrollList). The page
+	// (Page::MoveFocusIndex / SelectFocusedElement) drives these to move a
+	// highlight across the focusable children and auto-scroll them into view.
+	size_t GetItemCount();                // total focusable items across children
+	void SetSelectedItem(size_t index);   // focus the global item at index
+	bool MoveSelectionDown();             // false when past the last item
+	bool MoveSelectionUp();               // false when before the first item
+
+	// Adopt a child built by ProcessNode. obj is kept for visibility/lifetime
+	// queries; ro/ao (either may be NULL) receive layout/render/touch.
+	void Adopt(GUIObject* obj, RenderObject* ro, ActionObject* ao);
+
+	struct Child {
+		GUIObject* obj;
+		RenderObject* render;
+		ActionObject* action;
+		int layoutY;        // last laid-out top (absolute screen Y, may be off-viewport)
+		int layoutH;        // last laid-out height
+		bool layoutVisible; // visible (condition true + renderable) at last layout
+	};
+
+protected:
+	// Recompute child Y positions and total content height for the current
+	// scroll offset and visibility, clamping the offset to valid range.
+	void Layout(void);
+
+	// Hardware-key focus helpers.
+	int FirstFocusableChild(void) const;             // index in mChildren, or -1
+	int NextFocusableChild(int after) const;         // next interactive child > after
+	int PrevFocusableChild(int before) const;        // prev interactive child < before
+	void ClearChildFocus(void);                      // drop highlight on the focused child
+	void EnsureFocusVisible(void);                   // scroll so the focused item shows
+
+	std::vector<Child> mChildren;
+
+	int mSpacing;        // gap between items along the axis
+	int mPaddingTop;     // inset at the top of the content
+	int mPaddingBottom;  // inset at the bottom of the content
+	int mDefaultItemH;   // fallback advance for items with no intrinsic height
+
+	int mScrollY;        // current scroll offset (>= 0; transiently out of range while overscrolling)
+	int mContentH;       // total laid-out content height
+	int mScrollingSpeed; // kinetic scroll velocity (px/frame)
+	int mOverscroll;     // max rubber-band distance past either end (px)
+	bool mIntroEnabled;  // opt-in content slide-in on page focus (intro="1")
+	FoxUiEngine::Tween mIntro; // content slide-in on page focus
+
+	bool mUpdate;        // a redraw is needed (scroll moved / layout dirty)
+
+	int mFocusChild;     // index in mChildren of the hw-focused interactive child, -1 if none
+
+	// Scroll indicator (drawn when content overflows the viewport).
+	int mScrollbarW;     // thumb width in px (0 = no indicator)
+	COLOR mScrollbarColor;
+	COLOR mEdgeFade;     // top/bottom fade colour (alpha 0 = disabled)
+
+	// touch tracking
+	ActionObject* mTouchChild; // child receiving the active press (for taps)
+	int mStartY;               // y at TOUCH_START
+	int mTouchStartX;          // x at TOUCH_START
+	int mLastY, mLast2Y;       // recent y positions (for kinetic velocity)
+	bool mDragging;            // became a scroll drag (cancels the tap)
+	int mTouchDebounce;        // px of slop before a press becomes a drag
+};
+
+// GUICard - an owning, content-sizing container that draws a rounded background
+// (+ optional outline) behind its children and lays them out along one axis with
+// cross-axis alignment, sizing ITSELF to fit. Unlike the static <column>/<row>
+// (which reposition flat page objects), GUICard OWNS its children, so it nests,
+// re-measures dynamic content every frame, and self-positions (centre-x and/or a
+// bottom baseline). Built for the toast, reusable for any pill/card. See card.cpp.
+//   <card direction="horizontal" align="center" padding= spacing= radius=
+//         color= outline= outlinewidth= centerx="1" bottom= maxwidth=> ... </card>
+class GUICard : public GUIObject, public RenderObject, public ActionObject
+{
+public:
+	GUICard(xml_node<>* node);
+	virtual ~GUICard();
+
+public:
+	virtual int Render(void);
+	virtual int Update(void);
+	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
+	virtual void SetPageFocus(int inFocus);
+	virtual std::string GetObjectType() const { return "GUICard"; }
+
+	// Adopt a child built by ProcessNode (kept in mObjects for lifetime/var-change;
+	// removed from the page render/touch lists so only the card drives it).
+	void Adopt(GUIObject* obj, RenderObject* ro, ActionObject* ao);
+
+	struct Child {
+		GUIObject* obj;
+		RenderObject* render;
+		ActionObject* action;
+	};
+
+protected:
+	void Layout(void); // measure children, size + position the card, place children
+
+	std::vector<Child> mChildren;
+
+	bool mHorizontal;
+	int mSpacing, mPadding, mAlign; // align: 0 start, 1 center, 2 end (cross axis)
+	int mMaxWidth;                  // 0 = unbounded
+	int mFixedWidth;                // >0 = force this width (ignores content/maxwidth)
+
+	bool mCenterX;   // centre horizontally on screen
+	int mBottom;     // card bottom-edge y (>=0 enables); otherwise use mPosX/mPosY
+	int mPosX, mPosY;
+
+	int mRadius, mStroke;
+	bool mHasOutline;
+	COLOR mBgColor, mOutlineColor;
+	std::string mOutlineVar; // if set, outline colour is re-read from this var each frame
+
+	// Intro animation: slide-up + settle, restarted each time the card's page
+	// (e.g. the toast overlay) gains focus. mIntroAmount = start offset in px.
+	FoxUiEngine::Tween mIntro;
+	int mIntroFrames, mIntroAmount;
+
+	// Cached background/outline shape surfaces. Rebuilding the rounded rect every
+	// frame (software rasterised) is what made the slide lag; we build them only
+	// when the size/colour/radius actually change and just blit them while moving.
+	gr_surface mBgSurface, mOutlineSurface;
+	int mCacheW, mCacheH, mCacheRadius, mCacheStroke;
+	COLOR mCacheBg, mCacheOutline;
+
+	ActionObject* mTouchChild;
+};
+
 class GUIBattery : public GUIObject, public RenderObject
 {
 public:
@@ -378,6 +578,7 @@ protected:
 	int compute(std::string arg);
 	int setguitimezone(std::string arg);
 	int overlay(std::string arg);
+	int toast(std::string arg);
 	int queuezip(std::string arg);
 	int cancelzip(std::string arg);
 	int queueclear(std::string arg);
@@ -396,11 +597,12 @@ protected:
 	int changeterminal(std::string arg);
 	int unmapsuperdevices(std::string arg);
 
-#ifdef FOX_USE_NANO_EDITOR
+#ifdef OF_USE_NANO_EDITOR
 	int editfile(std::string arg);
 #endif
 
 	int disableAVB2(std::string arg);
+	int setvaluebyfile(std::string arg);
 	// (originally) threaded actions
 	int fileexists(std::string arg);
 	int flash(std::string arg);
@@ -414,6 +616,7 @@ protected:
 	int cmd(std::string arg);
 	int terminalcommand(std::string arg);
 	int killterminal(std::string arg);
+	
 	int reinjecttwrp(std::string arg);
 	int checkbackupname(std::string arg);
 	int checkbackupfolder(std::string arg);
@@ -437,6 +640,7 @@ protected:
 	int setlanguage(std::string arg);
 	int togglebacklight(std::string arg);
 	int twcmd(std::string arg);
+	int foxcmd(std::string arg);
 	int setbootslot(std::string arg);
 	int flashlight(std::string arg) { return GUIAction::flashlightImpl(arg); }
 	int fileextension(std::string arg);
@@ -608,6 +812,12 @@ public:
 	// get number of items
 	virtual size_t GetItemCount() const = 0;
 
+	// GetNaturalHeight - full pixel height needed to show every (currently
+	// visible) item without internal scrolling: header + items (+ group
+	// padding). Used by GUIScrollContainer to self-size an embedded list so the
+	// outer page scrolls instead of the list.
+	int GetNaturalHeight();
+
 protected:
 	// derived classes need to implement these
 	// render a single item in rect (mRenderX, yPos, mRenderW, actualItemHeight)
@@ -692,6 +902,14 @@ protected:
 	int lastY, last2Y; // last 2 touch locations, used for tracking kinetic scroll speed
 	int fastScroll; // indicates that the inital touch was inside the fastscroll region - makes for easier fast scrolling as the touches don't have to stay within the fast scroll region and you drag your finger
 	int mUpdate; // indicates that a change took place and we need to re-render
+
+	// Spring/rubber-band overscroll: when the list is dragged or flung past the
+	// top/bottom edge the content follows with resistance (mOverScroll, signed:
+	// >0 past the top, <0 past the bottom) and springs back when released.
+	float mOverScroll;
+	bool mDragActive;          // finger currently down (rubber-band) vs released (spring back)
+	void FeedOverScroll(int excessPx); // push clamped excess/fling energy into mOverScroll
+
 	bool AddLines(std::vector<std::string>* origText, std::vector<std::string>* origColor, size_t* lastCount, std::vector<std::string>* rText, std::vector<std::string>* rColor);
 
   // [Yacha] Item padding
@@ -797,6 +1015,7 @@ public:
 
 	virtual size_t GetItemCount() const;
 	virtual void RenderItem(size_t itemindex, int yPos, bool selected);
+	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
 	virtual void NotifySelect(size_t item_selected);
 
 protected:
@@ -822,6 +1041,11 @@ protected:
 	std::string currentValue;
 	ImageResource* mIconSelected;
 	ImageResource* mIconUnselected;
+	ImageResource* mIconLocked;
+	ImageResource* mIconDelete;
+	ImageResource* mIconConnected;
+	bool mDeleteTouch;
+	size_t mDeleteSelectedItem;
 	bool isCheckList;
 	bool isTextParsed;
 	bool requireReload;
@@ -862,6 +1086,7 @@ protected:
 	std::string mLastValue;
 	ImageResource* mIconSelected;
 	ImageResource* mIconUnselected;
+	ImageResource* mIconLocked;
 	bool updateList;
 	bool countTotal;
 };
@@ -1078,6 +1303,33 @@ protected:
 	int sTouchW, sTouchH;
 	int sCurTouchX;
 	int sUpdate;
+};
+
+// GUISpinningImage - Rotates one normal image/SVG resource through minui
+class GUISpinningImage : public GUIObject, public RenderObject
+{
+public:
+	GUISpinningImage(xml_node<>* node);
+	virtual ~GUISpinningImage();
+
+public:
+	virtual int Render(void);
+	virtual int Update(void);
+
+protected:
+	ImageResource* mImage;
+
+	int mRender;
+	int mClockwise;
+	int mDegreesPerSecond;
+
+	double mAngle;
+	unsigned long long mLastUpdateMs;
+
+	int mOffsetX;
+	int mOffsetY;
+
+	bool mLoggedMissingImage;
 };
 
 // these are ASCII codes reported via NotifyCharInput

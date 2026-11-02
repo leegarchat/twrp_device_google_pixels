@@ -12,7 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
-
+ *
  * Copyright (C) 2026 The OrangeFox Recovery Project
  *
  */
@@ -42,6 +42,9 @@
 // For std::min and std::max
 #include <algorithm>
 #include "minuitwrp/truetype.hpp"
+
+// for fox_16.0
+#include <math.h>
 
 struct GRFont {
     GRSurface* texture;
@@ -135,9 +138,30 @@ int gr_textEx_scaleW(int x, int y, const char *s, void* pFont, int max_width, in
     return twrpTruetype::gr_ttf_textExWH(gl, x, y + y_scale, s, vfont, measured_width + x, -1, gr_draw);
 }
 
-void gr_clip(int x, int y, int w, int h)
+// Active clip-region stack (unrotated logical coords). Empty == no bounds, so
+// gr_clip() behaves exactly as before. When non-empty, gr_clip() and
+// gr_clip_push() intersect with the top so nested viewports compose.
+#define GR_CLIP_STACK_MAX 8
+static struct { int x, y, w, h; } gr_clip_stack[GR_CLIP_STACK_MAX];
+// True logical nesting depth: always incremented on push / decremented on pop so
+// the stack can never desync, even past GR_CLIP_STACK_MAX. Stored regions stop at
+// GR_CLIP_STACK_MAX; deeper levels reuse the last stored region (a superset).
+static int gr_clip_stack_depth = 0;
+
+// Index of the active stored region, clamped to the storage capacity.
+static int gr_clip_top_index()
+{
+    int d = gr_clip_stack_depth < GR_CLIP_STACK_MAX ? gr_clip_stack_depth : GR_CLIP_STACK_MAX;
+    return d - 1;
+}
+
+// Apply a logical (unrotated) rectangle to the GL scissor.
+static void gr_apply_scissor(int x, int y, int w, int h)
 {
     GGLContext *gl = gr_context;
+
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
 
     switch (gr_rotation) {
         case 90:
@@ -156,9 +180,83 @@ void gr_clip(int x, int y, int w, int h)
     gl->enable(gl, GGL_SCISSOR_TEST);
 }
 
+// Intersect (x,y,w,h) with the active clip bounds, if any.
+static void gr_clip_intersect_active(int* x, int* y, int* w, int* h)
+{
+    if (gr_clip_stack_depth <= 0)
+        return;
+
+    int top = gr_clip_top_index();
+    int bx = gr_clip_stack[top].x;
+    int by = gr_clip_stack[top].y;
+    int bw = gr_clip_stack[top].w;
+    int bh = gr_clip_stack[top].h;
+
+    int x0 = *x > bx ? *x : bx;
+    int y0 = *y > by ? *y : by;
+    int x1 = (*x + *w) < (bx + bw) ? (*x + *w) : (bx + bw);
+    int y1 = (*y + *h) < (by + bh) ? (*y + *h) : (by + bh);
+
+    *x = x0;
+    *y = y0;
+    *w = x1 - x0;
+    *h = y1 - y0;
+}
+
+void gr_clip(int x, int y, int w, int h)
+{
+    // Honor an active pushed region so child widgets can't draw outside it.
+    gr_clip_intersect_active(&x, &y, &w, &h);
+    gr_apply_scissor(x, y, w, h);
+}
+
+void gr_clip_push(int x, int y, int w, int h)
+{
+    // Intersect with the current top before storing, so the stack always holds
+    // the effective (already-clamped) region.
+    gr_clip_intersect_active(&x, &y, &w, &h);
+
+    if (gr_clip_stack_depth < GR_CLIP_STACK_MAX) {
+        gr_clip_stack[gr_clip_stack_depth].x = x;
+        gr_clip_stack[gr_clip_stack_depth].y = y;
+        gr_clip_stack[gr_clip_stack_depth].w = w;
+        gr_clip_stack[gr_clip_stack_depth].h = h;
+    }
+    // Always advance the logical depth so a matching pop stays balanced even when
+    // nesting exceeds the storage capacity.
+    gr_clip_stack_depth++;
+    gr_apply_scissor(x, y, w, h);
+}
+
+void gr_clip_pop()
+{
+    if (gr_clip_stack_depth > 0)
+        gr_clip_stack_depth--;
+
+    if (gr_clip_stack_depth > 0) {
+        int top = gr_clip_top_index();
+        gr_apply_scissor(gr_clip_stack[top].x,
+                         gr_clip_stack[top].y,
+                         gr_clip_stack[top].w,
+                         gr_clip_stack[top].h);
+    } else {
+        gr_noclip();
+    }
+}
+
 void gr_noclip()
 {
     GGLContext *gl = gr_context;
+    // While a region is pushed, "no clip" means "back to that region", not the
+    // whole screen - otherwise a child widget could escape its viewport.
+    if (gr_clip_stack_depth > 0) {
+        int top = gr_clip_top_index();
+        gr_apply_scissor(gr_clip_stack[top].x,
+                         gr_clip_stack[top].y,
+                         gr_clip_stack[top].w,
+                         gr_clip_stack[top].h);
+        return;
+    }
     gl->scissor(gl, 0, 0,
                 gr_draw->width - 2 * overscan_offset_x,
                 gr_draw->height - 2 * overscan_offset_y);
@@ -378,6 +476,174 @@ void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy)
 
     if(surface->format == GGL_PIXEL_FORMAT_RGBX_8888)
         gl->enable(gl, GGL_BLEND);
+}
+
+void gr_blit_rotated(gr_surface source, int sx, int sy, int w, int h, int dx, int dy, int angle)
+{
+	if (!source || w <= 0 || h <= 0)
+		return;
+
+	if (!gr_draw || !gr_draw->data || gr_draw->pixel_bytes <= 0 || gr_draw->row_bytes <= 0)
+		return;
+
+	while (angle < 0)
+		angle += 360;
+
+	angle %= 360;
+
+	const int bpp = gr_draw->pixel_bytes;
+	const int temp_row_bytes = w * bpp;
+	const size_t temp_size = static_cast<size_t>(temp_row_bytes) * static_cast<size_t>(h);
+
+	if (temp_size == 0)
+		return;
+
+	unsigned char* before_data = static_cast<unsigned char*>(calloc(1, temp_size));
+	unsigned char* after_data = static_cast<unsigned char*>(calloc(1, temp_size));
+
+	if (!before_data || !after_data) {
+		if (before_data)
+			free(before_data);
+		if (after_data)
+			free(after_data);
+
+		gr_blit(source, sx, sy, w, h, dx, dy);
+		return;
+	}
+
+	/*
+	 * Save the current framebuffer rectangle behind the spinner.
+	 */
+	for (int y = 0; y < h; ++y) {
+		const int screen_y = dy + y;
+
+		if (screen_y < 0 || screen_y >= gr_draw->height)
+			continue;
+
+		for (int x = 0; x < w; ++x) {
+			const int screen_x = dx + x;
+
+			if (screen_x < 0 || screen_x >= gr_draw->width)
+				continue;
+
+			unsigned char* dst =
+				before_data + (y * temp_row_bytes) + (x * bpp);
+
+			const unsigned char* src =
+				gr_draw->data + (screen_y * gr_draw->row_bytes) + (screen_x * bpp);
+
+			memcpy(dst, src, bpp);
+		}
+	}
+
+	/*
+	 * Draw the source normally using the existing working image/SVG path.
+	 */
+	gr_blit(source, sx, sy, w, h, dx, dy);
+
+	/*
+	 * Capture the rectangle after normal gr_blit().
+	 */
+	for (int y = 0; y < h; ++y) {
+		const int screen_y = dy + y;
+
+		if (screen_y < 0 || screen_y >= gr_draw->height)
+			continue;
+
+		for (int x = 0; x < w; ++x) {
+			const int screen_x = dx + x;
+
+			if (screen_x < 0 || screen_x >= gr_draw->width)
+				continue;
+
+			unsigned char* dst =
+				after_data + (y * temp_row_bytes) + (x * bpp);
+
+			const unsigned char* src =
+				gr_draw->data + (screen_y * gr_draw->row_bytes) + (screen_x * bpp);
+
+			memcpy(dst, src, bpp);
+		}
+	}
+
+	/*
+	 * Restore the original background so the unrotated icon is removed.
+	 */
+	for (int y = 0; y < h; ++y) {
+		const int screen_y = dy + y;
+
+		if (screen_y < 0 || screen_y >= gr_draw->height)
+			continue;
+
+		for (int x = 0; x < w; ++x) {
+			const int screen_x = dx + x;
+
+			if (screen_x < 0 || screen_x >= gr_draw->width)
+				continue;
+
+			unsigned char* dst =
+				gr_draw->data + (screen_y * gr_draw->row_bytes) + (screen_x * bpp);
+
+			const unsigned char* src =
+				before_data + (y * temp_row_bytes) + (x * bpp);
+
+			memcpy(dst, src, bpp);
+		}
+	}
+
+	const double radians = -static_cast<double>(angle) * 3.14159265358979323846 / 180.0;
+	const double cs = cos(radians);
+	const double sn = sin(radians);
+
+	const double cx = static_cast<double>(w - 1) / 2.0;
+	const double cy = static_cast<double>(h - 1) / 2.0;
+
+	/*
+	 * Rotate only pixels changed by gr_blit().
+	 * Unchanged pixels are treated as transparent/empty.
+	 */
+	for (int y = 0; y < h; ++y) {
+		const int screen_y = dy + y;
+
+		if (screen_y < 0 || screen_y >= gr_draw->height)
+			continue;
+
+		for (int x = 0; x < w; ++x) {
+			const int screen_x = dx + x;
+
+			if (screen_x < 0 || screen_x >= gr_draw->width)
+				continue;
+
+			const double dx_local = static_cast<double>(x) - cx;
+			const double dy_local = static_cast<double>(y) - cy;
+
+			const double src_x_f = (cs * dx_local) - (sn * dy_local) + cx;
+			const double src_y_f = (sn * dx_local) + (cs * dy_local) + cy;
+
+			const int src_x = static_cast<int>(floor(src_x_f + 0.5));
+			const int src_y = static_cast<int>(floor(src_y_f + 0.5));
+
+			if (src_x < 0 || src_x >= w || src_y < 0 || src_y >= h)
+				continue;
+
+			const unsigned char* before_pixel =
+				before_data + (src_y * temp_row_bytes) + (src_x * bpp);
+
+			const unsigned char* after_pixel =
+				after_data + (src_y * temp_row_bytes) + (src_x * bpp);
+
+			if (memcmp(before_pixel, after_pixel, bpp) == 0)
+				continue;
+
+			unsigned char* dst_pixel =
+				gr_draw->data + (screen_y * gr_draw->row_bytes) + (screen_x * bpp);
+
+			memcpy(dst_pixel, after_pixel, bpp);
+		}
+	}
+
+	free(before_data);
+	free(after_data);
 }
 
 unsigned int gr_get_width(gr_surface surface) {

@@ -1,6 +1,6 @@
 --- a/system/vold/FsCrypt.cpp
 +++ b/system/vold/FsCrypt.cpp
-@@ -575,7 +575,10 @@
+@@ -628,7 +628,10 @@
          // EnsurePolicy() will have to happen later, in fscrypt_prepare_user_storage().
      }
      if (!prepare_dir(data_user_0_dir, 0700, AID_SYSTEM, AID_SYSTEM)) return false;
@@ -12,7 +12,7 @@
  
      // If /data/media/obb doesn't exist, create it and encrypt it with the
      // device policy.  Normally, device-policy-encrypted directories are created
-@@ -618,15 +621,21 @@
+@@ -671,15 +674,21 @@
      }
  
      // Now that user 0's CE key has been created, we can prepare /data/data.
@@ -37,7 +37,7 @@
      }
  
      fscrypt_init_user0_done = true;
-@@ -893,6 +902,14 @@
+@@ -945,6 +954,14 @@
      return evict_user_keys(s_ce_policies, user_id);
  }
  
@@ -52,7 +52,7 @@
  static bool prepare_subdirs(const std::string& action, const std::string& volume_uuid,
                              userid_t user_id, int flags) {
      if (0 != android::vold::ForkExecvp(
-@@ -999,25 +1016,41 @@
+@@ -1052,25 +1069,41 @@
          }
  
          if (volume_uuid.empty()) {
@@ -105,7 +105,7 @@
  
          if (volume_uuid.empty()) {
              // Now that credentials have been installed, we can run restorecon
-@@ -1028,7 +1061,10 @@
+@@ -1081,7 +1114,10 @@
              android::vold::RestoreconRecursive(misc_ce_path);
          }
      }

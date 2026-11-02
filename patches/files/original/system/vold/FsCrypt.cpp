@@ -37,6 +37,7 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #include <private/android_filesystem_config.h>
@@ -226,7 +227,20 @@ static bool read_and_fixate_user_ce_key(userid_t user_id,
     return false;
 }
 
-static bool MightBeEmmcStorage(const std::string& blk_device) {
+// Checks whether the kernel definitely supports the sysfs files that describe the storage
+// hardware's inline encryption capabilities.  They are supported in upstream 5.18 and later, and in
+// android14-5.15 and later (but not android13-5.15).  For simplicity we just check for 5.18.
+static bool DoesKernelSupportBlkCryptoSysfsFiles() {
+    struct utsname uts;
+    unsigned int major = 0, minor = 0;
+    if (uname(&uts) != 0 || sscanf(uts.release, "%u.%u", &major, &minor) != 2) {
+        return true;  // This should never happen; assume new rather than old.
+    }
+    return major > 5 || (major == 5 && minor >= 18);
+}
+
+// Checks whether the storage hardware might support only 32-bit data unit numbers.
+static bool DoesHardwareSupportOnly32DunBits(const std::string& blk_device) {
     // Handle symlinks.
     std::string real_path;
     if (!Realpath(blk_device, &real_path)) {
@@ -242,15 +256,53 @@ static bool MightBeEmmcStorage(const std::string& blk_device) {
     }
 
     // Now we should have the "real" block device.
-    LOG(DEBUG) << "MightBeEmmcStorage(): blk_device = " << blk_device
-               << ", real_path=" << real_path;
     std::string name = Basename(real_path);
-    return StartsWith(name, "mmcblk") ||
-           // virtio devices may provide inline encryption support that is
-           // backed by eMMC inline encryption on the host, thus inheriting the
-           // DUN size limitation.  So virtio devices must be allowed here too.
-           // TODO(b/207390665): check the maximum DUN size directly instead.
-           StartsWith(name, "vd");
+
+    // If possible, do the check precisely via sysfs.
+    // Exclude older devices, just in case they are broken by doing the check correctly...
+    if (GetFirstApiLevel() >= __ANDROID_API_V__) {
+        std::string sysfs_path = "/sys/class/block/" + name + "/queue/crypto/max_dun_bits";
+        if (!android::vold::pathExists(sysfs_path)) {
+            // For a partition, "queue" is in the parent directory which represents the disk.
+            sysfs_path = "/sys/class/block/" + name + "/../queue/crypto/max_dun_bits";
+        }
+        if (android::vold::pathExists(sysfs_path)) {
+            std::string max_dun_bits;
+            if (!android::base::ReadFileToString(sysfs_path, &max_dun_bits)) {
+                PLOG(ERROR) << "Error reading " << sysfs_path;
+                return false;
+            }
+            max_dun_bits = android::base::Trim(max_dun_bits);
+            if (max_dun_bits != "32") {
+                LOG(ERROR) << sysfs_path << " = " << max_dun_bits;
+                // In this case, using emmc_optimized is not appropriate because the hardware
+                // supports inline encryption but does not have the 32-bit DUN limit.
+                return false;
+            }
+            LOG(DEBUG) << sysfs_path << " = " << max_dun_bits;
+            return true;
+        }
+        if (DoesKernelSupportBlkCryptoSysfsFiles()) {
+            // In this case, using emmc_optimized is not appropriate because the hardware does not
+            // support inline encryption.
+            LOG(ERROR) << sysfs_path << " does not exist";
+            return false;
+        }
+        // In this case, the kernel might be too old to support the sysfs files.
+    }
+
+    // Fallback method for older kernels that don't have the crypto capabilities in sysfs.  The
+    // 32-bit DUN limit is only known to exist on eMMC storage, and also on virtio storage that
+    // inherits the limit from eMMC on the host.  So allow either of those storage types.  Note that
+    // this can be overly lenient compared to actually checking max_dun_bits.
+    if (StartsWith(name, "mmcblk") || StartsWith(name, "vd")) {
+        LOG(DEBUG) << __func__ << "(): << blk_device = " << blk_device
+                   << ", real_path = " << real_path;
+        return true;
+    }
+    // Log at ERROR level here so that it shows up in the kernel log.
+    LOG(ERROR) << __func__ << "(): << blk_device = " << blk_device << ", real_path = " << real_path;
+    return false;
 }
 
 // Sets s_data_options to the file encryption options for the /data filesystem.
@@ -272,9 +324,10 @@ static bool init_data_file_encryption_options() {
         return false;
     }
     if ((s_data_options.flags & FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32) &&
-        !MightBeEmmcStorage(entry->blk_device)) {
-        LOG(ERROR) << "The emmc_optimized encryption flag is only allowed on eMMC storage.  Remove "
-                      "this flag from the device's fstab";
+        !DoesHardwareSupportOnly32DunBits(entry->blk_device)) {
+        // This would unnecessarily reduce security and not be compliant with the CDD.
+        LOG(ERROR) << "The emmc_optimized encryption flag is only allowed on hardware limited to "
+                      "32-bit DUNs.  Remove this flag from the device's fstab";
         return false;
     }
     if (s_data_options.version == 1 || !retry) {
@@ -794,15 +847,14 @@ bool fscrypt_set_ce_key_protection(userid_t user_id, const std::string& secret_h
         // kEmptyAuthentication are encrypted by the user's synthetic password.
         LOG(INFO) << "CE key already exists on-disk; re-protecting it with the given secret";
         if (!read_and_fixate_user_ce_key(user_id, kEmptyAuthentication, &ce_key)) {
-            LOG(ERROR) << "Failed to retrieve CE key for user " << user_id << " using empty auth";
             // Before failing, also check whether the key is already protected
-            // with the given secret.  This isn't expected, but in theory it
-            // could happen if an upgrade is requested for a user more than once
-            // due to a power-off or other interruption.
+            // with the given secret.
             if (read_and_fixate_user_ce_key(user_id, *auth, &ce_key)) {
-                LOG(WARNING) << "CE key is already protected by given secret";
+                LOG(INFO) << "CE key is already protected by given secret.  Nothing to do.";
+                LOG(INFO) << "Errors above are for the attempt with empty auth and can be ignored.";
                 return true;
             }
+            LOG(ERROR) << "Failed to retrieve CE key for user " << user_id;
             // The key isn't protected by either kEmptyAuthentication or by
             // |auth|.  This should never happen, and there's nothing we can do
             // besides return an error.
@@ -869,7 +921,7 @@ std::vector<int> fscrypt_get_unlocked_users() {
 // fscrypt_prepare_user_storage() has to be called for each adoptable storage volume anyway (since
 // the volume might have been absent when the user was created), and that handles the unlocking.
 bool fscrypt_unlock_ce_storage(userid_t user_id, const std::string& secret_hex) {
-    LOG(INFO) << "fscrypt_unlock_ce_storage " << user_id;
+    LOG(DEBUG) << "fscrypt_unlock_ce_storage " << user_id;
     if (!IsFbeEnabled()) return true;
     if (s_ce_policies.count(user_id) != 0) {
         LOG(WARNING) << "CE storage for user " << user_id << " is already unlocked";
@@ -901,6 +953,7 @@ static bool prepare_subdirs(const std::string& action, const std::string& volume
         LOG(ERROR) << "vold_prepare_subdirs failed";
         return false;
     }
+
     return true;
 }
 

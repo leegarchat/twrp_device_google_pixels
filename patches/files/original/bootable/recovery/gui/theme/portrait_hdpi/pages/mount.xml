@@ -47,7 +47,7 @@
 			<text style="text_ab_switch_off">
 				<condition var1="tw_mtp_enabled" op="!=" var2="1"/>
 				<condition var1="tw_has_mtp" var2="1"/>
-				<placement x="%gl_text_x%" y="%ab_bc2_y%"/>
+				<placement x="%switch_text_x%" y="%ab_bc2_y%"/>
 				<text>{@enable_mtp_btn}</text>
 			</text>
 

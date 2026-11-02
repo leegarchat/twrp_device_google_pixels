@@ -367,10 +367,7 @@ bool twrpRepacker::Flash_Current_Twrp() {
 
 	if (!slot.empty() && PartitionManager.Find_Partition_By_Path(dest_partition)) {
 		std::string root, src, dest;
-		root = "/dev/block/bootdevice/by-name";
-		if (!TWFunc::Path_Exists(root))
-			root = "/dev/block/by-name/";
-		 root += dest_partition;
+		root = "/dev/block/bootdevice/by-name" + dest_partition;
 		if (slot == "_a" || slot == "a") {
 			src = root + "_a";
 			dest= root + "_b";
