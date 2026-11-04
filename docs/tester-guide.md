@@ -43,7 +43,7 @@ The maintainer tells you **which file to flash and into which slot**. The defaul
 <summary>📦 Step 0 - to unpack or not to unpack</summary>
 
 - The download looks like `OrangeFox-<version>-<tag>-aio.zip` (tens of MB).
-- **Desktop install (PC, below): UNPACK FIRST.** Windows: right-click → **Extract All…**. Linux: `unzip OrangeFox-*.zip -d ofox-install && cd ofox-install`. After unpacking you must see: `install-desktop.sh`, `install-desktop.bat`, `install-recovery.sh`, `export.txt`, `module.prop`, `customize.sh`, `bin/`, `META-INF/` and one `*.ramdisk.lz4` payload.
+- **Desktop install (PC, below): UNPACK FIRST.** Windows: right-click → **Extract All…**. Linux: `unzip OrangeFox-*.zip -d ofox-install && cd ofox-install`. After unpacking you must see: `install-desktop.sh`, `install-desktop.bat`, `install-recovery.sh`, `export.txt`, `module.prop`, `customize.sh`, `bin/`, `unpack_bin/` (busybox for bare environments), `META-INF/` and one `*.ramdisk.lz4` payload.
 - **Magisk / KernelSU / recovery install: do NOT unpack.** Flash the `.zip` as-is.
 - The #1 beginner mistake: running things from inside the archiver window. That never works. Nothing needs installing on the PC: platform-tools travel inside (`bin/`).
 

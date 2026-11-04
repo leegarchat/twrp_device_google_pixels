@@ -43,7 +43,7 @@
 <summary>📦 Шаг 0 - распаковывать или нет</summary>
 
 - Файл выглядит как `OrangeFox-<version>-<tag>-aio.zip` (десятки МБ).
-- **Установка с ПК (ниже): РАСПАКОВАТЬ.** Windows: правый клик → **Извлечь всё…**. Linux: `unzip OrangeFox-*.zip -d ofox-install && cd ofox-install`. После распаковки должны лежать: `install-desktop.sh`, `install-desktop.bat`, `install-recovery.sh`, `export.txt`, `module.prop`, `customize.sh`, `bin/`, `META-INF/` и один пейлоад `*.ramdisk.lz4`.
+- **Установка с ПК (ниже): РАСПАКОВАТЬ.** Windows: правый клик → **Извлечь всё…**. Linux: `unzip OrangeFox-*.zip -d ofox-install && cd ofox-install`. После распаковки должны лежать: `install-desktop.sh`, `install-desktop.bat`, `install-recovery.sh`, `export.txt`, `module.prop`, `customize.sh`, `bin/`, `unpack_bin/` (busybox для голых окружений), `META-INF/` и один пейлоад `*.ramdisk.lz4`.
 - **Magisk / KernelSU / установка из рекавери: НЕ распаковывать.** Шей `.zip` как есть.
 - Ошибка новичков №1: запуск из окна архиватора. Так не работает никогда. На ПК ничего ставить не надо: platform-tools едут внутри (`bin/`).
 
