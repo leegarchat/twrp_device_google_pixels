@@ -897,10 +897,11 @@ impl<R: Read> SparseDecoder<R> {
             }
         }
         self.chunks_left -= 1;
+        let chdr = self.chunk_hdr_sz;
         match ctype {
             0xCAC1 => {
-                let data = total_sz.checked_sub(12).ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "sparse raw total_sz < 12")
+                let data = total_sz.checked_sub(chdr).ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "sparse raw total_sz < hdr")
                 })?;
                 if data != chunk_sz * self.blk_sz {
                     return Err(std::io::Error::new(
@@ -914,10 +915,10 @@ impl<R: Read> SparseDecoder<R> {
                 Ok(true)
             }
             0xCAC2 => {
-                if total_sz != 16 {
+                if total_sz != chdr + 4 {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "sparse fill total_sz != 16",
+                        "sparse fill bad total_sz",
                     ));
                 }
                 self.inner.read_exact(&mut self.fill)?;
@@ -927,10 +928,10 @@ impl<R: Read> SparseDecoder<R> {
                 Ok(true)
             }
             0xCAC3 => {
-                if total_sz != 12 {
+                if total_sz != chdr {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "sparse dontcare total_sz != 12",
+                        "sparse dontcare bad total_sz",
                     ));
                 }
                 self.out_left = chunk_sz * self.blk_sz;
@@ -941,8 +942,8 @@ impl<R: Read> SparseDecoder<R> {
             }
             0xCAC4 => {
                 // CRC32 chunk: header + 4 digest bytes, no output.
-                let skip = total_sz.checked_sub(12).ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, "sparse crc total_sz < 12")
+                let skip = total_sz.checked_sub(chdr).ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "sparse crc total_sz < hdr")
                 })?;
                 let mut left = skip;
                 let mut tmp = [0u8; 64];
