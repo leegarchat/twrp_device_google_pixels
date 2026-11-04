@@ -202,6 +202,11 @@ if [ "$OFOX_VARIANT" = full_compressed ]; then
         need_file "$_dec"
     done
 fi
+# Magisk busybox (on-device bootstrap for bare recoveries / sandboxes):
+# shipped raw in every variant, outside bin.lgz (needed before unpack).
+for _bb in unpack_bin/busybox-arm64 unpack_bin/busybox-x86_64; do
+    need_file "$_bb"
+done
 command -v zip >/dev/null 2>&1 || { echo "need the 'zip' tool" >&2; exit 1; }
 command -v unzip >/dev/null 2>&1 || { echo "need the 'unzip' tool" >&2; exit 1; }
 
@@ -211,7 +216,7 @@ command -v unzip >/dev/null 2>&1 || { echo "need the 'unzip' tool" >&2; exit 1; 
 if [ "$OFOX_VARIANT" = full_compressed ]; then
     chmod +x install-desktop.sh install-macos.command install-recovery.sh META-INF/com/google/android/update-binary unpack_bin/* bin/linux/* bin/windows/* bin/macos/* 2>/dev/null || true
 else
-    chmod +x install-desktop.sh install-macos.command install-recovery.sh META-INF/com/google/android/update-binary bin/linux/* bin/windows/* bin/macos/* 2>/dev/null || true
+    chmod +x install-desktop.sh install-macos.command install-recovery.sh META-INF/com/google/android/update-binary unpack_bin/busybox-arm64 unpack_bin/busybox-x86_64 bin/linux/* bin/windows/* bin/macos/* 2>/dev/null || true
 fi
 chmod 644 module.prop export.txt customize.sh 2>/dev/null || true
 
@@ -243,13 +248,13 @@ else
         echo "[$OFOX_VARIANT] packing raw bin/ without platform-tools (single zip pass) ..."
         zip -qr9 -X "$OUT" module.prop customize.sh export.txt install-recovery.sh \
             install-desktop.sh install-macos.command install-desktop.bat install-desktop.exe install-desktop.AppImage \
-            "$PAYLOAD" bin/ META-INF/ \
+            "$PAYLOAD" bin/ unpack_bin/busybox-arm64 unpack_bin/busybox-x86_64 META-INF/ \
             -x 'bin/linux/platform-tools/*' 'bin/windows/platform-tools/*' 'bin/macos/platform-tools/*'
     else
         echo "[$OFOX_VARIANT] packing raw bin/ with platform-tools (single zip pass) ..."
         zip -qr9 -X "$OUT" module.prop customize.sh export.txt install-recovery.sh \
             install-desktop.sh install-macos.command install-desktop.bat install-desktop.exe install-desktop.AppImage \
-            "$PAYLOAD" bin/ META-INF/ \
+            "$PAYLOAD" bin/ unpack_bin/busybox-arm64 unpack_bin/busybox-x86_64 META-INF/ \
             -x 'bin/.lgz-cluster-size' 'bin/*/.lgz-cluster-size'
     fi
 fi
@@ -277,7 +282,8 @@ if [ "$OFOX_VARIANT" = full_compressed ]; then
         META-INF/com/google/android/updater-script \
         unpack_bin/lgz-lean-linux-x86_64 unpack_bin/lgz-lean-linux-arm64 \
         unpack_bin/lgz-lean-windows-x86_64.exe unpack_bin/lgz-lean-windows-arm64.exe \
-        unpack_bin/lgz-lean-macos-universal; do
+        unpack_bin/lgz-lean-macos-universal \
+        unpack_bin/busybox-arm64 unpack_bin/busybox-x86_64; do
         echo "$NAMES" | grep -qx "$f" || { echo "BAD: missing $f" >&2; exit 1; }
     done
     # Cluster contents: every OS toolset, installer binaries and staged

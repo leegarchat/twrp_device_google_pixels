@@ -20,22 +20,51 @@ ui_print() {
     fi
 }
 
+# Recovery flavor + LOS enforce dance, first thing: unpack itself must
+# already run relaxed on restricted recoveries.
+detect_recovery() {
+    if [ -n "$(getprop ro.orangefox.version 2>/dev/null)" ] || command -v twrp >/dev/null 2>&1; then echo orangefox; return; fi
+    if [ -n "$(getprop ro.twrp.version 2>/dev/null)" ] || [ -e /twres ]; then echo twrp; return; fi
+    if [ -n "$(getprop ro.lineage.version 2>/dev/null)$(getprop ro.lineage.build.version 2>/dev/null)" ]; then echo lineage; return; fi
+    if [ -d /res/images ]; then echo aosp; return; fi
+    echo unknown
+}
+RECOVERY_FLAVOR="$(detect_recovery)"
+DID_RELAX=""
+if [ "$RECOVERY_FLAVOR" = lineage ] || [ "$RECOVERY_FLAVOR" = aosp ]; then
+    if [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; then
+        setenforce 0 2>/dev/null || /system/bin/setenforce 0 2>/dev/null || true
+        [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 0 ] && DID_RELAX=1
+    fi
+fi
+ui_print "recovery: $RECOVERY_FLAVOR, selinux: $(cat /sys/fs/selinux/enforce 2>/dev/null || echo ?)"
+restore_enforce() {
+    if [ -n "$DID_RELAX" ]; then
+        setenforce 1 2>/dev/null || /system/bin/setenforce 1 2>/dev/null || true
+        ui_print "selinux restored: $(cat /sys/fs/selinux/enforce 2>/dev/null || echo ?)"
+    fi
+}
+
 ui_print "OrangeFox vendor_boot installer"
 rm -rf "$TMP"
-mkdir -p "$TMP" || { ui_print "cannot create $TMP"; exit 1; }
+mkdir -p "$TMP" || { ui_print "cannot create $TMP"; restore_enforce; exit 1; }
 if ! command -v unzip >/dev/null 2>&1; then
     ui_print "no unzip in this recovery, aborting"
+    restore_enforce
     exit 1
 fi
-unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$TMP" >/dev/null 2>&1 || { ui_print "cannot unpack installer zip"; exit 1; }
+unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$TMP" >/dev/null 2>&1 || { ui_print "cannot unpack installer zip"; restore_enforce; exit 1; }
 chmod +x "$TMP/install-recovery.sh" "$TMP"/unpack_bin/* 2>/dev/null || true
 sh "$TMP/install-recovery.sh" >"$TMP/console.log" 2>&1
 rc=$?
-tail -n 20 "$TMP/console.log" 2>/dev/null | while IFS= read -r l; do ui_print "$l"; done
+cp "$TMP/console.log" /tmp/ofx_install_console.log 2>/dev/null || true
+chmod a+r /tmp/ofx_install_console.log 2>/dev/null || true
+tail -n 60 "$TMP/console.log" 2>/dev/null | while IFS= read -r l; do ui_print "$l"; done
 if [ "$rc" -eq 0 ]; then
     ui_print "Done"
 else
     ui_print "Failed (log: install.log in /tmp/recovery_install or /data/local/tmp/recovery_install)"
 fi
 rm -rf "$TMP"
+restore_enforce
 exit "$rc"

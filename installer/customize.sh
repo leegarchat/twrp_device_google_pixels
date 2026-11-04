@@ -52,7 +52,10 @@ unset _UP_LGZ _UP_DST _UP_ARCH _UP_DEC _UP_NEED _UP_WANT _UP_HAVE
 # Drop leftovers of previous runs (persistent copy, if one exists).
 rm -rf "$NVBASE/modules/$MODID" 2>/dev/null || true
 
-chmod +x "$MODPATH/install-recovery.sh" "$MODPATH"/bin/linux/* 2>/dev/null || true
+chmod +x "$MODPATH/install-recovery.sh" "$MODPATH"/bin/linux/* "$MODPATH"/unpack_bin/* 2>/dev/null || true
+# Writable tmp inside the module dir: manager sandboxes (KernelSU) can
+# isolate /tmp and /data/local/tmp, but $MODPATH just held our files.
+export RECOVERY_TMPDIR="$MODPATH/.install-tmp"
 if sh "$MODPATH/install-recovery.sh"; then
     ui_print "- install OK, removing installer payload"
     # Installer only, but the manager still needs module.prop right
@@ -66,7 +69,7 @@ if sh "$MODPATH/install-recovery.sh"; then
 else
     ui_print "! install FAILED, removing installer module"
     rm -rf "$MODPATH" "$NVBASE/modules/$MODID" 2>/dev/null || true
-    abort "! vendor_boot install failed (see install.log in /tmp/recovery_install, /data/local/tmp/recovery_install or /data/adb/recovery_install.tmp)"
+    abort "! vendor_boot install failed (see install.log in $MODPATH/.install-tmp, /tmp/recovery_install, /data/local/tmp/recovery_install or /data/adb/recovery_install.tmp)"
 fi
 
 return 0

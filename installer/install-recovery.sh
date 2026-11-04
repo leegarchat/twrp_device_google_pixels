@@ -26,17 +26,102 @@
 # Exit codes: 0 ok, 1 usage/environment, 2 snapshot/build/flash failure.
 set -u
 
+# Pure-shell script dir (no dirname dependency: bare envs may miss it).
+case "$0" in
+    */*) ROOT="${0%/*}";;
+    *) ROOT="$PWD";;
+esac
+case "$ROOT" in /*) ;; *) ROOT="$PWD/$ROOT";; esac
+
+# --- busybox bootstrap (must run before any external tool) ---
+# Bare recoveries (LOS AOSP) and manager sandboxes (KernelSU) can miss
+# base tools (awk, mkdir, ...). The zip ships Magisk busybox per arch in
+# unpack_bin/; symlink-farm only the tools that are actually missing so
+# system tools keep priority. PATH export covers child processes too.
+ARCH=""
+case "$(uname -m 2>/dev/null || echo unknown)" in
+    x86_64|amd64) ARCH="x86_64";;
+    aarch64|arm64) ARCH="arm64";;
+esac
+[ -n "$ARCH" ] || case "$(getprop ro.product.cpu.abi 2>/dev/null)" in
+    arm64*) ARCH="arm64";; x86_64*) ARCH="x86_64";;
+esac
+_BB="$ROOT/unpack_bin/busybox-$ARCH"
+if [ -n "$ARCH" ] && [ -f "$_BB" ]; then
+    chmod +x "$_BB" 2>/dev/null || true
+    if "$_BB" true 2>/dev/null; then
+        _FARM="$ROOT/.bb"
+        "$_BB" mkdir -p "$_FARM" 2>/dev/null || mkdir -p "$_FARM" 2>/dev/null || true
+        for _t in awk mkdir wc df dd cp rm mv grep sed cut tr cat chmod uname head tail ls ln dirname; do
+            if ! command -v "$_t" >/dev/null 2>&1; then
+                "$_BB" ln -sf "$_BB" "$_FARM/$_t" 2>/dev/null || ln -sf "$_BB" "$_FARM/$_t" 2>/dev/null || true
+            fi
+        done
+        PATH="$_FARM:$PATH"; export PATH
+    fi
+fi
+unset _BB _FARM _t
+# Float-capable awk if it really runs (doubles: any size, incl. >2GB
+# that would overflow 32-bit shell arithmetic). Probed once.
+_USE_AWK=""
+if awk 'BEGIN{exit 0}' 2>/dev/null; then _USE_AWK=1; fi
+echo "awk float: ${_USE_AWK:+yes}"
+
+# --- recovery flavor + LOS enforce dance (first thing, before unpack) ---
+# LOS/AOSP-based restricted recoveries (no /twres, AOSP /res/images
+# layout, lineage props when present) over-restrict root: if such a
+# recovery runs Enforcing, relax to 0 for the install and restore the
+# original mode on error (fail()) and at normal end.
+detect_recovery() {
+    if [ -n "$(getprop ro.orangefox.version 2>/dev/null)" ] || command -v twrp >/dev/null 2>&1; then echo orangefox; return; fi
+    if [ -n "$(getprop ro.twrp.version 2>/dev/null)" ] || [ -e /twres ]; then echo twrp; return; fi
+    if [ -n "$(getprop ro.lineage.version 2>/dev/null)$(getprop ro.lineage.build.version 2>/dev/null)" ]; then echo lineage; return; fi
+    if [ -d /res/images ]; then echo aosp; return; fi
+    echo unknown
+}
+RECOVERY_FLAVOR="$(detect_recovery)"
+DID_RELAX=""
+if [ "$RECOVERY_FLAVOR" = lineage ] || [ "$RECOVERY_FLAVOR" = aosp ]; then
+    if [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; then
+        setenforce 0 2>/dev/null || /system/bin/setenforce 0 2>/dev/null || true
+        [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 0 ] && DID_RELAX=1
+    fi
+fi
+echo "recovery: $RECOVERY_FLAVOR, selinux: $(cat /sys/fs/selinux/enforce 2>/dev/null || echo ?)"
+restore_enforce() {
+    if [ -n "$DID_RELAX" ]; then
+        setenforce 1 2>/dev/null || /system/bin/setenforce 1 2>/dev/null || true
+        echo "selinux restored: $(cat /sys/fs/selinux/enforce 2>/dev/null || echo ?)"
+    fi
+}
+
 TMPDIR_WANT="${RECOVERY_TMPDIR:-/tmp/recovery_install}"
 BYNAME="${RECOVERY_BYNAME:-/dev/block/by-name}"
 SDCAND="${RECOVERY_SDCARDS:-/sdcard:/data/media/0}"
 BACKUP_SUB="backup_vendor_boot"
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
 EXPORT="${RECOVERY_EXPORT:-$ROOT/export.txt}"
 
 say() { echo "$*"; }
-fail() { echo "  FAIL: $1"; exit 2; }
-mb() { awk -v b="$1" 'BEGIN{printf "%.1f MB", b/1048576}'; }
+fail() {
+    echo "  FAIL: $1"
+    restore_enforce
+    [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ] && chmod -R a+rX "$TMPDIR" 2>/dev/null || true
+    echo "selinux enforce now: $(cat /sys/fs/selinux/enforce 2>/dev/null || echo ?)"
+    exit 2
+}
+# Human MB without relying on awk (broken/absent on bare recoveries).
+# awk path (floats) when alive; shell fallback only for <2GB inputs
+# (safe under 32-bit arithmetic); bigger inputs print as raw bytes
+# instead of overflowing silently.
+mb() {
+    if [ -n "$_USE_AWK" ]; then awk -v b="$1" 'BEGIN{printf "%.1f MB", b/1048576}'; return; fi
+    case "$1" in
+        ''|*[!0-9]*) echo "? MB"; return;;
+    esac
+    if [ "${#1}" -gt 9 ]; then echo "$1 bytes"; return; fi
+    echo "$(( $1 / 1048576 )).$(( ($1 % 1048576) * 10 / 1048576 )) MB"
+}
 
 # --- export.txt: KEY=VALUE, # comments, CR-tolerant ---
 cfg() { grep -E "^$1=" "$EXPORT" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' | sed 's/^ *//;s/ *$//'; }
@@ -193,12 +278,57 @@ for s in $SLOTS; do
 done
 need_kb=$(( need_bytes / 1024 + 8192 ))
 say "  need ~$(( need_kb / 1024 )) MB for snapshots"
+# True if $1 sits on a mounted fs other than rootfs: filters out fake
+# empty dirs (unmounted /sdcard on encrypted userdata) so we never
+# probe/copy into rootfs RAM and df always has a row to parse.
+is_mounted() {
+    _mp="$1"
+    if [ -L "$_mp" ]; then
+        _rl="$(ls -ld "$_mp" 2>/dev/null | sed -n 's/.*-> //p')"
+        [ -n "$_rl" ] && _mp="$_rl"
+    fi
+    while [ -n "$_mp" ] && [ "$_mp" != "/" ] && [ "$_mp" != "." ]; do
+        if grep -qE " $_mp " /proc/mounts 2>/dev/null; then return 0; fi
+        _mp="${_mp%/*}"
+        [ -z "$_mp" ] && _mp="/"
+    done
+    return 1
+}
+# Available KB for the fs holding $1. Resolves the owning mount via
+# /proc/mounts (walk up), then takes the device row from a FULL df:
+# df hides duplicate-device mounts (sda34 on both /data and /sdcard),
+# so a direct `df -k path` may print no row at all. All-builtin.
+# Called from the candidate loop which runs under IFS=":" - reset
+# to whitespace for read-splitting, restore before return.
+fs_avail_kb() {
+    _fifs="$IFS"; IFS=" 	"
+    _fp="$1"; _fdev=""; _fav=""
+    while [ -n "$_fp" ] && [ "$_fp" != / ]; do
+        while read -r _d _m _o; do
+            if [ "$_m" = "$_fp" ]; then _fdev="$_d"; break; fi
+        done </proc/mounts
+        [ -n "$_fdev" ] && break
+        _fp="${_fp%/*}"; [ -z "$_fp" ] && _fp=/
+        [ "$_fp" = / ] && break
+    done
+    if [ -n "$_fdev" ]; then
+        _fav="$(df -k 2>/dev/null | {
+            read -r _h
+            while read -r _f _t _u _a _r; do
+                if [ "$_f" = "$_fdev" ]; then echo "$_a"; break; fi
+            done
+        })"
+    fi
+    IFS="$_fifs"
+    echo "$_fav"
+}
 BACKUP_DIR=""
 COPIED=""
 SEEN=0
 oldifs="$IFS"; IFS=":"
 for cand in $SDCAND; do
     [ -d "$cand" ] || { say "  $cand: absent, skipping"; continue; }
+    is_mounted "$cand" || { say "  $cand: not mounted, skipping"; continue; }
     mkdir -p "$cand/$BACKUP_SUB" 2>/dev/null || { say "  $cand: cannot mkdir, skipping"; continue; }
     SEEN=1
     # Data-write probe (4 MB): catches FUSE EPERM that mkdir/touch miss.
@@ -206,26 +336,26 @@ for cand in $SDCAND; do
     if dd if=/dev/zero of="$cand/$BACKUP_SUB/.w" bs=1M count=4 >>"$LOG" 2>&1; then
         got="$(wc -c < "$cand/$BACKUP_SUB/.w" 2>/dev/null | tr -d ' ')"
         [ "$got" = "4194304" ] || {
-            say "  $cand: probe short (${got:-?} bytes) — trying next"
+            say "  $cand: probe short (${got:-?} bytes) - trying next"
             rm -f "$cand/$BACKUP_SUB/.w" 2>/dev/null || true
             continue
         }
     else
-        say "  $cand: data-write probe failed — trying next"
+        say "  $cand: data-write probe failed - trying next"
         rm -f "$cand/$BACKUP_SUB/.w" 2>/dev/null || true
         continue
     fi
     rm -f "$cand/$BACKUP_SUB/.w" 2>/dev/null || true
-    free_kb="$(df -k "$cand/$BACKUP_SUB" 2>/dev/null | awk 'NR==2 {print $4}')"
+    free_kb="$(fs_avail_kb "$cand/$BACKUP_SUB" 2>/dev/null || true)"
     case "$free_kb" in ''|*[!0-9]*) free_kb=0;; esac
     if [ "$free_kb" -lt "$need_kb" ]; then
-        say "  $cand: only $(( free_kb / 1024 )) MB free, need $(( need_kb / 1024 )) MB — trying next"
+        say "  $cand: only $(( free_kb / 1024 )) MB free, need $(( need_kb / 1024 )) MB - trying next"
         continue
     fi
     say "  $cand: $(( free_kb / 1024 )) MB free, copying..."
     ok=1
     # NOTE: this loop runs under IFS=":" (candidate splitting), so it
-    # must not rely on word-splitting $SLOTS — match a/b explicitly.
+    # must not rely on word-splitting $SLOTS - match a/b explicitly.
     for s in a b; do
         case " $SLOTS " in
             *" $s "*) ;;
@@ -235,11 +365,11 @@ for cand in $SDCAND; do
             got="$(wc -c < "$cand/$BACKUP_SUB/vendor_boot_${s}_orig.img" 2>/dev/null | tr -d ' ')"
             want="$(wc -c < "$TMPDIR/vendor_boot_${s}_orig.img" 2>/dev/null | tr -d ' ')"
             [ "$got" = "$want" ] && [ -n "$got" ] || {
-                say "  $cand: slot $s size mismatch after copy (want $want, got ${got:-?}) — trying next"
+                say "  $cand: slot $s size mismatch after copy (want $want, got ${got:-?}) - trying next"
                 ok=0; break
             }
         else
-            say "  $cand: copy failed for slot $s (see $LOG) — trying next"
+            say "  $cand: copy failed for slot $s (see $LOG) - trying next"
             ok=0; break
         fi
     done
@@ -262,7 +392,9 @@ elif [ "$SEEN" = 1 ]; then
         echo "---"
         df -k 2>&1 || true
         echo "---"
-        ls -ld $SDCAND 2>&1 || true
+        _oifs2="$IFS"; IFS=":"
+        for _c in $SDCAND; do ls -ld "$_c" 2>&1 || true; done
+        IFS="$_oifs2"; unset _oifs2 _c
         echo "--- mounts ---"
         mount 2>/dev/null | grep -iE "sdcard|emulated|/data|media" || true
         echo "--- end diagnostics ---"
@@ -312,13 +444,13 @@ for s in $SLOTS; do
     free=$(( psz - isz ))
     [ "$free" -lt 0 ] && free_show=0 || free_show="$free"
     if [ "$free" -lt 0 ]; then
-        say "  slot $s: $(mb "$isz") / $(mb "$psz"), free $(mb "$free_show") — DOES NOT FIT"
+        say "  slot $s: $(mb "$isz") / $(mb "$psz"), free $(mb "$free_show") - DOES NOT FIT"
         fail "slot $s: image does not fit partition, nothing flashed"
     elif [ "$free" -lt "$MIN_FREE_BYTES" ]; then
-        say "  slot $s: $(mb "$isz") / $(mb "$psz"), free $(mb "$free_show") — BELOW $MIN_FREE_MB MB POLICY"
+        say "  slot $s: $(mb "$isz") / $(mb "$psz"), free $(mb "$free_show") - BELOW $MIN_FREE_MB MB POLICY"
         fail "slot $s: less than $MIN_FREE_MB MB free left (export.txt MIN_FREE_MB), nothing flashed"
     else
-        say "  slot $s: $(mb "$isz") / $(mb "$psz"), free $(mb "$free_show") — OK"
+        say "  slot $s: $(mb "$isz") / $(mb "$psz"), free $(mb "$free_show") - OK"
     fi
 done
 
@@ -358,3 +490,7 @@ if [ -n "$BACKUP_DIR" ]; then
 fi
 say ""
 say "RESULT: OK (snapshots: $TMPDIR/; backup: ${BACKUP_DIR:-skipped})"
+# World-readable logs for post-run inspection; original SELinux mode
+# restored (was relaxed at start only on LOS/AOSP restricted recoveries).
+chmod -R a+rX "$TMPDIR" 2>/dev/null || true
+restore_enforce
