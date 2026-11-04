@@ -81,7 +81,22 @@ detect_recovery() {
 }
 RECOVERY_FLAVOR="$(detect_recovery)"
 DID_RELAX=""
-if [ "$RECOVERY_FLAVOR" = lineage ] || [ "$RECOVERY_FLAVOR" = aosp ]; then
+# Relax only inside an actual recovery: the Magisk/KernelSU module path
+# runs on booted Android (possibly LineageOS) where SELinux must not
+# be touched. Distinguisher: booted Android mounts system-as-root (a
+# block/dm device on /); recovery boots from ramdisk (rootfs on /)
+# and mounts system at /system_root, if at all.
+in_recovery() {
+    _rd=""
+    while read -r _d _m _o; do
+        if [ "$_m" = / ]; then _rd="$_d"; break; fi
+    done </proc/mounts 2>/dev/null
+    case "$_rd" in
+        rootfs|ramdisk|tmpfs) return 0;;
+        *) return 1;;
+    esac
+}
+if { [ "$RECOVERY_FLAVOR" = lineage ] || [ "$RECOVERY_FLAVOR" = aosp ]; } && in_recovery; then
     if [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 1 ]; then
         setenforce 0 2>/dev/null || /system/bin/setenforce 0 2>/dev/null || true
         [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" = 0 ] && DID_RELAX=1
