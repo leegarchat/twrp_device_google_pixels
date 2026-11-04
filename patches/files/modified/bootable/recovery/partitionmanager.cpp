@@ -2434,6 +2434,12 @@ int TWPartitionManager::Resize_By_Path(string Path, bool Display_Error) {
 	return false;
 }
 
+// Fox: USB single-owner mount helpers, defined below next to
+// Get_Partition_List; Update_System_Details (above their definition
+// site) needs them too.
+static bool FoxIsUsbOtgDuplicate(bool isSub, const std::string& subOf,
+				 const std::string& blkDevice);
+
 void TWPartitionManager::Update_System_Details(void) {
 	std::vector<TWPartition*>::iterator iter;
 	int data_size = 0;

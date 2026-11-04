@@ -519,7 +519,20 @@
  	} else {
  		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/data"));
  		return false;
-@@ -2087,6 +2446,29 @@
+@@ -2075,6 +2434,12 @@
+ 	return false;
+ }
+ 
++// Fox: USB single-owner mount helpers, defined below next to
++// Get_Partition_List; Update_System_Details (above their definition
++// site) needs them too.
++static bool FoxIsUsbOtgDuplicate(bool isSub, const std::string& subOf,
++				 const std::string& blkDevice);
++
+ void TWPartitionManager::Update_System_Details(void) {
+ 	std::vector<TWPartition*>::iterator iter;
+ 	int data_size = 0;
+@@ -2087,6 +2452,29 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -549,7 +562,7 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2576,10 @@
+@@ -2194,7 +2582,10 @@
  		}
  		property_set("twrp.decrypt.done", "true");
  		dat->Setup_File_System(false);
@@ -561,7 +574,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2719,20 @@
+@@ -2334,6 +2725,20 @@
  #endif
  }
  
@@ -582,7 +595,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2396,6 +2795,17 @@
+@@ -2396,6 +2801,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -600,7 +613,7 @@
  
  			return 0;
  		} else {
-@@ -2859,17 +3269,102 @@
+@@ -2859,17 +3275,102 @@
    return true;
  }
  
@@ -703,7 +716,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3394,22 @@
+@@ -2899,8 +3400,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -727,7 +740,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3499,13 @@
+@@ -2990,6 +3505,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -741,7 +754,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -3730,6 +4246,324 @@
+@@ -3730,6 +4252,324 @@
  		Update_System_Details();
  }
  
@@ -1066,7 +1079,7 @@
  string TWPartitionManager::Get_Internal_Storage_Path() {
     std::string s = getenv("EXTERNAL_STORAGE");
     if (s == "") 
-@@ -4662,7 +5496,12 @@
+@@ -4662,7 +5502,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -1080,7 +1093,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4704,14 +5543,21 @@
+@@ -4704,14 +5549,21 @@
  	bool status = true;
  	std::vector<TWPartition*>::iterator iter;
  
@@ -1104,7 +1117,7 @@
  	}
  	Update_System_Details();
  	return status;
-@@ -4840,6 +5686,912 @@
+@@ -4840,6 +5692,912 @@
  	}
  }
  
@@ -2017,7 +2030,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6609,13 @@
+@@ -4857,13 +6615,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -2033,7 +2046,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6634,45 @@
+@@ -4882,9 +6640,45 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
@@ -2081,7 +2094,7 @@
  					if (!destroyed) {
  						closedir(d);
  						return false;
-@@ -4946,6 +6734,21 @@
+@@ -4946,6 +6740,21 @@
  
  mount:
  	mtp_was_enabled = TWFunc::Toggle_MTP(false);
