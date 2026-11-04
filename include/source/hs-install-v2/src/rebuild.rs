@@ -276,6 +276,8 @@ pub fn unmount_unmap_all(
                 || mnt.starts_with("/data/")
                 || mnt.starts_with("/sdcard/")
                 || mnt.starts_with("/persist/")
+                || mnt.starts_with("/mnt/installer")
+                || mnt.starts_with("/mnt/androidwritable")
             {
                 continue;
             }
