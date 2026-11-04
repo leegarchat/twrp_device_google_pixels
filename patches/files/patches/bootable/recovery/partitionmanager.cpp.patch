@@ -728,7 +728,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -3730,6 +4233,316 @@
+@@ -3730,6 +4233,324 @@
  		Update_System_Details();
  }
  
@@ -912,7 +912,8 @@
 +					continue;
 +				string s(src), m(mnt);
 +				bool is_mapper = (s.compare(0, 19, "/dev/block/mapper/") == 0);
-+				bool is_dm = is_mapper || (s.compare(0, 8, "/dev/dm-") == 0);
++				bool is_dm = is_mapper || (s.compare(0, 8, "/dev/dm-") == 0)
++					|| (s.compare(0, 14, "/dev/block/dm-") == 0);
 +				if (!is_dm || m.empty() || m == "/")
 +					continue;
 +				auto starts_with = [](const string& v, const char* p) {
@@ -923,6 +924,13 @@
 +					|| starts_with(m, "/usb-otg") || starts_with(m, "/external_sd") || starts_with(m, "/efs")
 +					|| starts_with(m, "/dev/") || starts_with(m, "/proc/") || starts_with(m, "/sys/"))
 +					continue;
++				{
++					size_t slash = s.find_last_of('/');
++					string sbase = (slash == string::npos) ? s : s.substr(slash + 1);
++					if (sbase == "userdata" || sbase == "zoned_device"
++						|| sbase.compare(0, 12, "userdata_exp") == 0)
++						continue;
++				}
 +				if (is_mapper) {
 +					size_t slash = s.find_last_of('/');
 +					string base = (slash == string::npos) ? s : s.substr(slash + 1);
@@ -1045,7 +1053,7 @@
  string TWPartitionManager::Get_Internal_Storage_Path() {
     std::string s = getenv("EXTERNAL_STORAGE");
     if (s == "") 
-@@ -4662,7 +5475,12 @@
+@@ -4662,7 +5483,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -1059,7 +1067,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4704,14 +5522,21 @@
+@@ -4704,14 +5530,21 @@
  	bool status = true;
  	std::vector<TWPartition*>::iterator iter;
  
@@ -1083,7 +1091,7 @@
  	}
  	Update_System_Details();
  	return status;
-@@ -4840,6 +5665,912 @@
+@@ -4840,6 +5673,912 @@
  	}
  }
  
@@ -1996,7 +2004,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6588,13 @@
+@@ -4857,13 +6596,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -2012,7 +2020,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6613,45 @@
+@@ -4882,9 +6621,45 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;

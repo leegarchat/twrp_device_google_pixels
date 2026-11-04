@@ -4413,7 +4413,8 @@ bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
 					continue;
 				string s(src), m(mnt);
 				bool is_mapper = (s.compare(0, 19, "/dev/block/mapper/") == 0);
-				bool is_dm = is_mapper || (s.compare(0, 8, "/dev/dm-") == 0);
+				bool is_dm = is_mapper || (s.compare(0, 8, "/dev/dm-") == 0)
+					|| (s.compare(0, 14, "/dev/block/dm-") == 0);
 				if (!is_dm || m.empty() || m == "/")
 					continue;
 				auto starts_with = [](const string& v, const char* p) {
@@ -4424,6 +4425,13 @@ bool TWPartitionManager::Live_Switch_Slot(const string& Slot) {
 					|| starts_with(m, "/usb-otg") || starts_with(m, "/external_sd") || starts_with(m, "/efs")
 					|| starts_with(m, "/dev/") || starts_with(m, "/proc/") || starts_with(m, "/sys/"))
 					continue;
+				{
+					size_t slash = s.find_last_of('/');
+					string sbase = (slash == string::npos) ? s : s.substr(slash + 1);
+					if (sbase == "userdata" || sbase == "zoned_device"
+						|| sbase.compare(0, 12, "userdata_exp") == 0)
+						continue;
+				}
 				if (is_mapper) {
 					size_t slash = s.find_last_of('/');
 					string base = (slash == string::npos) ? s : s.substr(slash + 1);

@@ -112,28 +112,29 @@ pub fn create_meta(
     Err(last_err)
 }
 
-/// Unmount (deepest first) + unmap the TARGET slot residents and any
-/// stale mapper nodes. The CURRENT slot residents are deliberately left
-/// alone: siw metadata writes go through in the recovery domain with live
-/// mappings present (proven by the siw probe and green runs that unmapped
-/// only stale nodes), while TWRP itself holds the live nodes open and
-/// `siw unmap` (correctly) refuses busy ones. Unmapping live nodes would
-/// either fail the install or tear down mounts under a running recovery.
-/// Only names the super metadata knows about (live.target plus stale
-/// mapper leftovers of those same names) are unmapped: anything else in
-/// /dev/block/mapper (userdata dm-crypt on FBE boots, verity nodes, ...)
-/// is NOT a super resident and must never fail the install. With DFE
-/// there is no mapper/userdata node at all, which is why the missing
-/// exclusion only bites on encrypted userdata (open_count=1 while
-/// /data is mounted) — unmap must cover super only.
+/// Unmount (deepest first) + full unmap of CURRENT + TARGET slot
+/// residents and any stale mapper nodes. Both slots must go: the
+/// rebuild rewrites target metadata while the old slot's dm nodes
+/// would keep the table busy, and the live switch after the flash
+/// destroys the old LP entries. Only super names from LiveState are
+/// unmapped: userdata dm-crypt, verity nodes and friends are never
+/// super residents and must never fail the install.
 /// Mounts are unmounted deepest-first (nested mountpoints like
-/// /vendor/firmware must go before /vendor); failures are best-effort.
+/// /vendor/firmware must go before /vendor); recovery-critical mounts
+/// (/data, /sdcard, /persist, /cache, /tmp) and userdata dm are
+/// excluded. A post-pass verify fails closed if any super mount
+/// survives.
 pub fn unmount_unmap_all(
     siw: &str,
     live: &payload_hs::layout::LiveState,
 ) -> Result<Vec<String>, String> {
     use std::collections::BTreeSet;
-    // pass 1: unmount, deepest first
+    // pass 1: unmount, deepest first.
+    // Sources: /dev/block/mapper/* (symlinks), /dev/dm-* and
+    // /dev/block/dm-* (direct dm nodes, e.g. dm-4 on /system_root).
+    // userdata dm (userdata/userdata_exp*/zoned_device) and the
+    // recovery-critical mounts (/data, /sdcard, /persist, /cache,
+    // /tmp and children) are never touched.
     let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
     let mut targets: Vec<String> = mounts
         .lines()
@@ -141,14 +142,39 @@ pub fn unmount_unmap_all(
             let mut it = line.split_whitespace();
             let src = it.next().unwrap_or("");
             let mnt = it.next().unwrap_or("");
-            if (src.starts_with("/dev/block/mapper/")
-                || src.starts_with("/dev/dm-"))
-                && !mnt.is_empty()
-            {
-                Some(mnt.to_string())
-            } else {
-                None
+            if mnt.is_empty() || mnt == "/" {
+                return None;
             }
+            if !(src.starts_with("/dev/block/mapper/")
+                || src.starts_with("/dev/dm-")
+                || src.starts_with("/dev/block/dm-"))
+            {
+                return None;
+            }
+            // except: userdata dm block (mirrors the mapper-name guard
+            // in pass 2 and in TWRP Live_Switch_Slot).
+            let base = src.rsplit('/').next().unwrap_or(src);
+            if base == "userdata"
+                || base == "zoned_device"
+                || base.starts_with("userdata_exp")
+            {
+                return None;
+            }
+            // recovery-critical mountpoints stay up (/sdcard is /data).
+            if mnt == "/tmp"
+                || mnt == "/data"
+                || mnt == "/sdcard"
+                || mnt == "/persist"
+                || mnt == "/cache"
+                || mnt.starts_with("/data/")
+                || mnt.starts_with("/sdcard/")
+                || mnt.starts_with("/persist/")
+                || mnt.starts_with("/mnt/installer")
+                || mnt.starts_with("/mnt/androidwritable")
+            {
+                return None;
+            }
+            Some(mnt.to_string())
         })
         .collect();
     targets.sort_by_key(|m| std::cmp::Reverse(m.len()));
@@ -156,13 +182,12 @@ pub fn unmount_unmap_all(
     for m in &targets {
         let _ = Command::new("umount").arg(m).output();
     }
-    // pass 2: unmap TARGET-slot residents + stale mapper nodes.
-    // Live CURRENT-slot residents are skipped: they belong to the running
-    // system/TWRP, siw refuses busy ones, and metadata writes do not need
-    // them gone. A previous aborted run may leave mappings whose metadata
-    // entry is already gone, so the mapper dir is scanned too — but only
-    // for names the super metadata knows about (both slots); anything
-    // else (userdata dm-crypt et al.) is left alone by design.
+    // pass 2: unmap CURRENT + TARGET residents (full unmap) + stale
+    // mapper nodes. The old slot must go too: a live switch after the
+    // flash destroys its LP entries, and stale dm nodes keep the
+    // destroy path EBUSY. Userdata and friends are never super
+    // residents (LiveState holds super names only) and are skipped
+    // by name below even if a stale node ever shows up.
     // (LiveState keys are already full names with slot suffix.)
     let current: BTreeSet<String> = live.current.keys().cloned().collect();
     let known: BTreeSet<String> = current
@@ -171,13 +196,26 @@ pub fn unmount_unmap_all(
         .cloned()
         .collect();
     let mut names: BTreeSet<String> = BTreeSet::new();
-    for k in live.target.keys() {
+    for k in live.target.keys().chain(live.current.keys()) {
+        if k == "userdata"
+            || k == "zoned_device"
+            || k.starts_with("userdata_exp")
+        {
+            continue;
+        }
         names.insert(k.clone());
     }
     if let Ok(rd) = std::fs::read_dir("/dev/block/mapper") {
         for e in rd.flatten() {
             if let Some(n) = e.file_name().to_str() {
-                if n != "by-uuid" && !current.contains(n) && known.contains(n) {
+                if n == "by-uuid"
+                    || n == "userdata"
+                    || n == "zoned_device"
+                    || n.starts_with("userdata_exp")
+                {
+                    continue;
+                }
+                if known.contains(n) {
                     names.insert(n.to_string());
                 }
             }
@@ -206,6 +244,48 @@ pub fn unmount_unmap_all(
     }
     if !busy.is_empty() {
         return Err(format!("dm busy, refusing to proceed: {}", busy.join("; ")));
+    }
+    // Separate pre-write check: no super mount may survive. Re-read
+    // mounts with the same filter; any leftover is a hard fail before
+    // remove/create touch metadata.
+    {
+        let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+        let mut left: Vec<String> = Vec::new();
+        for line in mounts.lines() {
+            let mut it = line.split_whitespace();
+            let src = it.next().unwrap_or("");
+            let mnt = it.next().unwrap_or("");
+            if !(src.starts_with("/dev/block/mapper/")
+                || src.starts_with("/dev/dm-")
+                || src.starts_with("/dev/block/dm-"))
+            {
+                continue;
+            }
+            let base = src.rsplit('/').next().unwrap_or(src);
+            if base == "userdata"
+                || base == "zoned_device"
+                || base.starts_with("userdata_exp")
+            {
+                continue;
+            }
+            if mnt == "/tmp"
+                || mnt == "/data"
+                || mnt == "/sdcard"
+                || mnt == "/persist"
+                || mnt == "/cache"
+                || mnt.starts_with("/data/")
+                || mnt.starts_with("/sdcard/")
+                || mnt.starts_with("/persist/")
+            {
+                continue;
+            }
+            if !mnt.is_empty() {
+                left.push(format!("{src} on {mnt}"));
+            }
+        }
+        if !left.is_empty() {
+            return Err(format!("super still mounted, refusing to proceed: {}", left.join("; ")));
+        }
     }
     Ok(gone)
 }
