@@ -2456,6 +2456,19 @@ void TWPartitionManager::Update_System_Details(void) {
 		// Unresolvable keeps the old path (Mount then fails gracefully).
 		if ((*iter)->Is_Super)
 			Prepare_Super_Volume(*iter);
+		// Fox: single standard OTG path (/usb_otg). vold /auto0-N
+		// entries duplicating the otg-usb device are hidden from every
+		// list already — never Update_Size (and thus never mount) them
+		// either, or the same dirty volume gets TWO exfat-fuse daemons:
+		// double init stall and concurrent writers on one exfat.
+		// Daemon absent (no otg-usb link) = legacy behavior, no skip.
+		// NOTE: no Is_Mounted() probe here on purpose: stat on a dead
+		// FUSE mount hangs this thread, and Update_System_Details runs
+		// on the UI thread on several paths.
+		if (FoxIsUsbOtgDuplicate((*iter)->Is_SubPartition,
+					 (*iter)->SubPartition_Of,
+					 (*iter)->Primary_Block_Device))
+			continue;
 		(*iter)->Update_Size(reporter);
 		if ((*iter)->Can_Be_Mounted) {
 			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
@@ -6721,6 +6734,21 @@ void TWPartitionManager::Check_UsbOtg_Status() {
 
 mount:
 	mtp_was_enabled = TWFunc::Toggle_MTP(false);
+	// Fox: evict a lost-race /auto0-N duplicate first. Update_Size
+	// skips duplicates (see above), but one may already be mounted
+	// from a refresh that ran before the otg-usb link existed — its
+	// exfat-fuse already holds this device, so unmount it and let
+	// /usb_otg stay the single owner (never two FUSE daemons on one
+	// volume).
+	for (std::vector<TWPartition*>::iterator dup = Partitions.begin();
+	     dup != Partitions.end(); dup++) {
+		if ((*dup)->Is_Mounted() &&
+		    FoxIsUsbOtgDuplicate((*dup)->Is_SubPartition,
+					 (*dup)->SubPartition_Of,
+					 (*dup)->Primary_Block_Device)) {
+			(*dup)->UnMount(false);
+		}
+	}
 	usbotg->Mount(true);
 	usbotg_mounted = true;
 	if (PageManager::GetCurrentPage() == "filemanagerlist" && DataManager::GetStrValue("tw_file_location1") == "/usb_otg")
