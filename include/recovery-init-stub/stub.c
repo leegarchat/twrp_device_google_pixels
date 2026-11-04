@@ -392,9 +392,13 @@ static int fox_replace_16(const char* path, const char from[16], const char to[1
 }
 
 /* Runtime-assembled stock path (short parts only: the 16B magisk
- * pattern can never occur in this TU, not even inside the checker). */
+ * pattern can never occur in this TU, not even inside the checker).
+ * The memory barrier stops LLVM SROA/MemCpyOpt from fusing the three
+ * constant stores back into one 16B .rodata literal (which would trip
+ * the build-time single-canary assert under Clang -Os). */
 static void assemble_stock_init_16(char out[16]) {
     memcpy(out, "/system", 7);
+    __asm__ volatile("" : "+m"(*out));
     memcpy(out + 7, "/bin", 4);
     memcpy(out + 11, "/init", 5);
 }
@@ -430,6 +434,47 @@ static enum stub_stage detect_stage(int argc, char** argv) {
     return STAGE_FIRST;
 }
 
+/* Forward-patch record: exact magisk path written at forward-patch
+ * time (initramfs root, fresh every boot). Best-effort. */
+static const char kFwdFlag[] = "/fox_magisk_fwd";
+
+static void flag_write_path(const char p16[16]) {
+    int fd = open(kFwdFlag, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    size_t left;
+    const char* p;
+    if (fd < 0) return;
+    left = 16;
+    p = p16;
+    while (left > 0) {
+        ssize_t w = write(fd, p, left);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        p += (size_t)w;
+        left -= (size_t)w;
+    }
+    close(fd);
+}
+
+static int flag_read_path(char out16[16]) {
+    int fd = open(kFwdFlag, O_RDONLY | O_CLOEXEC);
+    size_t got = 0;
+    if (fd < 0) return -1;
+    while (got < 16) {
+        ssize_t r = read(fd, out16 + got, 16 - got);
+        if (r < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return -1;
+        }
+        if (r == 0) break;
+        got += (size_t)r;
+    }
+    close(fd);
+    return got == 16 ? 0 : -1;
+}
+
 /* Magisk-compat re-patch, called from exec_real() on every branch: if the
  * canary was rewritten (magisk hexpatched this stub), apply the same
  * 16->16 substitution to the fox.init FILE so stock first-stage init
@@ -450,10 +495,11 @@ static void fox_maybe_repatch(enum stub_stage stage) {
     int n;
     canary_value(cur);
     if (!fox_canary_changed(cur)) return;
-    memcpy(line, "fox: canary=", 13);
-    memcpy(line + 13, cur, 16);
-    line[29] = '\n';
-    line[30] = '\0';
+    /* "fox: canary=" is 12 bytes (no NUL inside the record). */
+    memcpy(line, "fox: canary=", 12);
+    memcpy(line + 12, cur, 16);
+    line[28] = '\n';
+    line[29] = '\0';
     fox_log(line);
     if (cur[0] != '/') {
         fox_log("fox: canary not a path, skipping re-patch\n");
@@ -463,6 +509,7 @@ static void fox_maybe_repatch(enum stub_stage stage) {
     if (stage == STAGE_FIRST && access(cur, X_OK) == 0) {
         n = fox_patch_file(kFoxInit, newpath);
         if (n > 0) {
+            flag_write_path(newpath);
             fox_log("fox: fox.init patched for first-stage magisk\n");
         } else if (n == 0) {
             fox_log("fox: fox.init already patched, skipping\n");
@@ -471,21 +518,33 @@ static void fox_maybe_repatch(enum stub_stage stage) {
         }
         return;
     }
-    if (access(cur, X_OK) == 0) {
-        /* Second stage with a live magisk chain: leave it alone. */
-        fox_log("fox: magisk target alive, leaving fox.init\n");
-        return;
-    }
-    assemble_stock_init_16(stock);
-    n = fox_replace_16(kFoxInit, newpath, stock);
-    if (n > 0) {
-        fox_log("fox: fox.init restored to stock init path\n");
-    } else if (n == 0) {
-        fox_log("fox: fox.init already stock, skipping\n");
-    } else {
-        fox_log("fox: fox.init restore IO failed, pristine boot\n");
+    {
+        /* Reverse source of truth: the recorded forward path. The canary
+         * reads the live stub image, which a mid-boot restore could have
+         * reverted to stock while fox.init stays patched. */
+        char rev[16];
+        if (flag_read_path(rev) != 0) {
+            memcpy(rev, newpath, 16);
+        }
+        if (access(rev, X_OK) == 0) {
+            /* Live magisk chain: leave fox.init alone. */
+            fox_log("fox: magisk target alive, leaving fox.init\n");
+            return;
+        }
+        assemble_stock_init_16(stock);
+        n = fox_replace_16(kFoxInit, rev, stock);
+        if (n > 0) {
+            unlink(kFwdFlag);
+            fox_log("fox: fox.init restored to stock init path\n");
+        } else if (n == 0) {
+            unlink(kFwdFlag);
+            fox_log("fox: fox.init already stock, skipping\n");
+        } else {
+            fox_log("fox: fox.init restore IO failed, pristine boot\n");
+        }
     }
 }
+
 
 static void exec_real(enum stub_stage stage, int argc, char** argv, char** envp) {
     (void)argc;
