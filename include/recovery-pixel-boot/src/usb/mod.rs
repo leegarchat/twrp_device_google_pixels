@@ -149,9 +149,115 @@ pub fn run_otg_auto() -> ! {
     }
 }
 
+/// Consecutive identical VBUS ticks needed before a role switch.
+/// A dying drive glitches VBUS for a tick or two mid-transfer;
+/// acting on the first edge yanked the bus (and the gadget) out
+/// from under a mounted FUSE filesystem and wedged the recovery
+/// UI thread in fuse_get_req.
+pub const VBUS_STABLE_TICKS: u32 = 3;
+
+/// True when USB mass storage is currently mounted (TWRP /usb_otg
+/// or vold /auto0-N subpartitions). The OTG daemon must not flip
+/// host->device while these are served: the switch tears down the
+/// gadget and strands FUSE daemons on a dead device.
+pub fn mounts_hold_usb_storage(text: &str) -> bool {
+    text.lines().any(|line| {
+        let mut it = line.split_whitespace();
+        it.next();
+        match it.next() {
+            Some(mnt) => {
+                mnt == "/usb_otg" || mnt == "/usb-otg" || mnt.starts_with("/auto0")
+            }
+            None => false,
+        }
+    })
+}
+
+/// Live check against /proc/mounts.
+pub fn usb_storage_mounted() -> bool {
+    match std::fs::read_to_string("/proc/mounts") {
+        Ok(text) => mounts_hold_usb_storage(&text),
+        Err(_) => false,
+    }
+}
+
+/// VBUS edge debouncer over the 1s poll ticks. Feed every raw
+/// reading; yields the new value exactly once, after
+/// VBUS_STABLE_TICKS consecutive identical ticks.
+pub struct VbusDebounce {
+    pending: Option<String>,
+    stable: u32,
+}
+
+impl VbusDebounce {
+    pub fn new() -> Self {
+        VbusDebounce {
+            pending: None,
+            stable: 0,
+        }
+    }
+
+    pub fn feed(&mut self, current: &str) -> Option<String> {
+        match &self.pending {
+            Some(p) if p == current => {
+                self.stable += 1;
+                if self.stable >= VBUS_STABLE_TICKS {
+                    self.pending = None;
+                    self.stable = 0;
+                    Some(current.to_string())
+                } else {
+                    None
+                }
+            }
+            _ => {
+                self.pending = Some(current.to_string());
+                self.stable = 1;
+                None
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debounce_needs_three_stable_ticks() {
+        let mut d = VbusDebounce::new();
+        assert_eq!(d.feed("0"), None);
+        assert_eq!(d.feed("1"), None);
+        assert_eq!(d.feed("0"), None);
+        assert_eq!(d.feed("0"), None);
+        assert_eq!(d.feed("0"), Some("0".to_string()));
+        // consumed: next identical tick starts a new round
+        assert_eq!(d.feed("0"), None);
+    }
+
+    #[test]
+    fn debounce_glitch_resets() {
+        let mut d = VbusDebounce::new();
+        assert_eq!(d.feed("1"), None);
+        assert_eq!(d.feed("1"), None);
+        assert_eq!(d.feed("0"), None);
+        assert_eq!(d.feed("1"), None);
+        assert_eq!(d.feed("1"), None);
+        assert_eq!(d.feed("1"), Some("1".to_string()));
+    }
+
+    #[test]
+    fn storage_mount_detection() {
+        assert!(mounts_hold_usb_storage(
+            "adb /dev/usb-ffs/adb functionfs rw 0 0\n/dev/block/sde1 /usb_otg fuseblk rw 0 0\n"
+        ));
+        assert!(mounts_hold_usb_storage(
+            "/dev/block/sde2 /auto0-1 vfat rw 0 0\n"
+        ));
+        assert!(!mounts_hold_usb_storage(
+            "adb /dev/usb-ffs/adb functionfs rw 0 0\n/dev/block/sda34 /data f2fs rw 0 0\n"
+        ));
+        assert!(!mounts_hold_usb_storage(""));
+    }
 
     #[test]
     fn soc_prop_wins_over_codename() {

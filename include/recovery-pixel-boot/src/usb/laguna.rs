@@ -581,6 +581,8 @@ pub fn run_otg_auto() -> ! {
         switch_to_host(&mut current);
     }
     let mut prev = initial;
+    let mut vbus_db = super::VbusDebounce::new();
+    let mut defer_logged = false;
     let mut was_verified = false;
     let mut last_state = (String::new(), String::new(), String::new());
     loop {
@@ -596,14 +598,32 @@ pub fn run_otg_auto() -> ! {
             }
         }
         let vbus = read_vbus(&vbus_file);
-        if vbus != prev {
-            info(&format!("VBUS change: {prev} -> {vbus}"));
-            if vbus == "1" {
-                switch_to_device(&mut current);
-            } else {
-                switch_to_host(&mut current);
+        // Debounced edge: a glitching drive must not flip the role
+        // mid-transfer (see VBUS_STABLE_TICKS).
+        if let Some(stable) = vbus_db.feed(&vbus) {
+            if stable != prev {
+                info(&format!("VBUS change: {prev} -> {stable} (stable)"));
+                if stable == "1" {
+                    // Never yank host->device under a mounted drive:
+                    // the gadget teardown strands FUSE daemons and
+                    // wedges the recovery UI thread. Defer (keep prev)
+                    // and retry every tick until it unmounts.
+                    if super::usb_storage_mounted() {
+                        if !defer_logged {
+                            info("device switch deferred: USB storage mounted");
+                            defer_logged = true;
+                        }
+                    } else {
+                        defer_logged = false;
+                        switch_to_device(&mut current);
+                        prev = stable;
+                    }
+                } else {
+                    defer_logged = false;
+                    switch_to_host(&mut current);
+                    prev = stable;
+                }
             }
-            prev = vbus;
         }
         // Re-assert host while unplugged: a renegotiating TCPC can park
         // the role back to device behind our backs.
