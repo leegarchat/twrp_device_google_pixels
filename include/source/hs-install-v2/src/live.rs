@@ -81,6 +81,12 @@ pub fn query(siw: &str, booted: char) -> Result<LiveState, String> {
             // slotless residents: ignored (not our slots to rebuild)
         }
     }
+    if target_group.is_empty() {
+        // Empty target slot (wiped super, first flash ever): fall back
+        // to the conventional slot-suffixed group name so the rebuild
+        // has a group to create into instead of failing closed.
+        target_group = format!("google_dynamic_partitions_{target}");
+    }
     st.target_group = target_group;
     Ok(st)
 }

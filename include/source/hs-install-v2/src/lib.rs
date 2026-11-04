@@ -45,15 +45,14 @@ pub struct Out {
 
 impl Out {
     pub fn new(status_fd: Option<i32>) -> Self {
-        let f = match status_fd {
-            Some(n) => {
-                use std::os::unix::io::FromRawFd;
-                unsafe { std::fs::File::from_raw_fd(n) }
-            }
-            None => {
-                use std::os::unix::io::FromRawFd;
-                unsafe { std::fs::File::from_raw_fd(1) }
-            }
+        // Never take ownership of the caller's fd: from_raw_fd would
+        // close stdout (fd 1) on drop. Duplicate first; fall back to
+        // the original only if dup fails.
+        let raw_fd = status_fd.unwrap_or(1);
+        let dup_fd = unsafe { libc::dup(raw_fd) };
+        let f = unsafe {
+            use std::os::unix::io::FromRawFd;
+            std::fs::File::from_raw_fd(if dup_fd >= 0 { dup_fd } else { raw_fd })
         };
         Out {
             f,

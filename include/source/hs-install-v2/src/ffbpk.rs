@@ -37,7 +37,7 @@ fn u32le(b: &[u8], o: usize) -> u32 {
 fn cstr(b: &[u8]) -> Option<String> {
     let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
     let s = &b[..end];
-    if s.is_empty() || s.len() > 40 {
+    if s.is_empty() || s.len() > 64 {
         return None;
     }
     if !s.iter().all(|&c| c.is_ascii_alphanumeric() || c == b'_' || c == b':' || c == b'-' || c == b'.') {

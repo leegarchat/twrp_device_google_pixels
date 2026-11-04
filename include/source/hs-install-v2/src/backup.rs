@@ -31,6 +31,24 @@ pub fn dump(node: &str, file: &str, size: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Full size of a block node in bytes (BLKGETSIZE64). Backups must
+/// capture the whole old node: restoring a prefix would leave the new
+/// image's tail behind on size changes between builds.
+pub fn node_size(node: &str) -> Result<u64, String> {
+    use std::os::unix::io::AsRawFd;
+    const BLKGETSIZE64: u64 = 0x80081272;
+    let f = File::open(node).map_err(|e| format!("open {node}: {e}"))?;
+    let mut sz: u64 = 0;
+    let rc = unsafe { ioctl(f.as_raw_fd(), BLKGETSIZE64, &mut sz) };
+    if rc != 0 {
+        return Err(format!("BLKGETSIZE64 {node} failed"));
+    }
+    if sz == 0 {
+        return Err(format!("BLKGETSIZE64 {node} returned 0"));
+    }
+    Ok(sz)
+}
+
 /// Restore a dumped file back over its node + fsync the node.
 pub fn restore(file: &str, node: &str) -> Result<(), String> {
     let mut src = File::open(file).map_err(|e| format!("open {file}: {e}"))?;

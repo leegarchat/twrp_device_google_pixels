@@ -24,9 +24,32 @@ const PIECE: usize = 8 << 20;
 #[derive(Clone)]
 enum PartSrc {
     /// Nested entry: absolute outer-file offset, compressed + expanded size.
-    Inner { off: u64, comp: u64, size: u64, stored: bool },
+    /// `size` is the EXPANDED size (sparse containers expand to
+    /// blk_sz * total_blks); `crc` is the zip CRC32 of the uncompressed
+    /// (pre-sparse-decode) bytes for bitrot detection.
+    Inner { off: u64, comp: u64, size: u64, stored: bool, crc: u32, sparse: bool },
     /// Pre-extracted FBPK container file + blob range inside it.
     Fbpk { file: String, off: u64, size: u64 },
+}
+
+/// Android sparse image header (system/vendor/product images ship as
+/// sparse containers on some factories): magic 0xED26FF3A, then the
+/// expanded size = blk_sz * total_blks. Returns None for raw images.
+fn sparse_expanded(h: &[u8]) -> Option<u64> {
+    if h.len() < 28 {
+        return None;
+    }
+    let le = |o: usize| u32::from_le_bytes([h[o], h[o + 1], h[o + 2], h[o + 3]]);
+    if le(0) != 0xED26FF3A {
+        return None;
+    }
+    let blk_sz = le(12) as u64;
+    let total_blks = le(16) as u64;
+    let total_chunks = le(20);
+    if blk_sz == 0 || blk_sz % 512 != 0 || total_blks == 0 || total_chunks == 0 {
+        return None;
+    }
+    total_blks.checked_mul(blk_sz)
 }
 
 struct FactoryPart {
@@ -216,7 +239,9 @@ pub fn run(a: run::Args) -> i32 {
     }
 
     // --- 4. partition list: inner entries classified by the table ---
-    let mut wanted: HashMap<String, (u8, u64, fzip::Entry)> = HashMap::new();
+    // Tuple: (weight, EXPANDED size, entry, sparse). Expanded size feeds
+    // create_meta and the write loop; sparse entries decode on the fly.
+    let mut wanted: HashMap<String, (u8, u64, fzip::Entry, bool)> = HashMap::new();
     let mut extras = 0usize;
     for e in nested.entries.clone() {
         if e.name.ends_with('/') {
@@ -233,7 +258,24 @@ pub fn run(a: run::Args) -> i32 {
             continue;
         }
         if let Some(w) = stage.get(stem) {
-            wanted.insert(stem.to_string(), (*w, e.size, e));
+            // Sparse sniff: some factories ship system/vendor/product as
+            // Android sparse containers; raw images pass through. The
+            // partition is created with the EXPANDED size and the stream
+            // is decoded on the fly (see open_source).
+            let (size, sparse) = match nested.read_prefix(&e, 28) {
+                Ok(h) => match sparse_expanded(&h) {
+                    Some(x) => (x, true),
+                    None => (e.size, false),
+                },
+                Err(_) => (e.size, false),
+            };
+            if sparse {
+                out.log(&format!(
+                    "factory sparse: {} (packed {} -> {} out)",
+                    e.name, e.size, size
+                ));
+            }
+            wanted.insert(stem.to_string(), (*w, size, e, sparse));
         } else {
             out.log(&format!("factory extra (not in ota_*): {}", e.name));
             extras += 1;
@@ -248,6 +290,12 @@ pub fn run(a: run::Args) -> i32 {
         let have: std::collections::HashSet<&str> = wanted.keys().map(|s| s.as_str()).collect();
         let need_fbpk = stage.keys().any(|n| !have.contains(n.as_str()));
         if need_fbpk {
+            // tmpdir must exist before the first File::create (the main
+            // backup create_dir_all runs later and only covers the
+            // no-fallback path).
+            if let Err(e) = std::fs::create_dir_all(&a.tmpdir) {
+                return fail(&mut out, &format!("mkdir {}: {e}", a.tmpdir), crate::EXIT_FAIL);
+            }
             for (fw, kind) in [(&bl_e, "bootloader"), (&rd_e, "radio")] {
                 let dest = format!("{}/fbpk_{kind}.img", a.tmpdir);
                 {
@@ -296,7 +344,7 @@ pub fn run(a: run::Args) -> i32 {
         }
     }
     let mut parts: Vec<FactoryPart> = Vec::new();
-    for (stem, (w, size, e)) in &wanted {
+    for (stem, (w, size, e, sparse)) in &wanted {
         let off = match nested.data_off(e) {
             Ok(o) => inner_off + o,
             Err(e) => return fail(&mut out, &format!("inner offset: {e}"), crate::EXIT_FAIL),
@@ -308,8 +356,10 @@ pub fn run(a: run::Args) -> i32 {
             src: PartSrc::Inner {
                 off,
                 comp: e.comp_size,
-                size: e.size,
+                size: *size,
                 stored: e.method == fzip::METHOD_STORED,
+                crc: e.crc,
+                sparse: *sparse,
             },
         });
     }
@@ -447,10 +497,19 @@ pub fn run(a: run::Args) -> i32 {
         if let Some(node) = src_node {
             let file = format!("{}/{}.img", a.tmpdir, p.name);
             out.log(&format!("backup {}", p.name));
-            if let Err(e) = backup::dump(&node, &file, p.size) {
-                return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+            // Full old node, not the payload size: restores must put
+            // back the whole image when builds change sizes.
+            match backup::node_size(&node) {
+                Ok(sz) => {
+                    if let Err(e) = backup::dump(&node, &file, sz) {
+                        return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+                    }
+                    backed.push(run::Backed::Dump { node, file });
+                }
+                Err(e) => {
+                    return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+                }
             }
-            backed.push(run::Backed::Dump { node, file });
         } else {
             backed.push(run::Backed::Fresh { full: format!("{}_{target}", p.name) });
         }
@@ -528,9 +587,10 @@ pub fn run(a: run::Args) -> i32 {
                         node_fds.insert(j.name.clone(), std::sync::Mutex::new(f));
                     }
                     Err(e) => {
-                        let msg = if e.raw_os_error() == Some(libc::O_EXCL as i32) {
-                            format!("open {node}: busy (mounted or held open)")
-                        } else if e.raw_os_error() == Some(libc::EBUSY) {
+                        // EBUSY = mounted or held open. (O_EXCL is an
+                        // open flag, never an errno: do not compare
+                        // against it.)
+                        let msg = if e.raw_os_error() == Some(libc::EBUSY) {
                             format!("open {node}: busy (mounted or held open)")
                         } else {
                             format!("open {node}: {e}")
@@ -588,7 +648,7 @@ pub fn run(a: run::Args) -> i32 {
                     let mut f = mu.lock().map_err(|_| format!("{tag}: node lock poisoned"))?;
                     use std::io::{Seek, SeekFrom, Write};
                     f.seek(SeekFrom::Start(0)).map_err(|e| format!("{tag}: oseek: {e}"))?;
-                    let mut src = open_source(&zip_path, &j.src)?;
+                    let (mut src, expect_crc) = open_source(&zip_path, &j.src)?;
                     use sha2::Digest;
                     let mut hasher = sha2::Sha256::new();
                     let mut left = j.size;
@@ -612,6 +672,17 @@ pub fn run(a: run::Args) -> i32 {
                             credit(piece.len() as u64);
                         }
                         left -= got as u64;
+                    }
+                    // Zip bitrot check: CRC32 over the raw entry bytes
+                    // must match the central directory (catches corrupt
+                    // downloads that sha256-vs-node cannot see).
+                    if let Some(exp) = expect_crc {
+                        let got_crc = src.finish_crc();
+                        if got_crc != exp {
+                            return Err(format!(
+                                "{tag}: zip crc mismatch (want {exp:08x}, got {got_crc:08x})"
+                            ));
+                        }
                     }
                     drop(f);
                     let expect: [u8; 32] = hasher.finalize().into();
@@ -719,9 +790,214 @@ pub fn run(a: run::Args) -> i32 {
 /// Open a readable stream over one factory partition's bytes.
 /// Inner DEFLATE entries are inflated on the fly (bounded RAM);
 /// FBPK blobs are plain pread ranges.
-fn open_source(zip_path: &str, src: &PartSrc) -> Result<Box<dyn Read>, String> {
+/// Entry stream with zip-CRC verification and sparse decoding.
+/// The reader yields EXPANDED bytes (sparse containers decoded); the
+/// CRC32 is computed over the raw post-inflate bytes and checked with
+/// finish_crc() after the stream is fully consumed.
+enum SrcReader {
+    Plain(TeeCrc<Box<dyn Read>>),
+    Sparse(SparseDecoder<TeeCrc<Box<dyn Read>>>),
+}
+
+impl Read for SrcReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            SrcReader::Plain(t) => t.read(out),
+            SrcReader::Sparse(d) => d.read(out),
+        }
+    }
+}
+
+impl SrcReader {
+    fn finish_crc(self) -> u32 {
+        match self {
+            SrcReader::Plain(t) => t.crc_value(),
+            SrcReader::Sparse(d) => d.into_inner().crc_value(),
+        }
+    }
+}
+
+/// Pass-through reader hashing everything with CRC32 (IEEE, zip order).
+struct TeeCrc<R: Read> {
+    inner: R,
+    crc: fzip::Crc,
+}
+
+impl<R: Read> TeeCrc<R> {
+    fn crc_value(&self) -> u32 {
+        // Crc has no accessor; finalize on a copy (Copy-ish: re-derive
+        // from the running state is impossible, so store the digest by
+        // re-hashing nothing: Crc::finalize(&self.crc)).
+        self.crc.finalize()
+    }
+}
+
+impl<R: Read> Read for TeeCrc<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(out)?;
+        self.crc.update(&out[..n]);
+        Ok(n)
+    }
+}
+
+/// Streaming Android sparse decoder (magic 0xED26FF3A). Chunk types:
+/// RAW 0xCAC1 (data follows), FILL 0xCAC2 (4-byte pattern), DONTCARE
+/// 0xCAC3 (zeros), CRC 0xCAC4 (skipped). Bounded RAM: RAW data streams
+/// straight into the caller's buffer, fills repeat a 4-byte pattern.
+struct SparseDecoder<R: Read> {
+    inner: R,
+    blk_sz: u64,
+    chunks_left: u32,
+    out_left: u64,
+    fill: [u8; 4],
+    fill_pos: usize,
+    raw_chunk: bool,
+    header_done: bool,
+}
+
+impl<R: Read> SparseDecoder<R> {
+    fn into_inner(self) -> R {
+        self.inner
+    }
+
+    fn read_u16(&mut self, b: &mut [u8; 2]) -> std::io::Result<()> {
+        self.inner.read_exact(&mut b[..])
+    }
+
+    fn read_u32(&mut self) -> std::io::Result<u32> {
+        let mut b = [0u8; 4];
+        self.inner.read_exact(&mut b)?;
+        Ok(u32::from_le_bytes(b))
+    }
+
+    fn next_chunk(&mut self) -> std::io::Result<bool> {
+        if self.chunks_left == 0 {
+            return Ok(false);
+        }
+        let mut t = [0u8; 2];
+        self.read_u16(&mut t)?;
+        let ctype = u16::from_le_bytes(t);
+        let mut r = [0u8; 2];
+        self.read_u16(&mut r)?;
+        let chunk_sz = self.read_u32()? as u64;
+        let total_sz = self.read_u32()? as u64;
+        self.chunks_left -= 1;
+        match ctype {
+            0xCAC1 => {
+                let data = total_sz.checked_sub(12).ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "sparse raw total_sz < 12")
+                })?;
+                if data != chunk_sz * self.blk_sz {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "sparse raw size mismatch",
+                    ));
+                }
+                self.out_left = data;
+                self.fill_pos = 0;
+                self.raw_chunk = true;
+                Ok(true)
+            }
+            0xCAC2 => {
+                if total_sz != 16 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "sparse fill total_sz != 16",
+                    ));
+                }
+                self.inner.read_exact(&mut self.fill)?;
+                self.out_left = chunk_sz * self.blk_sz;
+                self.fill_pos = 0;
+                self.raw_chunk = false;
+                Ok(true)
+            }
+            0xCAC3 => {
+                if total_sz != 12 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "sparse dontcare total_sz != 12",
+                    ));
+                }
+                self.out_left = chunk_sz * self.blk_sz;
+                self.fill = [0, 0, 0, 0];
+                self.fill_pos = 0;
+                self.raw_chunk = false;
+                Ok(true)
+            }
+            0xCAC4 => {
+                // CRC32 chunk: header + 4 digest bytes, no output.
+                let skip = total_sz.checked_sub(12).ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, "sparse crc total_sz < 12")
+                })?;
+                let mut left = skip;
+                let mut tmp = [0u8; 64];
+                while left > 0 {
+                    let n = std::cmp::min(left, tmp.len() as u64) as usize;
+                    self.inner.read_exact(&mut tmp[..n])?;
+                    left -= n as u64;
+                }
+                self.next_chunk()
+            }
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("sparse unknown chunk {ctype:#X}"),
+            )),
+        }
+    }
+}
+
+impl<R: Read> Read for SparseDecoder<R> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        if !self.header_done {
+            let mut h = [0u8; 28];
+            self.inner.read_exact(&mut h)?;
+            if u32::from_le_bytes([h[0], h[1], h[2], h[3]]) != 0xED26FF3A {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "sparse magic missing in stream",
+                ));
+            }
+            self.blk_sz = u32::from_le_bytes([h[12], h[13], h[14], h[15]]) as u64;
+            let total_chunks =
+                u32::from_le_bytes([h[20], h[21], h[22], h[23]]);
+            if self.blk_sz == 0 || total_chunks == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "sparse bad header",
+                ));
+            }
+            self.chunks_left = total_chunks;
+            self.header_done = true;
+        }
+        if out.is_empty() {
+            return Ok(0);
+        }
+        while self.out_left == 0 {
+            if !self.next_chunk()? {
+                return Ok(0);
+            }
+        }
+        // RAW chunks stream straight through; FILL/DONTCARE repeat fill[].
+        if self.raw_chunk {
+            let n = std::cmp::min(self.out_left, out.len() as u64) as usize;
+            let k = self.inner.read(&mut out[..n])?;
+            self.out_left -= k as u64;
+            return Ok(k);
+        }
+        let mut n = 0;
+        while n < out.len() && self.out_left > 0 {
+            out[n] = self.fill[self.fill_pos];
+            self.fill_pos = (self.fill_pos + 1) % 4;
+            n += 1;
+            self.out_left -= 1;
+        }
+        Ok(n)
+    }
+}
+
+fn open_source(zip_path: &str, src: &PartSrc) -> Result<(SrcReader, Option<u32>), String> {
     match src {
-        PartSrc::Inner { off, comp, size, stored } => {
+        PartSrc::Inner { off, comp, size, stored, crc, sparse } => {
             let f = File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
             // Ranged pread slice, then optional inflate.
             struct R {
@@ -746,15 +1022,34 @@ fn open_source(zip_path: &str, src: &PartSrc) -> Result<Box<dyn Read>, String> {
                     Ok(n)
                 }
             }
-            let r = R { f, pos: *off, left: if *stored { *size } else { *comp } };
-            if *stored {
-                Ok(Box::new(r))
+            // Note: PartSrc.size is the EXPANDED size; the raw range is
+            // comp bytes for DEFLATE, raw file bytes for STORED. STORED
+            // raw length equals the packed (sparse-or-raw) file size,
+            // which read_prefix already consumed identically; bound the
+            // range by comp when sparse (packed size), else size.
+            let raw_left = if *stored && *sparse { *comp } else if *stored { *size } else { *comp };
+            let r = R { f, pos: *off, left: raw_left };
+            let raw: Box<dyn Read> = if *stored {
+                Box::new(r)
             } else {
-                let dec = flate2::bufread::DeflateDecoder::new(std::io::BufReader::with_capacity(
-                    1 << 16,
-                    r,
-                ));
-                Ok(Box::new(dec))
+                Box::new(flate2::bufread::DeflateDecoder::new(
+                    std::io::BufReader::with_capacity(1 << 16, r),
+                ))
+            };
+            let tee = TeeCrc { inner: raw, crc: fzip::Crc::new() };
+            if *sparse {
+                Ok((SrcReader::Sparse(SparseDecoder {
+                    inner: tee,
+                    blk_sz: 0,
+                    chunks_left: 0,
+                    out_left: 0,
+                    fill: [0, 0, 0, 0],
+                    fill_pos: 0,
+                    raw_chunk: false,
+                    header_done: false,
+                }), Some(*crc)))
+            } else {
+                Ok((SrcReader::Plain(tee), Some(*crc)))
             }
         }
         PartSrc::Fbpk { file, off, size } => {
@@ -781,7 +1076,70 @@ fn open_source(zip_path: &str, src: &PartSrc) -> Result<Box<dyn Read>, String> {
                     Ok(n)
                 }
             }
-            Ok(Box::new(P { f, pos: *off, left: *size }))
+            let raw: Box<dyn Read> = Box::new(P { f, pos: *off, left: *size });
+            let tee = TeeCrc { inner: raw, crc: fzip::Crc::new() };
+            // FBPK blobs have no zip CRC: no expected value.
+            Ok((SrcReader::Plain(tee), None))
         }
+    }
+}
+
+#[cfg(test)]
+mod sparse_tests {
+    use super::*;
+    use std::io::Read;
+
+    fn hdr(blk_sz: u32, blks: u32, chunks: u32) -> Vec<u8> {
+        let mut h = vec![0u8; 28];
+        h[0..4].copy_from_slice(&0xED26FF3Au32.to_le_bytes());
+        h[4..6].copy_from_slice(&1u16.to_le_bytes());
+        h[12..16].copy_from_slice(&blk_sz.to_le_bytes());
+        h[16..20].copy_from_slice(&blks.to_le_bytes());
+        h[20..24].copy_from_slice(&chunks.to_le_bytes());
+        h
+    }
+
+    fn chunk(ctype: u16, blk: u32, extra: &[u8]) -> Vec<u8> {
+        let mut c = vec![0u8; 12];
+        c[0..2].copy_from_slice(&ctype.to_le_bytes());
+        c[4..8].copy_from_slice(&blk.to_le_bytes());
+        c[8..12].copy_from_slice(&(12 + extra.len() as u32).to_le_bytes());
+        c.extend_from_slice(extra);
+        c
+    }
+
+    #[test]
+    fn decode_raw_fill_dontcare() {
+        // 4 blocks x 8 bytes: raw(0xAB), fill(01020304), dontcare, raw(0xCD).
+        let mut img = hdr(8, 4, 4);
+        img.extend(chunk(0xCAC1, 1, &[0xAB; 8]));
+        img.extend(chunk(0xCAC2, 1, &[0x01, 0x02, 0x03, 0x04]));
+        img.extend(chunk(0xCAC3, 1, &[]));
+        img.extend(chunk(0xCAC1, 1, &[0xCD; 8]));
+        let mut dec = SparseDecoder {
+            inner: &img[..],
+            blk_sz: 0,
+            chunks_left: 0,
+            out_left: 0,
+            fill: [0; 4],
+            fill_pos: 0,
+            raw_chunk: false,
+            header_done: false,
+        };
+        let mut out = Vec::new();
+        dec.read_to_end(&mut out).unwrap();
+        assert_eq!(out.len(), 32);
+        assert!(out[0..8].iter().all(|&b| b == 0xAB));
+        assert_eq!(&out[8..16], &[0x01, 0x02, 0x03, 0x04, 0x01, 0x02, 0x03, 0x04]);
+        assert!(out[16..24].iter().all(|&b| b == 0));
+        assert!(out[24..32].iter().all(|&b| b == 0xCD));
+    }
+
+    #[test]
+    fn sniff_rejects_raw() {
+        assert!(sparse_expanded(&[0u8; 28]).is_none());
+        let mut not_sparse = vec![0u8; 28];
+        not_sparse[0] = 0x58;
+        assert!(sparse_expanded(&not_sparse).is_none());
     }
 }

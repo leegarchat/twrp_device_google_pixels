@@ -323,8 +323,9 @@ impl<'a> std::io::BufRead for Limited<'a> {
     }
 }
 
-// Local CRC32 (IEEE) to avoid extra dependencies.
-struct Crc(u32);
+// Local CRC32 (IEEE) to avoid extra dependencies. Public so the
+// factory path can CRC-check entry streams without re-reading.
+pub struct Crc(u32);
 impl Crc {
     const fn table() -> [u32; 256] {
         let mut t = [0u32; 256];
@@ -341,10 +342,10 @@ impl Crc {
         }
         t
     }
-    fn new() -> Crc {
+    pub fn new() -> Crc {
         Crc(0xFFFFFFFF)
     }
-    fn update(&mut self, b: &[u8]) {
+    pub fn update(&mut self, b: &[u8]) {
         const T: [u32; 256] = Crc::table();
         let mut c = self.0;
         for &x in b {
@@ -352,7 +353,7 @@ impl Crc {
         }
         self.0 = c;
     }
-    fn finalize(&self) -> u32 {
+    pub fn finalize(&self) -> u32 {
         self.0 ^ 0xFFFFFFFF
     }
 }

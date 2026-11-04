@@ -74,9 +74,10 @@ pub fn remove_meta(siw: &str, full: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Create a logical partition in whichever metadata slot already holds
-/// its group siblings (tried in order); the group name carries the slot
-/// suffix on these devices (google_dynamic_partitions_{a,b}).
+/// Create a logical partition in BOTH metadata slots (mirrored tables
+/// must not diverge: remove_meta clears both copies, so create writes
+/// both; success in either slot is enough to proceed). The group name
+/// carries the slot suffix on these devices.
 /// Factory convention: FULL stored names, readonly, NO slot_suffixed
 /// flag (a flag would make readers append a second suffix).
 pub fn create_meta(
@@ -86,6 +87,7 @@ pub fn create_meta(
     size: u64,
 ) -> Result<(), String> {
     let size_s = size.to_string();
+    let mut ok_count = 0;
     let mut last_err = String::new();
     for slot in ["0", "1"] {
         match siw_cmd(
@@ -105,11 +107,15 @@ pub fn create_meta(
                 slot,
             ],
         ) {
-            Ok(_) => return Ok(()),
+            Ok(_) => ok_count += 1,
             Err(e) => last_err = e,
         }
     }
-    Err(last_err)
+    if ok_count > 0 {
+        Ok(())
+    } else {
+        Err(last_err)
+    }
 }
 
 /// Unmount (deepest first) + full unmap of CURRENT + TARGET slot

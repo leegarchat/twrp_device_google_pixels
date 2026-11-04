@@ -32,30 +32,23 @@ fn stage_table_path() -> String {
 }
 
 fn stage_table_at(device: &str, path: &str) -> Option<HashMap<String, u8>> {
+    // Parse as JSON: the merged tree is {"_families": {...}, "<dev>": {...}}.
+    // Hand-scanning for "device" substrings is fragile (family blocks and
+    // other devices come first); serde_json is already a dependency.
     let text = std::fs::read_to_string(path).ok()?;
-    // Minimal hand parse: find "device": {...} block, then the four arrays.
+    let root: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let dev_obj = root.get(device)?.as_object()?;
     let mut table = HashMap::new();
-    let key = format!("\"{device}\"");
-    let i = text.find(&key)?;
-    // Bound the scan to this device object (next top-level key at 2-space
-    // indent ends it); pixel.json files are flat enough for this.
-    let rest = &text[i..];
-    let end = rest[1..].find("\n  \"").map(|p| p + 1).unwrap_or(rest.len());
-    let blk = &rest[..end];
     for (k, w) in [
         ("ota_super", weights::W_SUPER),
         ("ota_boot", weights::W_BOOT),
         ("ota_modem", weights::W_MODEM),
         ("ota_bootloader", weights::W_REST),
     ] {
-        let pat = format!("\"{k}\"");
-        if let Some(j) = blk.find(&pat) {
-            let after = &blk[j + pat.len()..];
-            if let Some(a) = after.find('[') {
-                let inner = &after[a + 1..];
-                let end2 = inner.find(']').unwrap_or(inner.len());
-                for tok in inner[..end2].split(',') {
-                    let t = tok.trim().trim_matches('"').trim();
+        if let Some(arr) = dev_obj.get(k).and_then(|v| v.as_array()) {
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    let t = s.trim();
                     if !t.is_empty() {
                         table.insert(t.to_string(), w);
                     }
@@ -109,7 +102,8 @@ pub fn flag(args: &[String], name: &str) -> Option<String> {    // Both "--flag 
     let mut it = args.iter().peekable();
     while let Some(a) = it.next() {
         if a == name {
-            return it.peek().map(|s| s.to_string());
+            // Never swallow the next flag as a value.
+            return it.peek().filter(|s| !s.starts_with("--")).map(|s| s.to_string());
         }
         if let Some(v) = a.strip_prefix(&glued) {
             return Some(v.to_string());
@@ -310,11 +304,19 @@ pub fn run(a: Args) -> i32 {
             }
         }
     }
-    let present_target = |base: &str| -> Option<(String, u64)> {
-        let full = format!("{base}_{target}");
-        // Physical node backing a slot-suffixed partition.
-        let node = format!("/dev/block/by-name/{full}");
-        live.target.get(&full).map(|s| (node, *s))
+    // Block node for a non-super partition: slotted name first, then the
+    // unslotted one (bootloader components are unslotted on some
+    // generations). Probed, never assumed.
+    let resolve_block_node = |base: &str| -> Option<String> {
+        use std::os::unix::fs::FileTypeExt;
+        for cand in [device::by_name(base, target), format!("/dev/block/by-name/{base}")] {
+            if let Ok(md) = std::fs::metadata(&cand) {
+                if md.file_type().is_block_device() {
+                    return Some(cand);
+                }
+            }
+        }
+        None
     };
     // Scheme phase 0: every BLOCK (non-group) target must already exist
     // as a block node. metadata() follows the by-name symlink (unlike
@@ -322,27 +324,19 @@ pub fn run(a: Args) -> i32 {
     // block device). Nothing has been written yet; fail here, not
     // mid-flash. Logical members are created from the group below.
     {
-        use std::os::unix::fs::FileTypeExt;
         for p in &parts {
             if group_of.contains_key(&p.name) {
                 continue;
             }
-            let node = device::by_name(&p.name, target);
-            match std::fs::metadata(&node) {
-                Ok(md) if md.file_type().is_block_device() => {}
-                Ok(_) => {
+            match resolve_block_node(&p.name) {
+                Some(_) => {}
+                None => {
                     return fail(
                         &mut out,
                         &format!(
-                            "BLOCK target not a block device: {node}, nothing written"
+                            "BLOCK target missing for {} (tried {}_{target}, unslotted), nothing written",
+                            p.name, p.name
                         ),
-                        crate::EXIT_FAIL,
-                    )
-                }
-                Err(e) => {
-                    return fail(
-                        &mut out,
-                        &format!("BLOCK target missing: {node} ({e}), nothing written"),
                         crate::EXIT_FAIL,
                     )
                 }
@@ -371,16 +365,45 @@ pub fn run(a: Args) -> i32 {
     let _ = std::fs::create_dir_all(&a.tmpdir);
     let mut backed: Vec<Backed> = Vec::new(); // rollback ledger
     for p in parts.iter().filter(|p| weights::is_critical(w_of(&p.name))) {
-        if let Some((node, size)) = present_target(&p.name) {
+        if group_of.contains_key(&p.name) {
+            // Super member promoted to critical by the device table:
+            // back up the live mapper node (full allocation size).
+            let full = format!("{}_{target}", p.name);
+            if let Some(s) = live.target.get(&full) {
+                let node = format!("/dev/block/mapper/{full}");
+                let file = format!("{}/{}.img", a.tmpdir, p.name);
+                out.log(&format!("backup {}", p.name));
+                if let Err(e) = backup::dump(&node, &file, *s) {
+                    return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+                }
+                backed.push(Backed::Dump { node, file });
+            } else {
+                // Not a live resident yet: created fresh by the rebuild.
+                // Rollback removes the LP entry to restore the prior state.
+                backed.push(Backed::Fresh {
+                    full: format!("{}_{target}", p.name),
+                });
+            }
+        } else if let Some(node) = resolve_block_node(&p.name) {
+            // Physical partition: dump the whole old node so restore
+            // puts back the full image, not a payload-sized prefix.
             let file = format!("{}/{}.img", a.tmpdir, p.name);
             out.log(&format!("backup {}", p.name));
-            if let Err(e) = backup::dump(&node, &file, size) {
-                return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+            match backup::node_size(&node) {
+                Ok(sz) => {
+                    if let Err(e) = backup::dump(&node, &file, sz) {
+                        return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+                    }
+                    backed.push(Backed::Dump { node, file });
+                }
+                Err(e) => {
+                    return fail(&mut out, &format!("backup {}: {e}", p.name), crate::EXIT_FAIL);
+                }
             }
-            backed.push(Backed::Dump { node, file });
         } else {
-            // Not a live resident yet: created fresh by the rebuild.
-            // Rollback removes it to restore the prior state.
+            // No block node on this generation: created fresh by the
+            // flash. Rollback removes the LP entry (a no-op for
+            // physical partitions, which remove_meta tolerates).
             backed.push(Backed::Fresh {
                 full: format!("{}_{target}", p.name),
             });
@@ -450,8 +473,17 @@ pub fn run(a: Args) -> i32 {
                 return fail(&mut out, &format!("map {full}: {e}"), crate::EXIT_FAIL);
             }
             node_of.insert(p.name.clone(), format!("/dev/block/mapper/{full}"));
+        } else if let Some(node) = resolve_block_node(&p.name) {
+            node_of.insert(p.name.clone(), node);
         } else {
-            node_of.insert(p.name.clone(), device::by_name(&p.name, target));
+            return fail(
+                &mut out,
+                &format!(
+                    "BLOCK node gone for {} (was present in phase 0), nothing written",
+                    p.name
+                ),
+                crate::EXIT_FAIL,
+            );
         }
     }
 
@@ -930,18 +962,32 @@ mod stage_tests {
 
     #[test]
     fn table_parses_merged_tree() {
-        // /tmp/fake_pixelrunatboot.json is built by hand in dev (merged
-        // shape: {"_families": {...}, "<dev>": <full pixel.json>}).
-        let p = "/tmp/fake_pixelrunatboot.json";
-        if std::fs::metadata(p).is_err() {
-            return;
-        }
+        // Merged shape: {"_families": {...}, "<dev>": <full pixel.json>}.
+        // _families comes first and even mentions device names in free
+        // text: a substring parser would match there and miss the ota_*
+        // arrays. The JSON parser must still find the device block.
+        let p = "/tmp/fake_pixelrunatboot_test.json";
+        let doc = r#"{
+  "_families": {
+    "zuma": {"family": "zuma", "note": "shiba husky akita family"}
+  },
+  "shiba": {
+    "family": "zuma",
+    "ota_super": ["system", "vendor"],
+    "ota_boot": ["boot", "pvmfw"],
+    "ota_modem": ["modem"],
+    "ota_bootloader": ["abl"]
+  }
+}"#;
+        std::fs::write(p, doc).unwrap();
         let t = stage_table_at("shiba", p).expect("table");
         assert_eq!(t.get("system"), Some(&weights::W_SUPER));
         assert_eq!(t.get("boot"), Some(&weights::W_BOOT));
+        assert_eq!(t.get("pvmfw"), Some(&weights::W_BOOT));
         assert_eq!(t.get("modem"), Some(&weights::W_MODEM));
         assert_eq!(t.get("abl"), Some(&weights::W_REST));
         assert!(t.get("nonexistent").is_none());
         assert!(stage_table_at("nosuchdevice", p).is_none());
+        let _ = std::fs::remove_file(p);
     }
 }

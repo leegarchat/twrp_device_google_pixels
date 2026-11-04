@@ -16,11 +16,16 @@ const BOOT_SET: &[&str] = &[
     "vendor_boot",
     "vendor_kernel_boot",
     "dtbo",
+    // Protected VM firmware: bootloader-verified from Tensor G2 on
+    // (pKVM). A half-flashed pvmfw with no rollback = no boot, so it
+    // is critical (backed up) even on the built-in fallback path when
+    // the device stage table is missing. Device tables list it under
+    // ota_boot anyway; this only fixes the fallback.
+    "pvmfw",
 ];
 
 const MODEM_SET: &[&str] = &[
-    "modem",
-    "pvmfw", "gcf", "ldfw",
+    "modem", "gcf", "ldfw",
 ];
 
 /// Weight for a manifest base name. `in_group` = member of any manifest
