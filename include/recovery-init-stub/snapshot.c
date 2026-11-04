@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
@@ -217,11 +218,22 @@ static const char* snap_find_block(const char* partname) {
 }
 
 /* Handles `androidboot.slot_suffix="_a"` (bootconfig) and `=..._a`
- * (cmdline) spellings. Returns 1 and fills out on success. */
+ * (cmdline) spellings. Key must start at a token boundary (line start,
+ * space, tab, newline or quote) so `xandroidboot.slot_suffix` never
+ * matches. Returns 1 and fills out on success. */
 static int snap_slot_from_text(const char* text, const char* key, char* out, size_t outsz) {
-    const char* pos = strstr(text, key);
-    if (pos == NULL) return 0;
-    const char* v = pos + strlen(key);
+    const char* pos = text;
+    size_t klen = strlen(key);
+    for (;;) {
+        pos = strstr(pos, key);
+        if (pos == NULL) return 0;
+        if (pos == text || pos[-1] == ' ' || pos[-1] == '\t' ||
+            pos[-1] == '\n' || pos[-1] == '"') {
+            break;
+        }
+        pos += klen;
+    }
+    const char* v = pos + klen;
     while (*v == '=' || *v == ' ' || *v == '"') v++;
     size_t n = 0;
     while (v[n] != '\0' && v[n] != '"' && v[n] != '\n' && v[n] != ' ' && n + 1 < outsz) {
@@ -247,7 +259,7 @@ static void snap_get_boot_slot(char* out, size_t outsz) {
     }
 }
 
-static void snap_snapshot_vendor_boot(void) {
+static int snap_snapshot_vendor_boot(void) {
     snap_log(0, "[SNAPSHOT] Backing up vendor_boot...\n");
     snap_mkdirs(SNAP_VENDOR_BOOT, 0755);
 
@@ -275,6 +287,7 @@ static void snap_snapshot_vendor_boot(void) {
     }
 
     int i;
+    int copied = 0;
     for (i = 0; i < nslots; i++) {
         char partname[32];
         size_t pi = 0;
@@ -300,10 +313,12 @@ static void snap_snapshot_vendor_boot(void) {
         snap_log(0, "[SNAPSHOT] Copying %s -> %s\n", dev, dst);
         if (snap_copy_file(dev, dst)) {
             snap_log(0, "[SNAPSHOT] OK: %s snapshotted\n", partname);
+            copied++;
         } else {
             snap_log(1, "[SNAPSHOT] FAILED to copy %s\n", dev);
         }
     }
+    return copied;
 }
 
 /* ------------------------------------------------------------------ */
@@ -458,11 +473,44 @@ static void snap_manifest_pass(const char* manifest_path) {
 
 /* ------------------------------------------------------------------ */
 
+static int snap_has_vendor_boot_dump(void) {
+    return access(SNAP_VENDOR_BOOT "/vendor_boot.img", F_OK) == 0 ||
+           access(SNAP_VENDOR_BOOT "/vendor_boot_a.img", F_OK) == 0 ||
+           access(SNAP_VENDOR_BOOT "/vendor_boot_b.img", F_OK) == 0;
+}
+
+/* Block-device pass for second-stage entry (UFS drivers are up by
+ * then). Mounts /proc and /sys only if missing, unmounting only what
+ * this call mounted. No-op success when a dump already exists. */
+int snapshot_vendor_boot_only(void) {
+    int proc_mounted = 0;
+    int sys_mounted = 0;
+    int n;
+    if (snap_has_vendor_boot_dump()) return 0;
+    if (access("/proc/cmdline", R_OK) != 0) {
+        if (mount("proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == 0)
+            proc_mounted = 1;
+    }
+    if (access("/sys/class/block", R_OK) != 0) {
+        if (mount("sysfs", "/sys", "sysfs", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL) == 0)
+            sys_mounted = 1;
+    }
+    n = snap_snapshot_vendor_boot();
+    if (sys_mounted) umount("/sys");
+    if (proc_mounted) umount("/proc");
+    if (snap_has_vendor_boot_dump()) return 0;
+    return n > 0 ? 0 : 1;
+}
+
 int snapshot_run(const char* manifest_path, const char* snap_dir) {
     g_ok = 0;
     g_fail = 0;
     g_snap_dir = snap_dir;
     snap_manifest_pass(manifest_path);
-    snap_snapshot_vendor_boot();
+    /* Block dump is best-effort here (first stage: no sysfs/UFS yet);
+     * the dosnapshot at second-stage entry completes it. A missing dump
+     * must not fail the ramdisk pass, so the count is intentionally
+     * not folded into g_fail. */
+    (void)snap_snapshot_vendor_boot();
     return g_fail > 0 ? 1 : 0;
 }

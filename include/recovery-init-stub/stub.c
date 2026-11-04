@@ -57,7 +57,7 @@ static void fox_klog(const char* s);
 
 /* Stub version tag. Bump on every behavior change so pstore always tells
  * exactly which stub ran — never trust build dates or hashes from memory. */
-#define FOX_STUB_VERSION "1.25"
+#define FOX_STUB_VERSION "1.26"
 
 static const char kFoxInit[] = "/system/bin/fox.init";
 /* Magisk hexpatch canary: the INTENTIONAL single 16-byte "/system/bin/init"
@@ -164,6 +164,10 @@ static int run_child(const char* prog, char* const argv[]) {
             continue;
         }
         if (r == 0) {
+            eof = 1;
+        } else if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            /* Persistent pipe error (not a transient empty-pipe/EINTR):
+             * no more data will ever arrive, do not spin forever. */
             eof = 1;
         }
         if (!child_done) {
@@ -337,15 +341,11 @@ static int fox_canary_changed(const char* v) {
  * re-entry and already-patched files), -1 on IO error. The 16B search
  * pattern is assembled at runtime from short parts, so it can never
  * occur in this binary. Pure file logic, host-testable. */
-static int fox_patch_file(const char* path, const char newpath[16]) {
-    char from[16];
+static int fox_replace_16(const char* path, const char from[16], const char to[16]) {
     struct stat st;
     unsigned char* buf;
     int fd;
     size_t i, count = 0, got = 0;
-    memcpy(from, "/system", 7);
-    memcpy(from + 7, "/bin", 4);
-    memcpy(from + 11, "/init", 5);
     if (stat(path, &st) != 0) return -1;
     if (st.st_size < 16 || st.st_size > (off_t)(32 * 1024 * 1024)) return -1;
     buf = (unsigned char*)malloc((size_t)st.st_size);
@@ -365,7 +365,7 @@ static int fox_patch_file(const char* path, const char newpath[16]) {
     if (got != (size_t)st.st_size) { free(buf); return -1; }
     for (i = 0; i + 16 <= (size_t)st.st_size; i++) {
         if (memcmp(buf + i, from, 16) == 0) {
-            memcpy(buf + i, newpath, 16);
+            memcpy(buf + i, to, 16);
             count++;
         }
     }
@@ -391,16 +391,61 @@ static int fox_patch_file(const char* path, const char newpath[16]) {
     return (int)count;
 }
 
+/* Runtime-assembled stock path (short parts only: the 16B magisk
+ * pattern can never occur in this TU, not even inside the checker). */
+static void assemble_stock_init_16(char out[16]) {
+    memcpy(out, "/system", 7);
+    memcpy(out + 7, "/bin", 4);
+    memcpy(out + 11, "/init", 5);
+}
+
+static int fox_patch_file(const char* path, const char newpath[16]) {
+    char stock[16];
+    assemble_stock_init_16(stock);
+    return fox_replace_16(path, stock, newpath);
+}
+
+/* Entry stage of this stub invocation (dual first/second stage). */
+enum stub_stage {
+    STAGE_FIRST = 0,
+    STAGE_SECOND = 1,
+    STAGE_APPLET = 2,
+};
+
+/* Detect the stage BEFORE any /dev or stdio work. Pixel 6 (no
+ * init_boot): the kernel calls the stub first with argc == 1 and an
+ * empty /dev. Pixel 7+ (init_boot): the stock first stage already ran
+ * (/proc or /sys visible) or re-enters with selinux_setup/second_stage
+ * args. Non-PID-1 applet exec (ueventd/watchdogd symlink) is separate. */
+static enum stub_stage detect_stage(int argc, char** argv) {
+    if (getpid() != 1) {
+        return STAGE_APPLET;
+    }
+    if (argc > 1 && argv[1] != NULL) {
+        return STAGE_SECOND;
+    }
+    if (access("/proc/cmdline", R_OK) == 0 || access("/sys/class/block", R_OK) == 0) {
+        return STAGE_SECOND;
+    }
+    return STAGE_FIRST;
+}
+
 /* Magisk-compat re-patch, called from exec_real() on every branch: if the
  * canary was rewritten (magisk hexpatched this stub), apply the same
  * 16->16 substitution to the fox.init FILE so stock first-stage init
  * chain-loads magiskinit as second stage exactly like on stock+magisk.
- * Idempotent (second run finds no stock pattern). Fail-safe: any doubt
- * (non-path value, missing file) leaves fox.init pristine -> plain
- * unrooted boot instead of a brick. Best-effort, never fatal. */
-static void fox_maybe_repatch(void) {
+ * Idempotent. Fail-safe: any doubt leaves fox.init pristine -> plain
+ * unrooted boot instead of a brick. Best-effort, never fatal.
+ *
+ * Bidirectional: the forward patch is only valid before magiskinit runs
+ * (first stage). On second-stage entry magiskinit has already consumed
+ * itself, so a stale forward patch would make SetupSelinux exec a gone
+ * /data/magiskinit for second_stage (panic): reverse it to stock, but
+ * only when the target is actually gone (a live chain is left alone). */
+static void fox_maybe_repatch(enum stub_stage stage) {
     char cur[17];
     char newpath[16];
+    char stock[16];
     char line[48];
     int n;
     canary_value(cur);
@@ -415,23 +460,47 @@ static void fox_maybe_repatch(void) {
         return;
     }
     memcpy(newpath, cur, 16);
-    n = fox_patch_file(kFoxInit, newpath);
+    if (stage == STAGE_FIRST && access(cur, X_OK) == 0) {
+        n = fox_patch_file(kFoxInit, newpath);
+        if (n > 0) {
+            fox_log("fox: fox.init patched for first-stage magisk\n");
+        } else if (n == 0) {
+            fox_log("fox: fox.init already patched, skipping\n");
+        } else {
+            fox_log("fox: fox.init re-patch IO failed, pristine boot\n");
+        }
+        return;
+    }
+    if (access(cur, X_OK) == 0) {
+        /* Second stage with a live magisk chain: leave it alone. */
+        fox_log("fox: magisk target alive, leaving fox.init\n");
+        return;
+    }
+    assemble_stock_init_16(stock);
+    n = fox_replace_16(kFoxInit, newpath, stock);
     if (n > 0) {
-        fox_log("fox: fox.init re-patched for magisk compat\n");
+        fox_log("fox: fox.init restored to stock init path\n");
     } else if (n == 0) {
-        fox_log("fox: fox.init already patched, skipping\n");
+        fox_log("fox: fox.init already stock, skipping\n");
     } else {
-        fox_log("fox: fox.init re-patch IO failed, pristine boot\n");
+        fox_log("fox: fox.init restore IO failed, pristine boot\n");
     }
 }
 
-static void exec_real(int argc, char** argv, char** envp) {
+static void exec_real(enum stub_stage stage, int argc, char** argv, char** envp) {
     (void)argc;
-    fox_klog("exec_real: handing off to fox.init\n");
-    fox_maybe_repatch();
+    if (stage == STAGE_SECOND && path_exists(kSnapshotManifest)) {
+        /* UFS drivers are up by second stage: finish the vendor_boot
+         * dump if first stage found an empty /sys/class/block. */
+        (void)snapshot_vendor_boot_only();
+    }
+    if (stage != STAGE_APPLET) {
+        fox_klog("exec_real: handing off to fox.init\n");
+        fox_maybe_repatch(stage);
+    }
     execve(kFoxInit, argv, envp);
-    /* execve returns only on error (ENOENT etc.): nothing sane left to do. */
-    fox_klog("exec_real: execve fox.init failed, rebooting\n");
+    fox_klog("exec_real: execve fox.init failed\n");
+    if (stage == STAGE_APPLET) _exit(127);
     reboot_bootloader();
 }
 
@@ -583,8 +652,23 @@ static void fox_check_lgz(void) {
 }
 
 int main(int argc, char** argv, char** envp) {
-    fox_init_dev_and_stdio();
-    fox_klog("main: stub " FOX_STUB_VERSION " start\n");
+    enum stub_stage stage = detect_stage(argc, argv);
+    /* Applet exec (ueventd/watchdogd symlink): never touch /dev, never
+     * reboot — hand off to fox.init (which dispatches by argv[0]) and
+     * exit if the exec fails. */
+    if (stage == STAGE_APPLET) {
+        exec_real(stage, argc, argv, envp);
+    }
+    if (stage == STAGE_FIRST) {
+        /* First stage (Pixel 6 without init_boot): /dev is empty. */
+        fox_init_dev_and_stdio();
+        fox_klog("main: stub " FOX_STUB_VERSION " start (stage=first)\n");
+    } else {
+        /* Second stage (Pixel 7+ after stock first_stage_init, or a
+         * selinux_setup/second_stage re-entry): /dev is already live,
+         * do not rebuild it. */
+        fox_klog("main: stub " FOX_STUB_VERSION " start (stage=second)\n");
+    }
     /* Environment dump: argv, uid/gid, cwd and the environment block.
      * Everything the child will inherit, visible in pstore. Bounded:
      * at most 24 vars, values truncated, so a huge env cannot flood. */
@@ -666,13 +750,13 @@ int main(int argc, char** argv, char** envp) {
     }
     if (path_exists(kMarkerRoot) || path_exists(kMarkerEtc)) {
         fox_klog("main: unpack marker present, fast path\n");
-        exec_real(argc, argv, envp);
+        exec_real(stage, argc, argv, envp);
     }
     fox_klog("main: no markers\n");
     /* 2. Real binary present without markers (markers lost, unpack done). */
     if (path_exists(kFoxInit)) {
         fox_klog("main: fox.init present without markers\n");
-        exec_real(argc, argv, envp);
+        exec_real(stage, argc, argv, envp);
     }
     fox_klog("main: fox.init missing\n");
 
@@ -810,7 +894,7 @@ int main(int argc, char** argv, char** envp) {
      * falling through (covers markers-lost and just-unpacked alike). */
     if (path_exists(kFoxInit)) {
         fox_klog("main: fox.init present after unpack\n");
-        exec_real(argc, argv, envp);
+        exec_real(stage, argc, argv, envp);
     }
     fox_klog("main: fox.init still missing\n");
 

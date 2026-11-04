@@ -11,3 +11,9 @@
 #pragma once
 
 int snapshot_run(const char* manifest_path, const char* snap_dir);
+
+/* Block-device pass only (vendor_boot dump). For second-stage entry
+ * when UFS drivers are up: skips work if a dump already exists,
+ * mounts /proc and /sys on demand (unmounting only what it mounted).
+ * Returns 0 if at least one image is present afterwards. */
+int snapshot_vendor_boot_only(void);

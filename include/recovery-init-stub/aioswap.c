@@ -68,20 +68,28 @@ static void aio_write(int fd, const char* s, size_t len) {
 }
 
 static void aio_log(const char* s) {
+    /* Single write per sink: for /dev/kmsg each write() is one kernel
+     * ring record, so tag+message must be glued (like fox_klog) or the
+     * line splits in pstore and burns the devkmsg ratelimit twice. */
+    static const char ktag[] = "<6>ofx-aio: ";
+    static const char ftag[] = "ofx-aio: ";
+    char kbuf[256];
     size_t len = strlen(s);
-    /* Prefix once per line batch: caller passes complete lines. */
+    size_t tlen = sizeof(ktag) - 1;
+    size_t copy = len < sizeof(kbuf) - 1 - tlen ? len : sizeof(kbuf) - 1 - tlen;
+    memcpy(kbuf, ktag, tlen);
+    memcpy(kbuf + tlen, s, copy);
     if (kmsg_fd < 0) {
         kmsg_fd = open(KMSG, O_WRONLY | O_CLOEXEC);
     }
     if (kmsg_fd >= 0) {
-        aio_write(kmsg_fd, "ofx-aio: ", 9);
-        aio_write(kmsg_fd, s, len);
+        aio_write(kmsg_fd, kbuf, tlen + copy);
     }
     if (log_fd < 0) {
         log_fd = open(AIO_LOG, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     }
     if (log_fd >= 0) {
-        aio_write(log_fd, "ofx-aio: ", 9);
+        aio_write(log_fd, ftag, sizeof(ftag) - 1);
         aio_write(log_fd, s, len);
     }
     if (log_root_fd < 0) {
@@ -89,20 +97,26 @@ static void aio_log(const char* s) {
             open(AIO_LOG_ROOT, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     }
     if (log_root_fd >= 0) {
-        aio_write(log_root_fd, "ofx-aio: ", 9);
+        aio_write(log_root_fd, ftag, sizeof(ftag) - 1);
         aio_write(log_root_fd, s, len);
     }
 }
 
-/* Read a small text file into buf (NUL-terminated). Returns bytes or -1. */
+/* Read a small text file into buf (NUL-terminated). Returns bytes or
+ * -1. A file that does not fit is an error, never a silent truncation
+ * (sed_file would otherwise rewrite the target from cut content). */
 static ssize_t read_file(const char* path, char* buf, size_t cap) {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     ssize_t total = 0;
-    if (fd < 0) return -1;
+    if (fd < 0 || cap == 0) return -1;
     for (;;) {
         ssize_t r;
-        if ((size_t)total >= cap - 1) break;
-        r = read(fd, buf + total, cap - 1 - (size_t)total);
+        if ((size_t)total >= cap) {
+            /* Buffer full — refuse the truncated file. */
+            close(fd);
+            return -1;
+        }
+        r = read(fd, buf + total, cap - (size_t)total);
         if (r < 0) {
             if (errno == EINTR) continue;
             total = -1;
@@ -232,7 +246,9 @@ static void release_proc(void) {
     }
 }
 
-/* <key><value> from /proc/cmdline (caller ensures /proc). */
+/* <key><value> from /proc/cmdline (caller ensures /proc). The key must
+ * start at a token boundary (line start or whitespace) so a longer
+ * token ending in the key never matches. */
 static int cmdline_value(const char* key, char* out, size_t cap) {
     char cmd[4096];
     ssize_t len;
@@ -241,8 +257,15 @@ static int cmdline_value(const char* key, char* out, size_t cap) {
     size_t klen = strlen(key);
     len = read_file("/proc/cmdline", cmd, sizeof(cmd));
     if (len <= 0) return -1;
-    p = strstr(cmd, key);
-    if (p == NULL) return -1;
+    p = cmd;
+    for (;;) {
+        p = strstr(p, key);
+        if (p == NULL) return -1;
+        if (p == cmd || p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\n') {
+            break;
+        }
+        p += klen;
+    }
     p += klen;
     n = 0;
     while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' && n + 1 < cap) {
@@ -590,10 +613,16 @@ swapped_family:
                 break;
             }
             {
+                /* Guard the join: if the file lacks a trailing newline,
+                 * the new prop would glue onto the previous line and
+                 * break both. */
+                ssize_t clen = (ssize_t)strlen(cur);
+                int need_nl = (clen > 0 && cur[clen - 1] != '\n');
                 int fd = open(props[k], O_WRONLY | O_APPEND | O_CLOEXEC);
                 if (fd >= 0) {
                     char line[64];
-                    snprintf(line, sizeof(line), "%s%s\n", KM_PROP, keymint);
+                    snprintf(line, sizeof(line), "%s%s%s\n",
+                             need_nl ? "\n" : "", KM_PROP, keymint);
                     aio_write(fd, line, strlen(line));
                     close(fd);
                     aio_log("keymint prop set\n");
@@ -604,4 +633,7 @@ swapped_family:
     }
 
     aio_log("stub swap done\n");
+    if (kmsg_fd >= 0) { close(kmsg_fd); kmsg_fd = -1; }
+    if (log_fd >= 0) { close(log_fd); log_fd = -1; }
+    if (log_root_fd >= 0) { close(log_root_fd); log_root_fd = -1; }
 }
