@@ -489,24 +489,32 @@ static int flag_read_path(char out16[16]) {
  * only when the target is actually gone (a live chain is left alone). */
 static void fox_maybe_repatch(enum stub_stage stage) {
     char cur[17];
-    char newpath[16];
+    char rev[17];
+    char newpath[16] = {0};
     char stock[16];
     char line[48];
+    int changed, have_flag;
     int n;
     canary_value(cur);
-    if (!fox_canary_changed(cur)) return;
-    /* "fox: canary=" is 12 bytes (no NUL inside the record). */
-    memcpy(line, "fox: canary=", 12);
-    memcpy(line + 12, cur, 16);
-    line[28] = '\n';
-    line[29] = '\0';
-    fox_log(line);
-    if (cur[0] != '/') {
-        fox_log("fox: canary not a path, skipping re-patch\n");
-        return;
+    changed = fox_canary_changed(cur);
+    have_flag = (flag_read_path(rev) == 0);
+    rev[16] = '\0';
+    if (!changed && !have_flag) return;
+
+    if (changed) {
+        /* "fox: canary=" is 12 bytes (no NUL inside the record). */
+        memcpy(line, "fox: canary=", 12);
+        memcpy(line + 12, cur, 16);
+        line[28] = '\n';
+        line[29] = '\0';
+        fox_log(line);
+        if (cur[0] != '/') {
+            fox_log("fox: canary not a path, skipping re-patch\n");
+            if (!have_flag) return;
+        }
+        memcpy(newpath, cur, 16);
     }
-    memcpy(newpath, cur, 16);
-    if (stage == STAGE_FIRST && access(cur, X_OK) == 0) {
+    if (stage == STAGE_FIRST && changed && cur[0] == '/' && access(cur, X_OK) == 0) {
         n = fox_patch_file(kFoxInit, newpath);
         if (n > 0) {
             flag_write_path(newpath);
@@ -522,10 +530,11 @@ static void fox_maybe_repatch(enum stub_stage stage) {
         /* Reverse source of truth: the recorded forward path. The canary
          * reads the live stub image, which a mid-boot restore could have
          * reverted to stock while fox.init stays patched. */
-        char rev[16];
-        if (flag_read_path(rev) != 0) {
+        if (!have_flag) {
             memcpy(rev, newpath, 16);
+            rev[16] = '\0';
         }
+        if (rev[0] != '/') return;
         if (access(rev, X_OK) == 0) {
             /* Live magisk chain: leave fox.init alone. */
             fox_log("fox: magisk target alive, leaving fox.init\n");
