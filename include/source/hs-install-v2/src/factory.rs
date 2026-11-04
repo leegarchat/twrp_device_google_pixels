@@ -675,8 +675,11 @@ pub fn run(a: run::Args) -> i32 {
                     }
                     // Zip bitrot check: CRC32 over the raw entry bytes
                     // must match the central directory (catches corrupt
-                    // downloads that sha256-vs-node cannot see).
+                    // downloads that sha256-vs-node cannot see). Drain to
+                    // raw EOF first: sparse trailers (CRC chunks) and
+                    // decoder buffering sit past the expanded size.
                     if let Some(exp) = expect_crc {
+                        let _ = std::io::copy(&mut src, &mut std::io::sink());
                         let got_crc = src.finish_crc();
                         if got_crc != exp {
                             return Err(format!(
@@ -847,6 +850,7 @@ impl<R: Read> Read for TeeCrc<R> {
 struct SparseDecoder<R: Read> {
     inner: R,
     blk_sz: u64,
+    chunk_hdr_sz: u64,
     chunks_left: u32,
     out_left: u64,
     fill: [u8; 4],
@@ -881,6 +885,17 @@ impl<R: Read> SparseDecoder<R> {
         self.read_u16(&mut r)?;
         let chunk_sz = self.read_u32()? as u64;
         let total_sz = self.read_u32()? as u64;
+        // Honor extended chunk headers (spec: chunk_hdr_sz >= 12).
+        let extra = self.chunk_hdr_sz.saturating_sub(12);
+        if extra > 0 {
+            let mut left = extra;
+            let mut tmp = [0u8; 32];
+            while left > 0 {
+                let n = std::cmp::min(left, tmp.len() as u64) as usize;
+                self.inner.read_exact(&mut tmp[..n])?;
+                left -= n as u64;
+            }
+        }
         self.chunks_left -= 1;
         match ctype {
             0xCAC1 => {
@@ -960,12 +975,29 @@ impl<R: Read> Read for SparseDecoder<R> {
             self.blk_sz = u32::from_le_bytes([h[12], h[13], h[14], h[15]]) as u64;
             let total_chunks =
                 u32::from_le_bytes([h[20], h[21], h[22], h[23]]);
+            let file_hdr_sz = u16::from_le_bytes([h[8], h[9]]) as u64;
+            let chunk_hdr_sz = u16::from_le_bytes([h[10], h[11]]) as u64;
             if self.blk_sz == 0 || total_chunks == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "sparse bad header",
                 ));
             }
+            if file_hdr_sz < 28 || file_hdr_sz > 256 || chunk_hdr_sz < 12 || chunk_hdr_sz > 64 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "sparse bad header sizes",
+                ));
+            }
+            // Skip extended file-header bytes, if any.
+            let mut left = file_hdr_sz - 28;
+            let mut tmp = [0u8; 64];
+            while left > 0 {
+                let n = std::cmp::min(left, tmp.len() as u64) as usize;
+                self.inner.read_exact(&mut tmp[..n])?;
+                left -= n as u64;
+            }
+            self.chunk_hdr_sz = chunk_hdr_sz;
             self.chunks_left = total_chunks;
             self.header_done = true;
         }
@@ -998,42 +1030,19 @@ impl<R: Read> Read for SparseDecoder<R> {
 fn open_source(zip_path: &str, src: &PartSrc) -> Result<(SrcReader, Option<u32>), String> {
     match src {
         PartSrc::Inner { off, comp, size, stored, crc, sparse } => {
-            let f = File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
-            // Ranged pread slice, then optional inflate.
-            struct R {
-                f: File,
-                pos: u64,
-                left: u64,
-            }
-            impl Read for R {
-                fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-                    if self.left == 0 {
-                        return Ok(0);
-                    }
-                    let n = std::cmp::min(self.left, out.len() as u64) as usize;
-                    self.f.seek(SeekFrom::Start(self.pos)).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                    })?;
-                    self.f.read_exact(&mut out[..n]).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                    })?;
-                    self.pos += n as u64;
-                    self.left -= n as u64;
-                    Ok(n)
-                }
-            }
-            // Note: PartSrc.size is the EXPANDED size; the raw range is
-            // comp bytes for DEFLATE, raw file bytes for STORED. STORED
-            // raw length equals the packed (sparse-or-raw) file size,
-            // which read_prefix already consumed identically; bound the
-            // range by comp when sparse (packed size), else size.
-            let raw_left = if *stored && *sparse { *comp } else if *stored { *size } else { *comp };
-            let r = R { f, pos: *off, left: raw_left };
+            let mut f = File::open(zip_path).map_err(|e| format!("open zip: {e}"))?;
+            // Single seek to the entry data, then a bounded Take: no
+            // lseek per chunk. Raw range is packed bytes (comp for
+            // DEFLATE; for STORED packed == file size, except sparse
+            // where size holds the EXPANDED size).
+            f.seek(SeekFrom::Start(*off))
+                .map_err(|e| format!("seek zip: {e}"))?;
+            let raw_left = if *stored && !*sparse { *size } else { *comp };
             let raw: Box<dyn Read> = if *stored {
-                Box::new(r)
+                Box::new(f.take(raw_left))
             } else {
                 Box::new(flate2::bufread::DeflateDecoder::new(
-                    std::io::BufReader::with_capacity(1 << 16, r),
+                    std::io::BufReader::with_capacity(1 << 16, f.take(raw_left)),
                 ))
             };
             let tee = TeeCrc { inner: raw, crc: fzip::Crc::new() };
@@ -1041,6 +1050,7 @@ fn open_source(zip_path: &str, src: &PartSrc) -> Result<(SrcReader, Option<u32>)
                 Ok((SrcReader::Sparse(SparseDecoder {
                     inner: tee,
                     blk_sz: 0,
+                    chunk_hdr_sz: 12,
                     chunks_left: 0,
                     out_left: 0,
                     fill: [0, 0, 0, 0],
@@ -1053,30 +1063,10 @@ fn open_source(zip_path: &str, src: &PartSrc) -> Result<(SrcReader, Option<u32>)
             }
         }
         PartSrc::Fbpk { file, off, size } => {
-            let f = File::open(file).map_err(|e| format!("open fbpk: {e}"))?;
-            struct P {
-                f: File,
-                pos: u64,
-                left: u64,
-            }
-            impl Read for P {
-                fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-                    if self.left == 0 {
-                        return Ok(0);
-                    }
-                    let n = std::cmp::min(self.left, out.len() as u64) as usize;
-                    self.f.seek(SeekFrom::Start(self.pos)).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                    })?;
-                    self.f.read_exact(&mut out[..n]).map_err(|e| {
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                    })?;
-                    self.pos += n as u64;
-                    self.left -= n as u64;
-                    Ok(n)
-                }
-            }
-            let raw: Box<dyn Read> = Box::new(P { f, pos: *off, left: *size });
+            let mut f = File::open(file).map_err(|e| format!("open fbpk: {e}"))?;
+            f.seek(SeekFrom::Start(*off))
+                .map_err(|e| format!("seek fbpk: {e}"))?;
+            let raw: Box<dyn Read> = Box::new(f.take(*size));
             let tee = TeeCrc { inner: raw, crc: fzip::Crc::new() };
             // FBPK blobs have no zip CRC: no expected value.
             Ok((SrcReader::Plain(tee), None))
@@ -1093,6 +1083,8 @@ mod sparse_tests {
         let mut h = vec![0u8; 28];
         h[0..4].copy_from_slice(&0xED26FF3Au32.to_le_bytes());
         h[4..6].copy_from_slice(&1u16.to_le_bytes());
+        h[8..10].copy_from_slice(&28u16.to_le_bytes());
+        h[10..12].copy_from_slice(&12u16.to_le_bytes());
         h[12..16].copy_from_slice(&blk_sz.to_le_bytes());
         h[16..20].copy_from_slice(&blks.to_le_bytes());
         h[20..24].copy_from_slice(&chunks.to_le_bytes());
@@ -1119,6 +1111,7 @@ mod sparse_tests {
         let mut dec = SparseDecoder {
             inner: &img[..],
             blk_sz: 0,
+            chunk_hdr_sz: 12,
             chunks_left: 0,
             out_left: 0,
             fill: [0; 4],

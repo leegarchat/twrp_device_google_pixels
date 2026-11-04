@@ -43,6 +43,7 @@ pub fn query(siw: &str, booted: char) -> Result<LiveState, String> {
     // Live group name holding the TARGET slot's residents (slot-suffixed
     // on these devices, e.g. google_dynamic_partitions_a).
     let mut target_group = String::new();
+    let mut current_group = String::new();
     for mslot in ["0", "1"] {
         let out = Command::new(siw)
             .args(["info", "-f", "json", "-s", mslot, SUPER_BLOCK])
@@ -68,6 +69,9 @@ pub fn query(siw: &str, booted: char) -> Result<LiveState, String> {
             }
             if p.name.ends_with(&format!("_{booted}")) {
                 st.current.insert(p.name.clone(), p.size);
+                if current_group.is_empty() && !p.group.is_empty() {
+                    current_group = p.group.clone();
+                }
             } else if p.name.ends_with("_a") || p.name.ends_with("_b") {
                 st.target.insert(p.name.clone(), p.size);
                 if target_group.is_empty() && !p.group.is_empty() {
@@ -82,10 +86,13 @@ pub fn query(siw: &str, booted: char) -> Result<LiveState, String> {
         }
     }
     if target_group.is_empty() {
-        // Empty target slot (wiped super, first flash ever): fall back
-        // to the conventional slot-suffixed group name so the rebuild
-        // has a group to create into instead of failing closed.
-        target_group = format!("google_dynamic_partitions_{target}");
+        // Empty target slot: derive the group from the live current slot
+        // by swapping the suffix (same family, other slot). The
+        // conventional name survives only for a fully empty super.
+        target_group = current_group
+            .strip_suffix(&format!("_{booted}"))
+            .map(|prefix| format!("{prefix}_{target}"))
+            .unwrap_or_else(|| format!("google_dynamic_partitions_{target}"));
     }
     st.target_group = target_group;
     Ok(st)
