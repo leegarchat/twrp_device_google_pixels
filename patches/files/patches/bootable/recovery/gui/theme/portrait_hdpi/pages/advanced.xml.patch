@@ -74,7 +74,7 @@
  				<listitem name="{@auto_reflashtwrp_chk}">
  					<condition var1="fox_branch" op="&gt;=" var2="11"/>
  					<condition var1="fox_vab_device" var2="1"/>
-@@ -922,6 +940,26 @@
+@@ -922,6 +940,30 @@
  					<condition var1="fox_disable_reflash_current" op="!=" var2="1"/>
  					<data variable="tw_auto_reflashtwrp"/>
  				</listitem>
@@ -85,6 +85,10 @@
 +				<listitem name="{@high_speed_flash_chk}">
 +					<condition var1="tw_has_boot_slots" var2="1"/>
 +					<data variable="tw_high_speed_flash"/>
++				</listitem>
++				<listitem name="{@disable_avb_chk}">
++					<condition var1="tw_has_boot_slots" var2="1"/>
++					<data variable="tw_disable_avb"/>
 +				</listitem>
 +				<listitem name="{@unmount_vendor_install}">
 +					<data variable="tw_unmount_vendor"/>
