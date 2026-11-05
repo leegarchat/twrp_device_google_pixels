@@ -65,8 +65,10 @@ const TYPEC_POWER_ROLE: &str = "/sys/class/typec/port0/power_role";
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
 /// VBUS force voter (gvotable debugfs election `CHARGER_MODE`, same voter
 /// name as laguna/zuma; created at runtime by the charger driver —
-/// absent = no force available). Verified value 49 on max77759 AND
-/// max77779 (`GBMS_USB_OTG_ON` -> otg_on -> OTG_BOOST_ON).
+/// absent = no force available). Value 49 is the OTG-mode vote (legacy
+/// lineage; the live election logs it as `CHARGER_MODE=0x31` from the
+/// `OTG_ON`/`BMS_VOTER`/`DEFENDER_ENABLED_VOTER` path in
+/// google-bms/max77779-usecase).
 const CHARGER_VALUE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value";
 const CHARGER_ACTIVE: &str = "/sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active";
 /// PC-attached sensor: input power present (`usb/*` only — the TCPC
@@ -89,6 +91,10 @@ const SHIM_SETTLE_SECS: u64 = 2;
 /// `modules.load`) normally autoloads all of these before we run, so
 /// this is a safety net. `aoc_core`/`aoc_usb_driver` intentionally
 /// ABSENT (shim owns the vote). Missing files are skipped LOUDLY.
+/// NOTE: `google-bms` + `max77779-usecase` are not optional extras —
+/// they CREATE the `CHARGER_MODE` election (BMS-usecase stack). Without
+/// them the voter node never appears and the 49-force (like the laguna
+/// path) is dead on arrival.
 const STOCK_USB_CHAIN: &[&str] = &[
     "gvotable",
     "google_icc",
@@ -101,6 +107,18 @@ const STOCK_USB_CHAIN: &[&str] = &[
     "tcpci_max777x9_spmi",
     "max77779-charger",
     "max77779-charger-spmi",
+    // CHARGER_MODE creators, dep order (see modules.dep): pmic and
+    // leaf deps first, then the BMS core, then the usecase voter.
+    "max77779_pmic",
+    "logbuffer",
+    "max77759_helper",
+    "max77759_contaminant",
+    "max77779_contaminant",
+    "max777x9_contaminant",
+    "bc_max77759",
+    "google_tcpci_shim",
+    "google-bms",
+    "max77779-usecase",
     "google-charger",
 ];
 /// First-stage ramdisk first (see above).
@@ -678,5 +696,9 @@ mod tests {
         }
         assert!(STOCK_USB_CHAIN.contains(&"google-role-sw"));
         assert!(STOCK_USB_CHAIN.contains(&"dwc3-google"));
+        // CHARGER_MODE creators (BMS-usecase stack): without these the
+        // voter node never appears and the VBUS force is dead.
+        assert!(STOCK_USB_CHAIN.contains(&"google-bms"));
+        assert!(STOCK_USB_CHAIN.contains(&"max77779-usecase"));
     }
 }
