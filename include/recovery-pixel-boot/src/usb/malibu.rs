@@ -57,6 +57,10 @@ const SOURCE_PSY: &str = "tcpm-source-psy-spmi-max77759tcpc";
 /// UDC fallback: base DTB `dwc3@a210000` under `usb3@a200000`.
 /// Used when `/sys/class/udc` is empty (never blindly: the live class wins).
 const UDC_FALLBACK: &str = "a210000.dwc3";
+/// TYPEC power role: requesting `source` powers VBUS for the attached
+/// drive. malibu has no CHARGER_MODE voter, so this is the only VBUS
+/// path (standard typec operation, best-effort).
+const TYPEC_POWER_ROLE: &str = "/sys/class/typec/port0/power_role";
 /// UDC gadget path (unbind on host switch, rebind on device switch).
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
 /// VBUS force voter (gvotable debugfs election `CHARGER_MODE`, same voter
@@ -308,6 +312,25 @@ fn switch_to_host(current: &mut String) {
             }
         }
         None => info("host: no usb_role switch found"),
+    }
+    // VBUS power: malibu has no CHARGER_MODE voter, so the typec
+    // power role is the only 5V path for the drive. Standard operation,
+    // best-effort, logged; never fails the switch.
+    {
+        let pr = Path::new(TYPEC_POWER_ROLE);
+        if pr.exists() {
+            match std::fs::read_to_string(pr) {
+                Ok(cur) if cur.trim() == "source" => {
+                    info("host: power_role already source");
+                }
+                _ => match std::fs::write(pr, b"source\n") {
+                    Ok(()) => info("host: power_role=source requested"),
+                    Err(e) => info(&format!("host: power_role write FAILED: {e}")),
+                },
+            }
+        } else {
+            info("host: no typec power_role node");
+        }
     }
     if Path::new(CHARGER_VALUE).exists() {
         info("forcing VBUS via gvotable CHARGER_MODE");
