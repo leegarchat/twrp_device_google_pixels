@@ -151,14 +151,18 @@ pub fn run(a: run::Args) -> i32 {
     };
     // Device from the inner name: image-<device>-*.zip must equal the
     // live device (hard gate: family siblings share require lines, but
-    // the file set is per-device).
+    // the file set is per-device). Beta/dp Mayflower builds carry a
+    // channel suffix (image-<device>_beta-*, image-<device>_dp-*):
+    // strip it, codenames never contain '_' so this can't collide.
     let inner_dev = inner_e
         .name
         .rsplit('/')
         .next()
         .unwrap_or("")
         .strip_prefix("image-")
-        .and_then(|s| s.split('-').next().map(|x| x.to_string()))
+        .and_then(|s| s.split('-').next())
+        .and_then(|d| d.split('_').next())
+        .map(|x| x.to_string())
         .unwrap_or_default();
     if inner_dev != device {
         return fail(
