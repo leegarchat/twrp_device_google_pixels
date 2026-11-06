@@ -52,6 +52,47 @@ fn sparse_expanded(h: &[u8]) -> Option<u64> {
     total_blks.checked_mul(blk_sz)
 }
 
+/// Device codename from AVB vbmeta fingerprint props
+/// (`com.android.build.*.fingerprint = google/<product>/<device>:...`).
+/// The AOSP build always embeds these (stock, beta, custom), unlike the
+/// zip filename. Device = SECOND field: product varies
+/// (`calyx_shiba`, `lineage_shiba`) while device stays the codename.
+fn avb_device(buf: &[u8]) -> Option<String> {
+    fn is_token(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_'
+    }
+    let mut i = 0;
+    while i + 7 < buf.len() {
+        if &buf[i..i + 7] == b"google/" {
+            let mut j = i + 7;
+            while j < buf.len() && is_token(buf[j]) {
+                j += 1;
+            }
+            let product_end = j;
+            if j < buf.len() && buf[j] == b'/' {
+                j += 1;
+                let dev_start = j;
+                while j < buf.len() && is_token(buf[j]) {
+                    j += 1;
+                }
+                if j > dev_start
+                    && j < buf.len()
+                    && buf[j] == b':'
+                    && product_end > i + 7
+                {
+                    if let Ok(dev) = std::str::from_utf8(&buf[dev_start..j]) {
+                        return Some(dev.to_string());
+                    }
+                }
+            }
+            i = j.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 struct FactoryPart {
     name: String,
     weight: u8,
@@ -149,11 +190,13 @@ pub fn run(a: run::Args) -> i32 {
         Ok(o) => o,
         Err(e) => return fail(&mut out, &format!("inner offset: {e}"), crate::EXIT_FAIL),
     };
-    // Device from the inner name: image-<device>-*.zip must equal the
-    // live device (hard gate: family siblings share require lines, but
-    // the file set is per-device). Beta/dp Mayflower builds carry a
-    // channel suffix (image-<device>_beta-*, image-<device>_dp-*):
-    // strip it, codenames never contain '_' so this can't collide.
+    // Gate 1 (filename): image-<device>-*.zip should name the live
+    // device (family siblings share require lines, but the file set is
+    // per-device). Beta/dp Mayflower builds carry a channel suffix
+    // (image-<device>_beta-*, image-<device>_dp-*): strip it, codenames
+    // never contain '_' so this can't collide. A mismatch here does NOT
+    // refuse yet — filenames are renameable, the inside of the archive
+    // arbitrates in gate 2 below.
     let inner_dev = inner_e
         .name
         .rsplit('/')
@@ -164,12 +207,11 @@ pub fn run(a: run::Args) -> i32 {
         .and_then(|d| d.split('_').next())
         .map(|x| x.to_string())
         .unwrap_or_default();
-    if inner_dev != device {
-        return fail(
-            &mut out,
-            &format!("factory is for '{inner_dev}' but device is '{device}': refusing"),
-            crate::EXIT_DEVICE_MISMATCH,
-        );
+    let filename_ok = inner_dev == device;
+    if !filename_ok {
+        out.log(&format!(
+            "factory filename says '{inner_dev}' but device is '{device}': deferring to vbmeta gate"
+        ));
     }
     // android-info.txt (tiny).
     let mut nested = match fzip::Zip::open_nested(std::path::Path::new(&a.zip), inner_off, inner_e.size) {
@@ -393,6 +435,55 @@ pub fn run(a: run::Args) -> i32 {
         parts.extend(extra);
     }
     out.log(&format!("factory parts: {}", parts.len()));
+
+    // Gate 2 (arbiter, content-based): the vbmeta fingerprint device
+    // must equal the live device. This decides over gate 1 (filename):
+    // names are renameable and carry channel suffixes, AVB props are
+    // build-stamped by AOSP itself. Runs before anything is written
+    // (no backup, no rebuild yet), so a refusal is free.
+    {
+        let vb_entry = wanted.get("vbmeta").map(|(_, _, e, _)| e.clone());
+        match vb_entry {
+            Some(e) => {
+                let mut vb_buf = Vec::new();
+                match nested.extract_to(&e, &mut vb_buf) {
+                    Ok(c) if c == e.crc => {}
+                    Ok(_) => return fail(&mut out, "vbmeta.img CRC mismatch", crate::EXIT_FAIL),
+                    Err(e) => return fail(&mut out, &format!("vbmeta.img: {e}"), crate::EXIT_FAIL),
+                }
+                match avb_device(&vb_buf) {
+                    Some(vd) if vd == device => {
+                        out.log(&format!("factory vbmeta device=[{vd}] verified"));
+                    }
+                    Some(vd) => {
+                        return fail(
+                            &mut out,
+                            &format!("factory is for '{vd}' (vbmeta) but device is '{device}': refusing"),
+                            crate::EXIT_DEVICE_MISMATCH,
+                        );
+                    }
+                    None => {
+                        return fail(
+                            &mut out,
+                            "vbmeta.img has no device fingerprint: refusing",
+                            crate::EXIT_DEVICE_MISMATCH,
+                        );
+                    }
+                }
+            }
+            None if !filename_ok => {
+                // No arbiter available and the name already disagrees.
+                return fail(
+                    &mut out,
+                    &format!("factory is for '{inner_dev}' but device is '{device}': refusing"),
+                    crate::EXIT_DEVICE_MISMATCH,
+                );
+            }
+            None => {
+                out.log("factory vbmeta gate skipped (no vbmeta.img in factory)");
+            }
+        }
+    }
 
     // --- 5. live super state + fit (same machinery as OTA) ---
     let live = match live::query(&siw, booted) {
@@ -1139,5 +1230,24 @@ mod sparse_tests {
         let mut not_sparse = vec![0u8; 28];
         not_sparse[0] = 0x58;
         assert!(sparse_expanded(&not_sparse).is_none());
+    }
+
+    #[test]
+    fn avb_device_second_field() {
+        // stock
+        let b = b"\x00Fcom.android.build.boot.fingerprint\x00google/shiba/shiba:17/CP3A.261005.005/16271449:user/release-keys\x00";
+        assert_eq!(avb_device(b), Some("shiba".to_string()));
+        // beta filename variant, clean inside
+        let b = b"xxx google/shiba_beta/shiba:17/ZZZ\x00";
+        assert_eq!(avb_device(b), Some("shiba".to_string()));
+        // custom: product != device
+        let b = b"Fcom.android.build.vendor_boot.fingerprint\x00google/lineage_shiba/shiba:17/CP2A.260605.016/eng.androi:user/dev-keys\x00";
+        assert_eq!(avb_device(b), Some("shiba".to_string()));
+        let b = b"\x00google/calyx_shiba/shiba:17/CP2A.260605.016/abc:user/release-keys\x00";
+        assert_eq!(avb_device(b), Some("shiba".to_string()));
+        // no fingerprint at all
+        assert_eq!(avb_device(b"plain bytes, no props here"), None);
+        // truncated tail (no colon yet)
+        assert_eq!(avb_device(b"google/shiba/shiba"), None);
     }
 }
