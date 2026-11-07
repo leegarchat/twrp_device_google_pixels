@@ -99,6 +99,15 @@ fn stock_roots(fam: &Family) -> Vec<PathBuf> {
     roots.iter().map(PathBuf::from).collect()
 }
 
+/// Hard block predicate, pure over the running kernel version.
+/// The 6.1-era panic (forced VBUS switch on a mismatched driver) cannot
+/// happen on 6.6+: GKI enforces module versions itself, every stock load
+/// here is strict-first, and force is only ever used for our own
+/// cross-version shim. Below 6.6 the block stays.
+pub fn hard_block_applies(major: u32, minor: u32) -> bool {
+    (major, minor) < (6, 6)
+}
+
 /// Collect up to `cap` .ko paths under `roots` (recursive), USB-hinted
 /// names first. Pure over enumerated file lists (testable); the live
 /// walk is [`collect_stock_kos`].
@@ -169,10 +178,10 @@ pub fn check(fam: &Family) -> Gate {
         info("gate: lsmod empty, no loaded modules — nothing version-sensitive in play — proceeding");
         return Gate::Proceed;
     }
-    let kernel_patch = match detect_kernel_env() {
+    let (kernel_major, kernel_minor, kernel_patch) = match detect_kernel_env() {
         Ok(e) => {
             info(&format!("gate: running kernel {}.{}.{}", e.major, e.minor, e.patch));
-            e.patch
+            (e.major, e.minor, e.patch)
         }
         Err(e) => {
             info(&format!("gate: uname failed ({e}), cannot prove mismatch — proceeding"));
@@ -210,6 +219,18 @@ pub fn check(fam: &Family) -> Gate {
                     None => dist.push((*p, 1)),
                 }
             }
+            // 6.6+: GKI enforces module versions itself and every stock
+            // load here is strict-first (force is only ever used for our
+            // own cross-version shim), so a file/kernel skew cannot panic
+            // the way the 5.10/6.1 Wild trees did. Downgrade to a loud
+            // warning and proceed; the hard block stays for older trees.
+            if !hard_block_applies(kernel_major, kernel_minor) {
+                info(&format!(
+                    "gate: skew kernel patch {kernel_patch} vs firmware {dist:?} on \
+                     {kernel_major}.{kernel_minor} — warning only, proceeding (strict loads fail safe)"
+                ));
+                return Gate::Proceed;
+            }
             info(&format!(
                 "gate: BLOCKED — kernel patch {kernel_patch} vs firmware {dist:?} \
                  (custom/newer kernel on older firmware?). Custom OTG stack stays OFF; \
@@ -224,6 +245,16 @@ pub fn check(fam: &Family) -> Gate {
 mod tests {
     use super::*;
     use crate::ko_picker::parse_loaded_modules;
+
+    #[test]
+    fn hard_block_only_below_66() {
+        assert!(hard_block_applies(5, 10));
+        assert!(hard_block_applies(5, 15));
+        assert!(hard_block_applies(6, 1));
+        assert!(!hard_block_applies(6, 6));
+        assert!(!hard_block_applies(6, 12));
+        assert!(!hard_block_applies(6, 18));
+    }
 
     #[test]
     fn loaded_modules_parsing() {

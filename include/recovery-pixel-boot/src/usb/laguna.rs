@@ -543,10 +543,12 @@ pub fn run_otg_patch() -> Result<(), String> {
         }
     }
 
-    // 3. The AOC vote (replaces the entire AoC/aocd stack).
+    // 3. The AOC vote. Best-effort on 6.6+: with host-mode-aoc-optional
+    // the stock DT carries host without it, and the election resolves
+    // on the TCPCI_COMB vote alone. A missing shim must not fail the
+    // whole patch (malibu parity).
     if !load_vote_shim() {
-        let _ = set_prop("sys.usb.patch_dwc3", "0");
-        return Err("laguna otg: vote shim unavailable".into());
+        info("laguna otg: vote shim unavailable, continuing without AOC vote");
     }
     set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
     info("OTG patch routine finished, daemon released (sys.usb.patch_dwc3=1)");
