@@ -149,6 +149,29 @@ pub fn run_otg_auto() -> ! {
     }
 }
 
+/// Ensure debugfs is mounted: the gvotable CHARGER_MODE voter (VBUS
+/// force) only exists under /sys/kernel/debug. Idempotent; best-effort
+/// (a restricted kernel may refuse — the caller logs and moves on).
+pub fn ensure_debugfs() {
+    if std::path::Path::new("/sys/kernel/debug/gvotables").exists() {
+        return;
+    }
+    // SAFETY: plain C mount(2) of a kernel pseudo-filesystem with NULL
+    // data; return value is the only effect, checked by the caller.
+    let rc = unsafe {
+        libc::mount(
+            c"debugfs".as_ptr(),
+            c"/sys/kernel/debug".as_ptr(),
+            c"debugfs".as_ptr(),
+            0,
+            std::ptr::null(),
+        )
+    };
+    if rc == 0 {
+        log_msg(TAG, "INFO", "debugfs mounted");
+    }
+}
+
 /// Consecutive identical VBUS ticks needed before a role switch.
 /// A dying drive glitches VBUS for a tick or two mid-transfer;
 /// acting on the first edge yanked the bus (and the gadget) out

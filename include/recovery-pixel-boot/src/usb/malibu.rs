@@ -350,6 +350,10 @@ fn switch_to_host(current: &mut String) {
             info("host: no typec power_role node");
         }
     }
+    // VBUS power: malibu has no CHARGER_MODE voter file by default —
+    // make sure debugfs is mounted first (the election only exists
+    // under /sys/kernel/debug), then force if present.
+    super::ensure_debugfs();
     if Path::new(CHARGER_VALUE).exists() {
         info("forcing VBUS via gvotable CHARGER_MODE");
         let _ = std::fs::write(CHARGER_VALUE, b"49\n");
@@ -501,6 +505,7 @@ pub fn run_otg_patch() -> Result<(), String> {
 
     // Stock USB chain from the LIVE firmware (dep order; first-stage
     // normally pre-loads all of it — this is a safety net).
+    super::ensure_debugfs();
     let mut chain_ok = true;
     for m in STOCK_USB_CHAIN {
         chain_ok &= insmod_stock(m);
