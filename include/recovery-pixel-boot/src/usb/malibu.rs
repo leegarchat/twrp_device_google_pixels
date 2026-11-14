@@ -51,9 +51,12 @@
 //! `typec_get_fw_cap` via kretprobe and promotes the capability block
 //! in place — `port->port_type` follows automatically, so the outcome
 //! is byte-identical to the compiled-in patch while touching only the
-//! public (KMI-guarded) `struct typec_capability`. The supervisor
-//! unbinds/binds the TCPC once per boot on sink ports (host intent,
-//! nothing mounted) so the caps re-read with the hook armed.
+//! public (KMI-guarded) `struct typec_capability`. On sink ports the
+//! supervisor asks the shim (via /proc, command "2") to release +
+//! re-attach the port0 parent once per boot (host intent, nothing
+//! mounted), so the caps re-read with the hook armed. The sysfs
+//! unbind path is not used: the driver core rejects it with ENODEV
+//! on this stack.
 //!
 //! Success predicate (field-proven, never role alone): controller
 //! `role == host` AND the OTG disk link `/dev/block/otg-usb`
@@ -440,40 +443,15 @@ fn port_is_sink() -> bool {
     port_is_sink_str(&read_trim("/sys/class/typec/port0/port_type"))
 }
 
-/// TCPC device name from a /sys/class/typec/portX/device link target
-/// (`../../../0-04` -> `0-04`). Pure (testable).
-fn tcpc_devname(link_target: &str) -> Option<String> {
-    link_target
-        .rsplit('/')
-        .next()
-        .filter(|n| !n.is_empty())
-        .map(|n| n.to_string())
-}
-
-/// Live TCPC driver dir (holds `unbind`+`bind`): resolved from the
-/// port0 device link across the i2c/spmi/platform buses.
-fn find_tcpc_driver() -> Option<(PathBuf, String)> {
-    let target = std::fs::read_link("/sys/class/typec/port0/device").ok()?;
-    let dev = tcpc_devname(&target.to_string_lossy())?;
-    for bus in ["i2c", "spmi", "platform"] {
-        let dir = Path::new("/sys/bus")
-            .join(bus)
-            .join("devices")
-            .join(&dev)
-            .join("driver");
-        if dir.join("unbind").is_file() && dir.join("bind").is_file() {
-            info(&format!("drp re-probe: TCPC {dev} on bus {bus}"));
-            return Some((dir, dev));
-        }
-    }
-    None
-}
-
-/// One-shot per boot: on stock sink ports, re-probe the TCPC with the
-/// drp shim armed so the port registers DRP (then the normal
-/// power_role leg proceeds). Patched kernels read dual: no-op. Only
-/// with host intent and nothing mounted — tearing down the live
-/// charger TCPC under a mounted drive would kill the transfer.
+/// One-shot per boot: on stock sink ports, ask the drp shim (via
+/// /proc, command "2") to release + re-attach the TCPC behind port0.
+/// The re-probe re-runs with the fwcap hook armed, promoting the port
+/// to DRP — then the normal power_role leg proceeds. Patched kernels
+/// read dual: no-op (hook condition never matches). Only with host
+/// intent and nothing mounted — tearing down the live charger TCPC
+/// under a mounted drive would kill the transfer. The sysfs
+/// unbind/bind path is deliberately NOT used: the driver core rejects
+/// the unbind with ENODEV on this stack.
 fn maybe_reprobe_sink_port() {
     if !port_is_sink() {
         return;
@@ -486,47 +464,19 @@ fn maybe_reprobe_sink_port() {
         info("drp re-probe deferred: USB storage mounted");
         return;
     }
-    let _ = std::fs::write(PROC_DRP, b"1\n"); // (re-)arm
-    match find_tcpc_driver() {
-        Some((dir, dev)) => {
-            info(&format!("drp re-probe: unbinding TCPC {dev}"));
-            if let Err(e) = std::fs::write(dir.join("unbind"), format!("{dev}\n").as_bytes()) {
-                info(&format!("drp re-probe: unbind FAILED ({e}), aborting"));
-                return;
-            }
-            sleep(Duration::from_secs(2));
-            // Bind back: an unbound TCPC with no retry would leave
-            // charging/PD driverless, so log the error and retry once.
-            let mut bound =
-                std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes()).is_ok();
-            if !bound {
-                info("drp re-probe: bind FAILED, retrying once");
-                sleep(Duration::from_millis(500));
-                match std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes()) {
-                    Ok(()) => bound = true,
-                    Err(e) => info(&format!("drp re-probe: bind retry FAILED ({e})")),
-                }
-            }
-            if !bound {
-                info("drp re-probe: bind FAILED twice, TCPC left unbound (reboot to recover)");
-                return;
-            }
-            // The probe runs synchronously inside bind(): wait for the
-            // port node to reappear (usually tens of ms) instead of a
-            // blind sleep.
-            let node = Path::new("/sys/class/typec/port0/port_type");
-            let mut waited = 0;
-            while !node.exists() && waited < 30 {
-                sleep(Duration::from_millis(100));
-                waited += 1;
-            }
-            info(&format!(
-                "drp re-probe done: port_type=[{}]",
-                read_trim("/sys/class/typec/port0/port_type")
-            ));
-        }
-        None => info("drp re-probe: TCPC driver dir not found, aborting"),
+    // "2" = arm + re-probe now (synchronous inside the module: release,
+    // 2s settle, re-attach). Afterwards the port re-registers — dual on
+    // success (hook patched the caps), sink on failure.
+    if std::fs::write(PROC_DRP, b"2\n").is_err() {
+        info("drp re-probe: /proc write FAILED, aborting");
+        return;
     }
+    sleep(Duration::from_secs(5));
+    info(&format!(
+        "drp re-probe done: port_type=[{}] ({})",
+        read_trim("/sys/class/typec/port0/port_type"),
+        read_trim(PROC_DRP)
+    ));
 }
 
 /// Manual host path (malibu field-proven on grizzly 2026-11-14, Anvil
@@ -868,14 +818,6 @@ mod tests {
         assert!(!port_is_sink_str("[dual]"));
         assert!(!port_is_sink_str("[source] sink"));
         assert!(!port_is_sink_str(""));
-    }
-
-    #[test]
-    fn tcpc_devname_takes_basename() {
-        assert_eq!(tcpc_devname("../../../0-04"), Some("0-04".to_string()));
-        assert_eq!(tcpc_devname("0-04"), Some("0-04".to_string()));
-        assert_eq!(tcpc_devname(""), None);
-        assert_eq!(tcpc_devname("../../../"), None);
     }
 
     #[test]

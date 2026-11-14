@@ -30,11 +30,12 @@
  * on any layout drift the values cannot all read sane, and nothing is
  * written.
  *
- * Probe-time only: tcpm reads the caps once per probe, so after arming
- * the shim the TCPC must re-probe (recovery-pixel-boot unbinds/binds
- * the TCPC on stock sink ports when entering host mode with the drive
- * intent and nothing mounted). No re-probe, no patch — the module
- * never touches a live port.
+ * Proc-time only: tcpm reads the caps once per probe, so after arming
+ * the shim the TCPC must re-probe (the daemon asks for it with a
+ * "2" write; the module releases + re-attaches the port0 parent
+ * itself — no sysfs name lookup, which the driver core rejects with
+ * ENODEV here). No re-probe, no patch — the module never touches a
+ * live port.
  *
  * No conflict with DRP-patched custom kernels: there the caps already
  * read DRP, the condition never matches, zero writes. The daemon
@@ -49,8 +50,8 @@
  * declaration must stay verbatim).
  *
  * Proc interfaces (mirror aoc_vote_shim):
- * /proc/tcpm_drp_shim — write "1"=arm, "0"=disarm; read returns stats
- */
+ * /proc/tcpm_drp_shim — write "1"=arm, "0"=disarm, "2"=arm + re-probe
+ * the TCPC now; read returns stats (armed/patched/reprobes/last).
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -63,6 +64,12 @@
 #include <linux/ptrace.h>
 #include <linux/compiler.h>
 #include <linux/atomic.h>
+#include <linux/delay.h>
+#include <linux/device.h>
+#include <linux/device/class.h>
+#include <linux/device/driver.h>
+#include <linux/device/bus.h>
+#include <linux/kallsyms.h>
 #include <linux/err.h>
 #include <linux/string.h>
 #include <linux/usb/typec.h>
@@ -106,6 +113,38 @@ static int resolve_fwnode_symbol(void)
 	return 0;
 }
 
+/* kallsyms-resolved core helper (same Kprobe-Edition pattern: no link
+ * dependency). Prototype must match exactly (KCFI). Used once to
+ * locate the (non-exported) typec class; the device helpers are
+ * plain EXPORT_SYMBOL_GPL direct calls. */
+static unsigned long (*real_kallsyms_lookup_name)(const char *name) = NULL;
+
+static int resolve_core_helpers(void)
+{
+	struct kprobe kp;
+	int ret;
+
+	if (real_kallsyms_lookup_name)
+		return 0;
+	memset(&kp, 0, sizeof(kp));
+	kp.symbol_name = "kallsyms_lookup_name";
+	ret = register_kprobe(&kp);
+	if (ret < 0) {
+		pr_err("tcpm_drp_shim: symbol 'kallsyms_lookup_name' not found (err=%d)\n",
+		       ret);
+		return ret;
+	}
+	real_kallsyms_lookup_name = (unsigned long (*)(const char *))kp.addr;
+	unregister_kprobe(&kp);
+
+	if (!real_kallsyms_lookup_name) {
+		pr_err("tcpm_drp_shim: kprobe succeeded but address is NULL\n");
+		real_kallsyms_lookup_name = NULL;
+		return -ENOENT;
+	}
+	return 0;
+}
+
 /* One kretprobe instance carries the entry args to the return handler.
  * fwnode is captured at entry (x1): some trees only assign cap->fwnode
  * later in the probe, so the entry value is primary, cap->fwnode the
@@ -117,6 +156,8 @@ struct probe_slot {
 
 static bool armed;
 static atomic_t patched;
+static atomic_t reprobed;
+static int last_reprobe;
 static struct proc_dir_entry *proc_shim;
 
 static int fwcap_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
@@ -177,11 +218,57 @@ static struct kretprobe fwcap_probe = {
 	.maxactive = 4,
 };
 
+/* Re-probe the TCPC behind port0: release + re-attach its parent
+ * device. Runs in /proc-write (process) context, so sleeping is fine.
+ * Uses direct parent pointers — no sysfs name lookup (the driver
+ * core rejects our unbind with ENODEV here). Re-attach re-runs the
+ * tcpm probe with the fwcap hook armed, promoting a sink-clobbered
+ * port to DRP. Returns 0 when the re-attach was issued (check
+ * port_type + patched count for the outcome), negative errno
+ * otherwise. */
+static int do_reprobe(void)
+{
+	struct class *cls;
+	struct device *port, *parent;
+	int ret = -ENODEV;
+
+	if (!real_kallsyms_lookup_name) {
+		pr_err("tcpm_drp_shim: core helpers unresolved, cannot re-probe\n");
+		return -ENODEV;
+	}
+	cls = (struct class *)real_kallsyms_lookup_name("typec_class");
+	if (!cls) {
+		pr_err("tcpm_drp_shim: typec_class not found\n");
+		return -ENODEV;
+	}
+	/* class_find_device / device_match_name / device_release_driver /
+	 * device_attach are plain EXPORT_SYMBOL_GPL: direct calls. */
+	port = class_find_device(cls, NULL, "port0", device_match_name);
+	if (!port) {
+		pr_err("tcpm_drp_shim: typec port0 not found\n");
+		return -ENODEV;
+	}
+	parent = get_device(port->parent);
+	put_device(port);
+	if (!parent) {
+		pr_err("tcpm_drp_shim: port0 has no parent\n");
+		return -ENODEV;
+	}
+	pr_info("tcpm_drp_shim: re-probing TCPC parent %s\n", dev_name(parent));
+	device_release_driver(parent);
+	msleep(2000);
+	ret = device_attach(parent);
+	pr_info("tcpm_drp_shim: re-attach %s -> %d\n", dev_name(parent), ret);
+	put_device(parent);
+	atomic_inc_return(&reprobed);
+	last_reprobe = ret;
+	return ret < 0 ? ret : 0;
+}
+
 static ssize_t shim_write(struct file *file, const char __user *ubuf,
 			  size_t count, loff_t *ppos)
 {
 	char buf[4];
-	bool on;
 
 	if (count == 0 || count > sizeof(buf) - 1)
 		return -EINVAL;
@@ -190,22 +277,27 @@ static ssize_t shim_write(struct file *file, const char __user *ubuf,
 		return -EFAULT;
 	buf[count] = '\0';
 
-	if (buf[0] == '1')
-		on = true;
-	else if (buf[0] == '0')
-		on = false;
-	else
+	if (buf[0] == '1') {
+		WRITE_ONCE(armed, true);
+		pr_info("tcpm_drp_shim: armed\n");
+	} else if (buf[0] == '0') {
+		WRITE_ONCE(armed, false);
+		pr_info("tcpm_drp_shim: disarmed\n");
+	} else if (buf[0] == '2') {
+		WRITE_ONCE(armed, true);
+		pr_info("tcpm_drp_shim: armed + re-probing TCPC\n");
+		do_reprobe();
+	} else {
 		return -EINVAL;
-
-	WRITE_ONCE(armed, on);
-	pr_info("tcpm_drp_shim: %s\n", on ? "armed" : "disarmed");
+	}
 	return count;
 }
 
 static int shim_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "armed=%d patched=%d\n", READ_ONCE(armed) ? 1 : 0,
-		   atomic_read(&patched));
+	seq_printf(m, "armed=%d patched=%d reprobed=%d last=%d\n",
+		   READ_ONCE(armed) ? 1 : 0, atomic_read(&patched),
+		   atomic_read(&reprobed), last_reprobe);
 	return 0;
 }
 
@@ -227,6 +319,10 @@ static int __init tcpm_drp_shim_init(void)
 	int ret;
 
 	ret = resolve_fwnode_symbol();
+	if (ret)
+		return ret;
+
+	ret = resolve_core_helpers();
 	if (ret)
 		return ret;
 
@@ -255,7 +351,8 @@ static void __exit tcpm_drp_shim_exit(void)
 	if (proc_shim)
 		proc_remove(proc_shim);
 	unregister_kretprobe(&fwcap_probe);
-	pr_info("tcpm_drp_shim: unloaded (patched %d ports)\n", atomic_read(&patched));
+	pr_info("tcpm_drp_shim: unloaded (patched %d ports, %d reprobes, last=%d)\n",
+		atomic_read(&patched), atomic_read(&reprobed), last_reprobe);
 }
 
 module_init(tcpm_drp_shim_init);
