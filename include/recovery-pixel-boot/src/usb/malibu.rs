@@ -114,8 +114,8 @@ const PROC_READY: &str = "/proc/aoc_vote_ready";
 /// Our DRP promotion shim (malibu-only prebuilt; arms a kretprobe on
 /// `typec_get_fw_cap`, best-effort — patched kernels never match its
 /// condition, stock sink ports get one re-probe per boot, see below).
-const SHIM_DRP_MODULE: &str = "tcpm_drp_fix";
-const PROC_DRP: &str = "/proc/tcpm_drp_fix";
+const SHIM_DRP_MODULE: &str = "tcpm_drp_shim";
+const PROC_DRP: &str = "/proc/tcpm_drp_shim";
 /// Shim vote settle: the shim retries the election internally.
 const SHIM_SETTLE_SECS: u64 = 2;
 /// Stock USB chain in dep order (strict flags: stock modules match the
@@ -394,16 +394,33 @@ fn ensure_charger_force() {
 /// Load our DRP promotion shim (best-effort, never a gate): on stock
 /// sink-clobbered ports the supervisor re-probes the TCPC with its
 /// hook armed. On DRP-patched kernels the hook condition never
-/// matches, so a loaded shim is a pure no-op there.
+/// matches, so a loaded shim is a pure no-op there. Strict first, then
+/// forced (our code only) — same contract as the vote shim.
 fn load_drp_shim() {
     if Path::new(PROC_DRP).exists() {
-        info("drp shim already loaded (/proc/tcpm_drp_fix present)");
+        info("drp shim already loaded (/proc/tcpm_drp_shim present)");
         return;
     }
     if ko_try_load(SHIM_DRP_MODULE, Some(PROC_DRP), TAG) {
         info("drp shim loaded (armed at init)");
-    } else {
-        info("drp shim not loaded (stock sink ports stay sink)");
+        return;
+    }
+    info("strict drp shim load failed (vermagic?), trying forced load");
+    match detect_kernel_env() {
+        Ok(env) => {
+            for cand in find_candidates(Path::new("/system/lib64/modules"), SHIM_DRP_MODULE, &env)
+            {
+                info(&format!("force-trying {}", cand.display()));
+                match load_kernel_module_force(&cand) {
+                    Ok(()) => {
+                        info(&format!("drp shim force-loaded {}", cand.display()));
+                        break;
+                    }
+                    Err(e) => info(&format!("force load failed: {e}")),
+                }
+            }
+        }
+        Err(e) => info(&format!("detect_kernel_env failed: {e}")),
     }
 }
 
@@ -474,8 +491,29 @@ fn maybe_reprobe_sink_port() {
                 return;
             }
             sleep(Duration::from_secs(2));
-            let _ = std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes());
-            sleep(Duration::from_secs(3));
+            // Bind back: an unbound TCPC with no retry would leave
+            // charging/PD driverless, so log the error and retry once.
+            let mut bound =
+                std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes()).is_ok();
+            if !bound {
+                info("drp re-probe: bind FAILED, retrying once");
+                sleep(Duration::from_millis(500));
+                bound =
+                    std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes()).is_ok();
+            }
+            if !bound {
+                info("drp re-probe: bind FAILED twice, TCPC left unbound (reboot to recover)");
+                return;
+            }
+            // The probe runs synchronously inside bind(): wait for the
+            // port node to reappear (usually tens of ms) instead of a
+            // blind sleep.
+            let node = Path::new("/sys/class/typec/port0/port_type");
+            let mut waited = 0;
+            while !node.exists() && waited < 30 {
+                sleep(Duration::from_millis(100));
+                waited += 1;
+            }
             info(&format!(
                 "drp re-probe done: port_type=[{}]",
                 read_trim("/sys/class/typec/port0/port_type")

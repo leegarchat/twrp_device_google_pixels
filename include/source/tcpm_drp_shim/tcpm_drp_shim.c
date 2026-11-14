@@ -49,7 +49,7 @@
  * declaration must stay verbatim).
  *
  * Proc interfaces (mirror aoc_vote_shim):
- * /proc/tcpm_drp_fix — write "1"=arm, "0"=disarm; read returns stats
+ * /proc/tcpm_drp_shim — write "1"=arm, "0"=disarm; read returns stats
  */
 
 #include <linux/module.h>
@@ -60,6 +60,9 @@
 #include <linux/uaccess.h>
 #include <linux/seq_file.h>
 #include <linux/kprobes.h>
+#include <linux/ptrace.h>
+#include <linux/compiler.h>
+#include <linux/atomic.h>
 #include <linux/err.h>
 #include <linux/string.h>
 #include <linux/usb/typec.h>
@@ -103,23 +106,28 @@ static int resolve_fwnode_symbol(void)
 	return 0;
 }
 
-/* One kretprobe instance carries the cap pointer from entry to return. */
+/* One kretprobe instance carries the entry args to the return handler.
+ * fwnode is captured at entry (x1): some trees only assign cap->fwnode
+ * later in the probe, so the entry value is primary, cap->fwnode the
+ * fallback. */
 struct probe_slot {
 	struct typec_capability *cap;
+	struct fwnode_handle *fwnode;
 };
 
 static bool armed;
-static unsigned int patched;
+static atomic_t patched;
 static struct proc_dir_entry *proc_shim;
 
 static int fwcap_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct probe_slot *s = (struct probe_slot *)ri->data;
 
-	if (!armed)
+	if (!READ_ONCE(armed))
 		return 1; /* skip the return probe while disarmed */
-	/* AAPCS64: arg0 (cap) arrives in x0. */
+	/* AAPCS64: arg0 (cap) arrives in x0, arg1 (fwnode) in x1. */
 	s->cap = (struct typec_capability *)regs->regs[0];
+	s->fwnode = (struct fwnode_handle *)regs->regs[1];
 	return 0;
 }
 
@@ -127,8 +135,9 @@ static int fwcap_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct probe_slot *s = (struct probe_slot *)ri->data;
 	struct typec_capability *cap;
+	struct fwnode_handle *fwnode;
 
-	if (!armed)
+	if (!READ_ONCE(armed))
 		return 0;
 	cap = s->cap;
 	if (!cap)
@@ -141,16 +150,20 @@ static int fwcap_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 		return 0;
 	if (cap->type != TYPEC_PORT_SNK)
 		return 0; /* DRP boots and genuine sinks untouched */
-	if (!cap->fwnode)
+	fwnode = s->fwnode ? s->fwnode : cap->fwnode;
+	if (!fwnode)
 		return 0;
-	if (!real_fwnode_present || !real_fwnode_present(cap->fwnode, "source-pdos"))
+	/* Context note: the return handler runs in a debug exception with
+	 * IRQs off. Only the DT (of_fwnode, raw_spin_lock_irqsave) flavor
+	 * of fwnode_property_present is safe here — never add a sleeping
+	 * fwnode_* helper to this path. Pixel TCPC fwnodes are DT. */
+	if (!real_fwnode_present || !real_fwnode_present(fwnode, "source-pdos"))
 		return 0; /* genuinely sink-only: no source PDOs */
 	cap->type = TYPEC_PORT_DRP;
 	cap->data = TYPEC_PORT_DRD;
 	cap->prefer_role = TYPEC_SINK;
-	patched++;
-	pr_info("tcpm_drp_shim: sink-clobbered port promoted to DRP (patch #%u)\n",
-		patched);
+	pr_info("tcpm_drp_shim: sink-clobbered port promoted to DRP (patch #%d)\n",
+		atomic_inc_return(&patched));
 	return 0;
 }
 
@@ -184,14 +197,15 @@ static ssize_t shim_write(struct file *file, const char __user *ubuf,
 	else
 		return -EINVAL;
 
-	armed = on;
+	WRITE_ONCE(armed, on);
 	pr_info("tcpm_drp_shim: %s\n", on ? "armed" : "disarmed");
 	return count;
 }
 
 static int shim_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "armed=%d patched=%u\n", armed ? 1 : 0, patched);
+	seq_printf(m, "armed=%d patched=%d\n", READ_ONCE(armed) ? 1 : 0,
+		   atomic_read(&patched));
 	return 0;
 }
 
@@ -223,25 +237,25 @@ static int __init tcpm_drp_shim_init(void)
 		return ret;
 	}
 
-	proc_shim = proc_create("tcpm_drp_fix", 0660, NULL, &shim_ops);
+	proc_shim = proc_create("tcpm_drp_shim", 0660, NULL, &shim_ops);
 	if (!proc_shim) {
-		pr_err("tcpm_drp_shim: failed to create /proc/tcpm_drp_fix\n");
+		pr_err("tcpm_drp_shim: failed to create /proc/tcpm_drp_shim\n");
 		unregister_kretprobe(&fwcap_probe);
 		return -ENOMEM;
 	}
 
-	armed = true;
+	WRITE_ONCE(armed, true);
 	pr_info("tcpm_drp_shim: loaded and armed (hook on typec_get_fw_cap)\n");
 	return 0;
 }
 
 static void __exit tcpm_drp_shim_exit(void)
 {
-	armed = false;
+	WRITE_ONCE(armed, false);
 	if (proc_shim)
 		proc_remove(proc_shim);
 	unregister_kretprobe(&fwcap_probe);
-	pr_info("tcpm_drp_shim: unloaded (patched %u ports)\n", patched);
+	pr_info("tcpm_drp_shim: unloaded (patched %d ports)\n", atomic_read(&patched));
 }
 
 module_init(tcpm_drp_shim_init);
