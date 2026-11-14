@@ -1,0 +1,17 @@
+# 4k variant (default):
+tools/bazel build //customDriverForDwc3:tcpm_drp_shim_4k
+file bazel-bin/customDriverForDwc3/tcpm_drp_shim_4k/tcpm_drp_shim.ko
+# 16k variant:
+tools/bazel build //customDriverForDwc3:tcpm_drp_shim_16k
+file bazel-bin/customDriverForDwc3/tcpm_drp_shim_16k/tcpm_drp_shim.ko
+# Install: rename per variant and drop into the ramdisk module tree where
+# ko_picker scores page size by parent dir (4k vs 16k), e.g.:
+#   /system/lib64/modules/otg/6.12/android16/4k/tcpm_drp_fix_android16-6.12_4k.ko
+# (major.minor must match the target kernel 6.12; the shim uses only the
+# public typec_capability layout (KMI-guarded), so patch levels are safe.
+# Force-load covers the rest.)
+#
+# NOTE for the builder: this module has ZERO link-time deps outside the
+# core kernel (kprobes + proc + the public typec_capability layout).
+# The fwnode helper is kprobe-resolved at init (same pattern as
+# aoc_vote_shim), so it builds against any tree.

@@ -46,6 +46,15 @@
 //! (the daemon never touches `preferred_role`; re-asserts fire only
 //! while a readback disagrees).
 //!
+//! Stock-kernel path (no DRP patch): `tcpm_drp_shim`
+//! (`include/source/tcpm_drp_shim/`, malibu-only) hooks
+//! `typec_get_fw_cap` via kretprobe and promotes the capability block
+//! in place — `port->port_type` follows automatically, so the outcome
+//! is byte-identical to the compiled-in patch while touching only the
+//! public (KMI-guarded) `struct typec_capability`. The supervisor
+//! unbinds/binds the TCPC once per boot on sink ports (host intent,
+//! nothing mounted) so the caps re-read with the hook armed.
+//!
 //! Success predicate (field-proven, never role alone): controller
 //! `role == host` AND the OTG disk link `/dev/block/otg-usb`
 //! resolving. NOTE: the TCPC source psy stays `0` while sourcing on
@@ -102,6 +111,11 @@ const OTG_USB_LINK: &str = "/dev/block/otg-usb";
 const SHIM_MODULE: &str = "aoc_vote_shim";
 const PROC_SHIM: &str = "/proc/aoc_vote_shim";
 const PROC_READY: &str = "/proc/aoc_vote_ready";
+/// Our DRP promotion shim (malibu-only prebuilt; arms a kretprobe on
+/// `typec_get_fw_cap`, best-effort — patched kernels never match its
+/// condition, stock sink ports get one re-probe per boot, see below).
+const SHIM_DRP_MODULE: &str = "tcpm_drp_fix";
+const PROC_DRP: &str = "/proc/tcpm_drp_fix";
 /// Shim vote settle: the shim retries the election internally.
 const SHIM_SETTLE_SECS: u64 = 2;
 /// Stock USB chain in dep order (strict flags: stock modules match the
@@ -377,6 +391,100 @@ fn ensure_charger_force() {
     let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
 }
 
+/// Load our DRP promotion shim (best-effort, never a gate): on stock
+/// sink-clobbered ports the supervisor re-probes the TCPC with its
+/// hook armed. On DRP-patched kernels the hook condition never
+/// matches, so a loaded shim is a pure no-op there.
+fn load_drp_shim() {
+    if Path::new(PROC_DRP).exists() {
+        info("drp shim already loaded (/proc/tcpm_drp_fix present)");
+        return;
+    }
+    if ko_try_load(SHIM_DRP_MODULE, Some(PROC_DRP), TAG) {
+        info("drp shim loaded (armed at init)");
+    } else {
+        info("drp shim not loaded (stock sink ports stay sink)");
+    }
+}
+
+/// Pure over the port_type readback (testable): only a bracketed
+/// `[sink]` counts. DRP ports show `[dual] source sink` (substring
+/// trap), source ports `[source] sink`; empty/unreadable fails closed.
+fn port_is_sink_str(readback: &str) -> bool {
+    readback.contains("[sink]")
+}
+
+/// Live port type: stock sink-clobber reads `[sink]`, DRP-patched
+/// kernels `[dual]`.
+fn port_is_sink() -> bool {
+    port_is_sink_str(&read_trim("/sys/class/typec/port0/port_type"))
+}
+
+/// TCPC device name from a /sys/class/typec/portX/device link target
+/// (`../../../0-04` -> `0-04`). Pure (testable).
+fn tcpc_devname(link_target: &str) -> Option<String> {
+    link_target
+        .rsplit('/')
+        .next()
+        .filter(|n| !n.is_empty())
+        .map(|n| n.to_string())
+}
+
+/// Live TCPC driver dir (holds `unbind`+`bind`): resolved from the
+/// port0 device link across the i2c/spmi/platform buses.
+fn find_tcpc_driver() -> Option<(PathBuf, String)> {
+    let target = std::fs::read_link("/sys/class/typec/port0/device").ok()?;
+    let dev = tcpc_devname(&target.to_string_lossy())?;
+    for bus in ["i2c", "spmi", "platform"] {
+        let dir = Path::new("/sys/bus")
+            .join(bus)
+            .join("devices")
+            .join(&dev)
+            .join("driver");
+        if dir.join("unbind").is_file() && dir.join("bind").is_file() {
+            return Some((dir, dev));
+        }
+    }
+    None
+}
+
+/// One-shot per boot: on stock sink ports, re-probe the TCPC with the
+/// drp shim armed so the port registers DRP (then the normal
+/// power_role leg proceeds). Patched kernels read dual: no-op. Only
+/// with host intent and nothing mounted — tearing down the live
+/// charger TCPC under a mounted drive would kill the transfer.
+fn maybe_reprobe_sink_port() {
+    if !port_is_sink() {
+        return;
+    }
+    if !Path::new(PROC_DRP).exists() {
+        info("stock sink port, drp shim missing: staying sink (custom kernel needed)");
+        return;
+    }
+    if super::usb_storage_mounted() {
+        info("drp re-probe deferred: USB storage mounted");
+        return;
+    }
+    let _ = std::fs::write(PROC_DRP, b"1\n"); // (re-)arm
+    match find_tcpc_driver() {
+        Some((dir, dev)) => {
+            info(&format!("drp re-probe: unbinding TCPC {dev}"));
+            if std::fs::write(dir.join("unbind"), format!("{dev}\n").as_bytes()).is_err() {
+                info("drp re-probe: unbind FAILED, aborting");
+                return;
+            }
+            sleep(Duration::from_secs(2));
+            let _ = std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes());
+            sleep(Duration::from_secs(3));
+            info(&format!(
+                "drp re-probe done: port_type=[{}]",
+                read_trim("/sys/class/typec/port0/port_type")
+            ));
+        }
+        None => info("drp re-probe: TCPC driver dir not found, aborting"),
+    }
+}
+
 /// Manual host path (malibu field-proven on grizzly 2026-11-14, Anvil
 /// DRP kernel: UDC unbind + role-switch `host` + `power_role=source`
 /// retry, drive enumerates as sde): UDC unbind + role-switch `host` +
@@ -574,6 +682,10 @@ pub fn run_otg_patch() -> Result<(), String> {
     // No i2c TCPC patch by design (SPMI bus, stock driver self-manages).
     // The AOC vote: best-effort shim on top of the stock-DT gate.
     load_vote_shim();
+    // The DRP promotion shim: best-effort, never a gate. On patched
+    // kernels its hook condition never matches (no-op); on stock sink
+    // ports the supervisor re-probes the TCPC with it armed (below).
+    load_drp_shim();
     set_prop("sys.usb.patch_dwc3", "1").map_err(|e| e.to_string())?;
     info("OTG patch routine finished, supervisor released (sys.usb.patch_dwc3=1)");
     Ok(())
@@ -598,11 +710,16 @@ pub fn run_otg_auto() -> ! {
     let initial = read_vbus(&vbus_file);
     info(&format!("initial VBUS: {initial}"));
     let mut current = String::new();
+    // DRP re-probe (stock sink ports): one attempt per boot, only with
+    // host intent (initial decision + cable-out edges below).
+    let mut drp_attempted = false;
     if initial == "1" {
         info("PC detected at boot (VBUS=1), starting in DEVICE mode");
         switch_to_device(&mut current);
     } else {
         info("no PC at boot (VBUS=0), starting in HOST mode");
+        drp_attempted = true;
+        maybe_reprobe_sink_port();
         switch_to_host(&mut current);
     }
     let mut prev = initial;
@@ -647,6 +764,10 @@ pub fn run_otg_auto() -> ! {
                     }
                 } else {
                     defer_logged = false;
+                    if !drp_attempted {
+                        drp_attempted = true;
+                        maybe_reprobe_sink_port();
+                    }
                     switch_to_host(&mut current);
                     prev = stable;
                 }
@@ -689,6 +810,24 @@ pub fn run_otg_auto() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sink_detect_avoids_dual_substring_trap() {
+        // DRP show lists every role: only bracketed [sink] counts.
+        assert!(port_is_sink_str("[sink]"));
+        assert!(!port_is_sink_str("[dual] source sink"));
+        assert!(!port_is_sink_str("[dual]"));
+        assert!(!port_is_sink_str("[source] sink"));
+        assert!(!port_is_sink_str(""));
+    }
+
+    #[test]
+    fn tcpc_devname_takes_basename() {
+        assert_eq!(tcpc_devname("../../../0-04"), Some("0-04".to_string()));
+        assert_eq!(tcpc_devname("0-04"), Some("0-04".to_string()));
+        assert_eq!(tcpc_devname(""), None);
+        assert_eq!(tcpc_devname("../../../"), None);
+    }
 
     #[test]
     fn power_assert_predicate() {
