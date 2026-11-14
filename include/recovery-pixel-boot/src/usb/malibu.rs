@@ -467,8 +467,11 @@ fn maybe_reprobe_sink_port() {
     // "2" = arm + re-probe now (synchronous inside the module: release,
     // 2s settle, re-attach). Afterwards the port re-registers — dual on
     // success (hook patched the caps), sink on failure.
-    if std::fs::write(PROC_DRP, b"2\n").is_err() {
-        info("drp re-probe: /proc write FAILED, aborting");
+    if let Err(e) = std::fs::write(PROC_DRP, b"2\n") {
+        if e.raw_os_error() == Some(libc::EINVAL) {
+            info("drp re-probe: shim rejected the command (stale prebuilt without reprobe cmd?) — rebuild tcpm_drp_shim.ko");
+        }
+        info(&format!("drp re-probe: /proc write FAILED ({e}), aborting"));
         return;
     }
     sleep(Duration::from_secs(5));
