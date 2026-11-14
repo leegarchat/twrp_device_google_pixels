@@ -52,6 +52,7 @@
  * Proc interfaces (mirror aoc_vote_shim):
  * /proc/tcpm_drp_shim — write "1"=arm, "0"=disarm, "2"=arm + re-probe
  * the TCPC now; read returns stats (armed/patched/reprobes/last).
+ */
 
 #include <linux/module.h>
 #include <linux/kernel.h>
