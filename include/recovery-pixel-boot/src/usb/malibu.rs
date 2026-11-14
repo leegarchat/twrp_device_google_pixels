@@ -377,18 +377,21 @@ fn try_power_source() -> String {
 }
 
 /// VBUS leg 2: gvotable CHARGER_MODE 49-force. Sticky once set
-/// (persists until retracted on the device switch), so top up only
-/// while the voter exists but is not active; silent otherwise.
-fn ensure_charger_force() {
+/// (persists until retracted on the device switch). Returns true when
+/// the force is in place (or kicked); the tick latches it to stay
+/// silent on steady state. NOTE: most kernels read back empty for
+/// force_int_active, so callers must latch the return, not re-read.
+fn ensure_charger_force() -> bool {
     if !Path::new(CHARGER_VALUE).exists() {
-        return;
+        return false;
     }
     if read_trim(CHARGER_ACTIVE) == "1" {
-        return;
+        return true;
     }
     info("forcing VBUS via gvotable CHARGER_MODE");
     let _ = std::fs::write(CHARGER_VALUE, b"49\n");
     let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    true
 }
 
 /// Load our DRP promotion shim (best-effort, never a gate): on stock
@@ -766,6 +769,9 @@ pub fn run_otg_auto() -> ! {
     // Last power-leg note: the per-tick top-up logs only on change,
     // steady states (sourced / rejected SNK) stay silent.
     let mut power_note = String::new();
+    // CHARGER leg latch: force files read back empty on most kernels,
+    // so the tick latches the first kick instead of re-reading.
+    let mut charger_forced = false;
     loop {
         // Keeper: re-poke if the vote is not asserted; load the shim if
         // it appeared after boot (e.g. dropped in by hand for testing) —
@@ -797,6 +803,7 @@ pub fn run_otg_auto() -> ! {
                         }
                     } else {
                         defer_logged = false;
+                        charger_forced = false;
                         switch_to_device(&mut current);
                         prev = stable;
                     }
@@ -822,14 +829,15 @@ pub fn run_otg_auto() -> ! {
             } else {
                 // Role stuck: top up VBUS leg 1 until the readback
                 // confirms source (transient EIO while renegotiating).
-                // Log only on change; rejected-and-stays on stock SNK
-                // (leg 2 below covers what it can).
+                // Log only on change; steady states stay silent.
                 let note = try_power_source();
                 if !note.is_empty() && note != power_note {
                     power_note = note.clone();
                     info(&format!("host: {note}"));
                 }
-                ensure_charger_force();
+                if !charger_forced {
+                    charger_forced = ensure_charger_force();
+                }
             }
         }
         if pick_otg_disk().is_some() {
