@@ -25,15 +25,31 @@
 //! gate): even a missing shim prebuilt keeps patch green.
 //!
 //! The kernel does NOT self-switch in recovery, so this code drives it:
-//! role-switch `host` sticks (no revert observed), TCPC sources VBUS on
-//! the CHARGER_MODE force. No i2c TCPC patch (SPMI bus:
-//! `max77759tcpc-spmi@4`, self-managed by the stock driver). `aoc_core`/`aoc_usb_driver` are
-//! deliberately NOT insmodded (their only job was the vote).
-//! 6.12-only family; anything else fails closed (device mode, adb safe).
+//! UDC unbind (the gadget holds the controller in every failed boot) +
+//! role-switch `host` + typec `power_role=source`. No i2c TCPC patch
+//! (SPMI bus: `max77779tcpc-spmi@4`, self-managed by the stock driver).
+//! `aoc_core`/`aoc_usb_driver` are deliberately NOT insmodded (their
+//! only job was the vote). 6.12-only family; anything else fails closed
+//! (device mode, adb safe).
+//!
+//! Field-proven VBUS path (grizzly 2026-11-14, Anvil DRP kernel): the
+//! TCPC sources VBUS itself once `power_role=source` is accepted — the
+//! first write may fail transiently (EIO while renegotiating), the
+//! per-tick re-assert lands it. The `CHARGER_MODE` 49-force stays as a
+//! best-effort second leg (never observed to hurt). The I2CM xfer error
+//! in the OTG transition is benign side noise (VBUS came up with it
+//! in every successful boot).
+//!
+//! Custom kernels carrying the tcpm DRP patch (upstream fix for the
+//! bootloader sink-clobber) only make the legs succeed: every write
+//! here is capability-checked and best-effort, nothing fights the TCPC
+//! (the daemon never touches `preferred_role`; re-asserts fire only
+//! while a readback disagrees).
 //!
 //! Success predicate (field-proven, never role alone): controller
-//! `role == host` AND TCPC source psy `online == 1` AND the OTG disk
-//! link `/dev/block/otg-usb` resolving.
+//! `role == host` AND the OTG disk link `/dev/block/otg-usb`
+//! resolving. NOTE: the TCPC source psy stays `0` while sourcing on
+//! DRP-patched kernels — it is NOT part of the predicate.
 
 use crate::ko_picker::{
     detect_kernel_env, find_candidates, is_module_loaded, ko_try_load,
@@ -57,9 +73,11 @@ const SOURCE_PSY: &str = "tcpm-source-psy-spmi-max77759tcpc";
 /// UDC fallback: base DTB `dwc3@a210000` under `usb3@a200000`.
 /// Used when `/sys/class/udc` is empty (never blindly: the live class wins).
 const UDC_FALLBACK: &str = "a210000.dwc3";
-/// TYPEC power role: requesting `source` powers VBUS for the attached
-/// drive. malibu has no CHARGER_MODE voter, so this is the only VBUS
-/// path (standard typec operation, best-effort).
+/// TYPEC power role: requesting `source` lets the TCPC power VBUS for
+/// the attached drive (standard typec operation, best-effort). Primary
+/// VBUS leg on DRP-patched kernels; on stock SNK ports the write is
+/// rejected (EOPNOTSUPP) and the CHARGER fallback below applies.
+/// `preferred_role` is deliberately never touched (the TCPC owns it).
 const TYPEC_POWER_ROLE: &str = "/sys/class/typec/port0/power_role";
 /// UDC gadget path (unbind on host switch, rebind on device switch).
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
@@ -313,15 +331,67 @@ fn resolve_udc() -> String {
     names.into_iter().next().unwrap_or_else(|| UDC_FALLBACK.to_string())
 }
 
-/// Manual host path (laguna d429e90, field-proven on mustang: role write
-/// sticks, drive enumerates): UDC unbind + role-switch `host` + gvotable
-/// VBUS force. Best-effort per leg, loud about each.
+/// Live typec power-role readback (`[source] sink` / `[sink]` / …).
+fn read_power_role() -> String {
+    read_trim(TYPEC_POWER_ROLE)
+}
+
+/// Pure predicate over the readback (testable): rewrite unless the port
+/// already reports `source`. Sysfs shows DRP roles bracketed
+/// (`[source] sink`), bare on fixed ports — both spellings count.
+/// On stock SNK the write is rejected and the readback stays put, so a
+/// blind retry is harmless (the tick dedups its log).
+fn power_needs_assert(readback: &str) -> bool {
+    let t = readback.trim();
+    !(t == "source" || t.starts_with("[source]"))
+}
+
+/// Single VBUS-leg-1 attempt. Returns the one-line note for the log;
+/// the switch path logs it, the tick path dedups it (steady state
+/// stays silent either way).
+fn try_power_source() -> String {
+    if !Path::new(TYPEC_POWER_ROLE).exists() {
+        return "no typec power_role node".to_string();
+    }
+    if !power_needs_assert(&read_power_role()) {
+        return "power_role already source".to_string();
+    }
+    match std::fs::write(TYPEC_POWER_ROLE, b"source\n") {
+        Ok(()) => "power_role=source requested".to_string(),
+        Err(e) => format!("power_role write FAILED: {e}"),
+    }
+}
+
+/// VBUS leg 2: gvotable CHARGER_MODE 49-force. Sticky once set
+/// (persists until retracted on the device switch), so top up only
+/// while the voter exists but is not active; silent otherwise.
+fn ensure_charger_force() {
+    if !Path::new(CHARGER_VALUE).exists() {
+        return;
+    }
+    if read_trim(CHARGER_ACTIVE) == "1" {
+        return;
+    }
+    info("forcing VBUS via gvotable CHARGER_MODE");
+    let _ = std::fs::write(CHARGER_VALUE, b"49\n");
+    let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+}
+
+/// Manual host path (malibu field-proven on grizzly 2026-11-14, Anvil
+/// DRP kernel: UDC unbind + role-switch `host` + `power_role=source`
+/// retry, drive enumerates as sde): UDC unbind + role-switch `host` +
+/// VBUS legs. Best-effort per leg, loud about each.
 fn switch_to_host(current: &mut String) {
     if current.as_str() == "host" {
         return;
     }
     info(">>> SWITCHING TO HOST MODE <<<");
-    let _ = std::fs::write(UDC_FILE, b"\n");
+    // The gadget holds the controller in every failed boot (UDC stays
+    // bound, xhci never enumerates): detach first, then switch.
+    match std::fs::write(UDC_FILE, b"\n") {
+        Ok(()) => info("host: UDC unbound (gadget detached)"),
+        Err(e) => info(&format!("host: UDC unbind note: {e}")),
+    }
     // Controller switch first (ROLE_PREFER), else first sorted entry.
     match find_data_role() {
         Some(role) => {
@@ -331,33 +401,19 @@ fn switch_to_host(current: &mut String) {
         }
         None => info("host: no usb_role switch found"),
     }
-    // VBUS power: malibu has no CHARGER_MODE voter, so the typec
-    // power role is the only 5V path for the drive. Standard operation,
-    // best-effort, logged; never fails the switch.
+    // VBUS leg 1 (primary on DRP-patched kernels): typec power_role.
+    // Transition-rare path: always loud.
     {
-        let pr = Path::new(TYPEC_POWER_ROLE);
-        if pr.exists() {
-            match std::fs::read_to_string(pr) {
-                Ok(cur) if cur.trim() == "source" => {
-                    info("host: power_role already source");
-                }
-                _ => match std::fs::write(pr, b"source\n") {
-                    Ok(()) => info("host: power_role=source requested"),
-                    Err(e) => info(&format!("host: power_role write FAILED: {e}")),
-                },
-            }
-        } else {
-            info("host: no typec power_role node");
+        let note = try_power_source();
+        if !note.is_empty() {
+            info(&format!("host: {note}"));
         }
     }
-    // VBUS power: malibu has no CHARGER_MODE voter file by default —
-    // make sure debugfs is mounted first (the election only exists
-    // under /sys/kernel/debug), then force if present.
+    // VBUS leg 2 (best-effort fallback): CHARGER_MODE 49-force.
+    // Debugfs first — the election only exists under /sys/kernel/debug.
     super::ensure_debugfs();
     if Path::new(CHARGER_VALUE).exists() {
-        info("forcing VBUS via gvotable CHARGER_MODE");
-        let _ = std::fs::write(CHARGER_VALUE, b"49\n");
-        let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+        ensure_charger_force();
     } else {
         info("host: no CHARGER_MODE voter (no VBUS force?)");
     }
@@ -386,10 +442,13 @@ fn switch_to_device(current: &mut String) {
     *current = "device".into();
 }
 
-/// Host path ACTIVE only on BOTH signals — never the role alone: a bare
-/// `role=host` readback with no sourced VBUS is not host mode.
+/// Host path ACTIVE — never the role alone: a bare `role=host`
+/// readback with no sourced VBUS is not host mode. The TCPC source psy
+/// is only half the story (it stays `0` while sourcing on DRP-patched
+/// kernels — field-proven 2026-11-14): a present OTG disk counts as
+/// sourced VBUS too.
 fn host_active() -> bool {
-    read_data_role() == "host" && read_source_online() == "1"
+    read_data_role() == "host" && (read_source_online() == "1" || pick_otg_disk().is_some())
 }
 
 /// First removable USB disk (`sdX1` preferred, else whole disk).
@@ -549,6 +608,9 @@ pub fn run_otg_auto() -> ! {
     let mut prev = initial;
     let mut vbus_db = super::VbusDebounce::new();
     let mut defer_logged = false;
+    // Last power-leg note: the per-tick top-up logs only on change,
+    // steady states (sourced / rejected SNK) stay silent.
+    let mut power_note = String::new();
     loop {
         // Keeper: re-poke if the vote is not asserted; load the shim if
         // it appeared after boot (e.g. dropped in by hand for testing) —
@@ -591,12 +653,24 @@ pub fn run_otg_auto() -> ! {
             }
         }
         // Re-assert host while unplugged: a renegotiating TCPC can park
-        // the role back to device behind our backs.
+        // the role back to device behind our backs — or reject the
+        // first power_role write (EIO) while accepting the retry.
         if current == "host" {
             let role_now = read_data_role();
             if !role_now.is_empty() && role_now != "host" {
                 info("daemon: role drifted from host, re-asserting");
                 switch_to_host(&mut String::from("device"));
+            } else {
+                // Role stuck: top up VBUS leg 1 until the readback
+                // confirms source (transient EIO while renegotiating).
+                // Log only on change; rejected-and-stays on stock SNK
+                // (leg 2 below covers what it can).
+                let note = try_power_source();
+                if !note.is_empty() && note != power_note {
+                    power_note = note.clone();
+                    info(&format!("host: {note}"));
+                }
+                ensure_charger_force();
             }
         }
         if pick_otg_disk().is_some() {
@@ -615,6 +689,20 @@ pub fn run_otg_auto() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn power_assert_predicate() {
+        // Sysfs show format is bracketed on DRP ports (`[source] sink`),
+        // bare on fixed ones; both spellings count as sourced.
+        assert!(!power_needs_assert("source"));
+        assert!(!power_needs_assert("[source]"));
+        assert!(!power_needs_assert("[source] sink"));
+        assert!(!power_needs_assert("  [source] sink  "));
+        assert!(power_needs_assert("[sink]"));
+        assert!(power_needs_assert("sink"));
+        assert!(power_needs_assert(""));
+        assert!(power_needs_assert("[source")); // truncated read: retry
+    }
 
     #[test]
     fn kernel_gate_is_612_only() {

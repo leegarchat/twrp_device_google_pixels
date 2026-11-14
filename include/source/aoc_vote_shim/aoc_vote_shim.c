@@ -48,6 +48,15 @@
  * - laguna 6.6 stable (mustang cp2a/bp4a) and 6.12 beta (same election)
  * - malibu 6.12 (belt-and-suspenders there: stock DT already opens
  *   the gate, this vote only re-asserts the same state)
+ * - malibu custom kernels carrying the tcpm DRP patch (Anvil beta,
+ *   field-proven grizzly 2026-11-14): NO conflict by construction.
+ *   The vote only ever pushes AOC toward host; the election resolves
+ *   host solely together with TCPCI=host (patched TCPC drives both on
+ *   OTG attach: "TCPCI_COMB: host, AOC: host, [result] host"), while
+ *   device mode still wins on TCPCI=device ("TCPCI_COMB: device, AOC:
+ *   host, [result] device"). The vote is never retracted by design —
+ *   retracting on PC attach would race the TCPC; the AND keeps device
+ *   mode (adb/MTP) safe. Strict loads verified on 6.12.69 and 6.12.117.
  *
  * Proc interfaces (mirror otg_host_shim):
  * /proc/aoc_vote_shim  — write "1"=assert AOC/host vote, "0"=retract; read returns state
