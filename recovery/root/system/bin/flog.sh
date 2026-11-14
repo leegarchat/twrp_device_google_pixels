@@ -240,6 +240,15 @@ echo "flog: + hardware.txt"
     for _c in /sys/kernel/debug/gvotables/CHARGER_MODE/force_int_value /sys/kernel/debug/gvotables/CHARGER_MODE/force_int_active; do
         [ -f "$_c" ] && printf '  %s=%s\n' "$_c" "$(cat "$_c" 2>/dev/null)"
     done
+    echo "## shim procs (AOC vote + DRP promotion state)"
+    for _p in /proc/tcpm_drp_shim /proc/aoc_vote_shim /proc/aoc_vote_ready; do
+        [ -f "$_p" ] && printf '  %s=%s\n' "$_p" "$(cat "$_p" 2>/dev/null)"
+    done
+    echo "## gvotable elections present"
+    ls /sys/kernel/debug/gvotables/ 2>/dev/null | tr '\n' ' ' | sed 's/^/  /'
+    echo ""
+    echo "## CHARGER_MODE election status (winner + votes)"
+    cat /sys/kernel/debug/gvotables/CHARGER_MODE/status 2>/dev/null | sed 's/^/  /'
     echo "## gadget bind + otg-usb link"
     [ -f /config/usb_gadget/g1/UDC ] && printf '  UDC=%s\n' "$(cat /config/usb_gadget/g1/UDC 2>/dev/null)"
     printf '  otg-usb -> %s\n' "$(readlink /dev/block/otg-usb 2>/dev/null)"
