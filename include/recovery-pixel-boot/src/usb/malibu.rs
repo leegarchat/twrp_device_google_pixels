@@ -462,6 +462,7 @@ fn find_tcpc_driver() -> Option<(PathBuf, String)> {
             .join(&dev)
             .join("driver");
         if dir.join("unbind").is_file() && dir.join("bind").is_file() {
+            info(&format!("drp re-probe: TCPC {dev} on bus {bus}"));
             return Some((dir, dev));
         }
     }
@@ -489,8 +490,8 @@ fn maybe_reprobe_sink_port() {
     match find_tcpc_driver() {
         Some((dir, dev)) => {
             info(&format!("drp re-probe: unbinding TCPC {dev}"));
-            if std::fs::write(dir.join("unbind"), format!("{dev}\n").as_bytes()).is_err() {
-                info("drp re-probe: unbind FAILED, aborting");
+            if let Err(e) = std::fs::write(dir.join("unbind"), format!("{dev}\n").as_bytes()) {
+                info(&format!("drp re-probe: unbind FAILED ({e}), aborting"));
                 return;
             }
             sleep(Duration::from_secs(2));
@@ -501,8 +502,10 @@ fn maybe_reprobe_sink_port() {
             if !bound {
                 info("drp re-probe: bind FAILED, retrying once");
                 sleep(Duration::from_millis(500));
-                bound =
-                    std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes()).is_ok();
+                match std::fs::write(dir.join("bind"), format!("{dev}\n").as_bytes()) {
+                    Ok(()) => bound = true,
+                    Err(e) => info(&format!("drp re-probe: bind retry FAILED ({e})")),
+                }
             }
             if !bound {
                 info("drp re-probe: bind FAILED twice, TCPC left unbound (reboot to recover)");
