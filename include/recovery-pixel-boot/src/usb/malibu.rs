@@ -363,14 +363,18 @@ fn power_needs_assert(readback: &str) -> bool {
     !(t == "source" || t.starts_with("[source]"))
 }
 
-/// Single VBUS-leg-1 attempt. Returns the one-line note for the log;
-/// the switch path logs it, the tick path dedups it (steady state
-/// stays silent either way).
-fn try_power_source() -> String {
+/// Single VBUS-leg-1 attempt. Returns the one-line note for the log.
+/// `force` bypasses the readback check: the typec readback can report
+/// `source` while the rail never committed (field-proven: on Anvil the
+/// enum followed only *accepted* writes, never the readback alone), so
+/// the supervisor kicks unconditionally until a disk shows up. The
+/// switch path uses the quiet gated mode; the tick uses force while
+/// nothing is enumerated (no session to glitch) and gated after.
+fn try_power_source(force: bool) -> String {
     if !Path::new(TYPEC_POWER_ROLE).exists() {
         return "no typec power_role node".to_string();
     }
-    if !power_needs_assert(&read_power_role()) {
+    if !force && !power_needs_assert(&read_power_role()) {
         return "power_role already source".to_string();
     }
     match std::fs::write(TYPEC_POWER_ROLE, b"source\n") {
@@ -509,7 +513,7 @@ fn switch_to_host(current: &mut String) {
     // VBUS leg 1 (primary on DRP-patched kernels): typec power_role.
     // Transition-rare path: always loud.
     {
-        let note = try_power_source();
+        let note = try_power_source(false);
         if !note.is_empty() {
             info(&format!("host: {note}"));
         }
@@ -789,10 +793,14 @@ pub fn run_otg_auto() -> ! {
                 info("daemon: role drifted from host, re-asserting");
                 switch_to_host(&mut String::from("device"));
             } else {
-                // Role stuck: top up VBUS leg 1 until the readback
-                // confirms source (transient EIO while renegotiating).
-                // Log only on change; steady states stay silent.
-                let note = try_power_source();
+                // Role stuck: keep kicking VBUS leg 1 until a disk shows
+                // up. The readback can claim `source` while the rail never
+                // committed (enum followed only accepted writes), so the
+                // gated check is not enough here; once enumerated, fall
+                // back to quiet readback-gated top-ups (nothing to glitch
+                // mid-session). Log only on change.
+                let kicking = pick_otg_disk().is_none();
+                let note = try_power_source(kicking);
                 if !note.is_empty() && note != power_note {
                     power_note = note.clone();
                     info(&format!("host: {note}"));
