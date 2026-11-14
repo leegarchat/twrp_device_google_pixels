@@ -514,10 +514,16 @@ fn switch_to_host(current: &mut String) {
             info(&format!("host: {note}"));
         }
     }
-    // VBUS leg 2 (best-effort fallback): CHARGER_MODE 49-force.
+    // VBUS leg 2 (best-effort fallback, STOCK SINK PORTS ONLY):
+    // CHARGER_MODE 49-force. On DRP-patched kernels the TCPC sources
+    // VBUS itself and the usecase follows the attach naturally — voting
+    // a sticky force there would only pin the machine early and skip
+    // the attach-time transition, so stay out of its way.
     // Debugfs first — the election only exists under /sys/kernel/debug.
     super::ensure_debugfs();
-    if Path::new(CHARGER_VALUE).exists() {
+    if !port_is_sink() {
+        info("host: DRP port, skipping CHARGER force (TCPC sources VBUS)");
+    } else if Path::new(CHARGER_VALUE).exists() {
         ensure_charger_force();
     } else {
         info("host: no CHARGER_MODE voter (no VBUS force?)");
@@ -791,7 +797,7 @@ pub fn run_otg_auto() -> ! {
                     power_note = note.clone();
                     info(&format!("host: {note}"));
                 }
-                if !charger_forced {
+                if !charger_forced && port_is_sink() {
                     charger_forced = ensure_charger_force();
                 }
             }
