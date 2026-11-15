@@ -42,9 +42,10 @@
 //!
 //! Custom kernels carrying the tcpm DRP patch (upstream fix for the
 //! bootloader sink-clobber) only make the legs succeed: every write
-//! here is capability-checked and best-effort, nothing fights the TCPC
-//! (the daemon never touches `preferred_role`; re-asserts fire only
-//! while a readback disagrees).
+//! here is capability-checked and best-effort. The daemon owns both
+//! typec knobs while host-intended (`power_role` + `preferred_role`,
+//! re-asserts fire only while a readback disagrees) and hands the
+//! preference back to the boot default on the device switch.
 //!
 //! Stock-kernel path (no DRP patch): `tcpm_drp_shim`
 //! (`include/source/tcpm_drp_shim/`, malibu-only) hooks
@@ -85,11 +86,19 @@ const SOURCE_PSY: &str = "tcpm-source-psy-spmi-max77759tcpc";
 /// UDC fallback: base DTB `dwc3@a210000` under `usb3@a200000`.
 /// Used when `/sys/class/udc` is empty (never blindly: the live class wins).
 const UDC_FALLBACK: &str = "a210000.dwc3";
+/// TYPEC preferred role: requesting `source` biases the DRP state
+/// machine to source VBUS (the commit that actually raises VBUS on
+/// Anvil: field-proven 2026-11-14, accepted `rc=0` while `power_role`
+/// EIOs unattached). Rewritten until the readback confirms; restored
+/// to the boot default on the device switch. Deliberately managed
+/// here (m2.sh proved hands-off leaves the port dark).
+const TYPEC_PREFERRED_ROLE: &str = "/sys/class/typec/port0/preferred_role";
 /// TYPEC power role: requesting `source` lets the TCPC power VBUS for
-/// the attached drive (standard typec operation, best-effort). Primary
-/// VBUS leg on DRP-patched kernels; on stock SNK ports the write is
-/// rejected (EOPNOTSUPP) and the CHARGER fallback below applies.
-/// `preferred_role` is deliberately never touched (the TCPC owns it).
+/// the attached drive (standard typec operation, best-effort). Second
+/// leg behind preferred_role: on unattached DRP ports the TCPC
+/// answers EIO/EAGAIN while renegotiating, the per-tick kick lands it
+/// once the state machine settles (accepted writes only — the
+/// readback alone never committed the rail).
 const TYPEC_POWER_ROLE: &str = "/sys/class/typec/port0/power_role";
 /// UDC gadget path (unbind on host switch, rebind on device switch).
 const UDC_FILE: &str = "/config/usb_gadget/g1/UDC";
@@ -348,6 +357,36 @@ fn resolve_udc() -> String {
     names.into_iter().next().unwrap_or_else(|| UDC_FALLBACK.to_string())
 }
 
+/// Live typec preferred-role readback (`[sink]` / `[source]` / …).
+fn read_pref_role() -> String {
+    read_trim(TYPEC_PREFERRED_ROLE)
+}
+
+/// Pure predicate over the preferred_role readback (testable):
+/// rewrite unless already `source`. Bracketed on DRP ports.
+fn pref_needs_assert(readback: &str) -> bool {
+    let t = readback.trim();
+    !(t == "source" || t == "[source]")
+}
+
+/// VBUS leg 0 (primary on DRP): request preferred `source`. Returns
+/// the one-line note for the log; the switch path logs it, the tick
+/// path dedups it. `force` mirrors the power leg: kick unconditionally
+/// until a disk shows up (an accepted-but-uncommitted preference must
+/// not stall the retry), gate on the readback after.
+fn try_pref_source(force: bool) -> String {
+    if !Path::new(TYPEC_PREFERRED_ROLE).exists() {
+        return "no typec preferred_role node".to_string();
+    }
+    if !force && !pref_needs_assert(&read_pref_role()) {
+        return "preferred_role already source".to_string();
+    }
+    match std::fs::write(TYPEC_PREFERRED_ROLE, b"source\n") {
+        Ok(()) => "preferred_role=source requested".to_string(),
+        Err(e) => format!("preferred_role write FAILED: {e}"),
+    }
+}
+
 /// Live typec power-role readback (`[source] sink` / `[sink]` / …).
 fn read_power_role() -> String {
     read_trim(TYPEC_POWER_ROLE)
@@ -510,8 +549,17 @@ fn switch_to_host(current: &mut String) {
         }
         None => info("host: no usb_role switch found"),
     }
-    // VBUS leg 1 (primary on DRP-patched kernels): typec power_role.
+    // VBUS leg 0 (proven commit on Anvil DRP): typec preferred_role.
+    // The accepted preferred_role=source write is what commits the
+    // TCPC to source VBUS; power_role alone EIOs unattached.
     // Transition-rare path: always loud.
+    {
+        let note = try_pref_source(false);
+        if !note.is_empty() {
+            info(&format!("host: {note}"));
+        }
+    }
+    // VBUS leg 1: typec power_role. Transition-rare path: always loud.
     {
         let note = try_power_source(false);
         if !note.is_empty() {
@@ -535,13 +583,36 @@ fn switch_to_host(current: &mut String) {
     *current = "host".into();
 }
 
-fn switch_to_device(current: &mut String) {
+/// Derive the restore target from the boot-time readback
+/// (`[sink]` -> `sink`; anything without a known token -> None = leave
+/// alone). Pure (testable): the sysfs write takes bare tokens, but the
+/// readback comes bracketed.
+fn preferred_restore_target(boot_default: &str) -> Option<&'static str> {
+    if boot_default.contains("source") {
+        Some("source")
+    } else if boot_default.contains("sink") {
+        Some("sink")
+    } else {
+        None
+    }
+}
+
+fn switch_to_device(current: &mut String, preferred_boot: &str) {
     if current.as_str() == "device" {
         return;
     }
     info(">>> SWITCHING TO DEVICE MODE <<<");
     if Path::new(CHARGER_ACTIVE).exists() {
         let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    }
+    // Hand the preference back to the boot default (usually sink):
+    // host mode held it at `source`, a stuck preference would bias
+    // the next negotiation.
+    if Path::new(TYPEC_PREFERRED_ROLE).exists() {
+        if let Some(want) = preferred_restore_target(preferred_boot) {
+            let _ = std::fs::write(TYPEC_PREFERRED_ROLE, format!("{want}\n").as_bytes());
+            info(&format!("device: preferred_role restored to {want}"));
+        }
     }
     let _ = set_prop("sys.usb.ffs.ready", "1");
     // Self-healing bind: init triggers are edge-based; a missed edge leaves
@@ -717,12 +788,15 @@ pub fn run_otg_auto() -> ! {
     let initial = read_vbus(&vbus_file);
     info(&format!("initial VBUS: {initial}"));
     let mut current = String::new();
+    // Boot-time preferred role (usually `[sink]`): host mode holds it
+    // at `source`, the device switch hands it back.
+    let preferred_boot = read_trim(TYPEC_PREFERRED_ROLE);
     // DRP re-probe (stock sink ports): one attempt per boot, only with
     // host intent (initial decision + cable-out edges below).
     let mut drp_attempted = false;
     if initial == "1" {
         info("PC detected at boot (VBUS=1), starting in DEVICE mode");
-        switch_to_device(&mut current);
+        switch_to_device(&mut current, &preferred_boot);
     } else {
         info("no PC at boot (VBUS=0), starting in HOST mode");
         drp_attempted = true;
@@ -735,6 +809,8 @@ pub fn run_otg_auto() -> ! {
     // Last power-leg note: the per-tick top-up logs only on change,
     // steady states (sourced / rejected SNK) stay silent.
     let mut power_note = String::new();
+    // Same dedup for the preferred_role leg.
+    let mut pref_note = String::new();
     // CHARGER leg latch: force files read back empty on most kernels,
     // so the tick latches the first kick instead of re-reading.
     let mut charger_forced = false;
@@ -770,7 +846,7 @@ pub fn run_otg_auto() -> ! {
                     } else {
                         defer_logged = false;
                         charger_forced = false;
-                        switch_to_device(&mut current);
+                        switch_to_device(&mut current, &preferred_boot);
                         prev = stable;
                     }
                 } else {
@@ -793,13 +869,18 @@ pub fn run_otg_auto() -> ! {
                 info("daemon: role drifted from host, re-asserting");
                 switch_to_host(&mut String::from("device"));
             } else {
-                // Role stuck: keep kicking VBUS leg 1 until a disk shows
-                // up. The readback can claim `source` while the rail never
+                // Role stuck: keep kicking VBUS legs until a disk shows
+                // up. Readbacks can claim `source` while the rail never
                 // committed (enum followed only accepted writes), so the
-                // gated check is not enough here; once enumerated, fall
+                // gated checks are not enough here; once enumerated, fall
                 // back to quiet readback-gated top-ups (nothing to glitch
                 // mid-session). Log only on change.
                 let kicking = pick_otg_disk().is_none();
+                let note = try_pref_source(kicking);
+                if !note.is_empty() && note != pref_note {
+                    pref_note = note.clone();
+                    info(&format!("host: {note}"));
+                }
                 let note = try_power_source(kicking);
                 if !note.is_empty() && note != power_note {
                     power_note = note.clone();
@@ -835,6 +916,25 @@ mod tests {
         assert!(!port_is_sink_str("[dual]"));
         assert!(!port_is_sink_str("[source] sink"));
         assert!(!port_is_sink_str(""));
+    }
+
+    #[test]
+    fn pref_assert_predicate() {
+        // Bracketed (DRP show) and bare spellings both count.
+        assert!(!pref_needs_assert("source"));
+        assert!(!pref_needs_assert("[source]"));
+        assert!(!pref_needs_assert("  [source]  "));
+        assert!(pref_needs_assert("[sink]"));
+        assert!(pref_needs_assert("sink"));
+        assert!(pref_needs_assert(""));
+    }
+
+    #[test]
+    fn preferred_restore_target_derivation() {
+        assert_eq!(preferred_restore_target("[sink]"), Some("sink"));
+        assert_eq!(preferred_restore_target("sink"), Some("sink"));
+        assert_eq!(preferred_restore_target("[source]"), Some("source"));
+        assert_eq!(preferred_restore_target(""), None);
     }
 
     #[test]
