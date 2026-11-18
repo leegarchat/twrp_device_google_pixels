@@ -1,0 +1,52 @@
+--- a/bootable/recovery/gui/nanosvg.cpp
++++ b/bootable/recovery/gui/nanosvg.cpp
+@@ -32,6 +32,7 @@
+ #include <iostream>
+ #include <iomanip>
+ #include <fcntl.h>
++#include <cutils/properties.h>
+ 
+ //#define NANOSVG_IMPLEMENTATION	1	// Expands implementation
+ //#define NANOSVGRAST_CPLUSPLUS 1
+@@ -45,6 +46,21 @@
+ 
+ struct NSVGrasterizer* rast = nsvgCreateRasterizer();
+ 
++// Fox AIO runtime R/B-swap selector (same contract as fox_rb_swap() in
++// minuitwrp/graphics.cpp: ro.recovery.rb_swap="1" for malibu/laguna,
++// "0" otherwise, absent = no swap). Separate TU, same one-line cache.
++static int g_fox_rb_swap = -1;
++static bool fox_rb_swap(void)
++{
++	if (g_fox_rb_swap < 0) {
++		char v[PROPERTY_VALUE_MAX];
++		g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
++		printf("fox_rb_swap(svg): ro.recovery.rb_swap=%s -> %s\n", v[0] ? v : "(absent)",
++			g_fox_rb_swap ? "SWAP" : "no-swap");
++	}
++	return g_fox_rb_swap == 1;
++}
++
+ int res_create_svg_surface(const char* name, float scale, gr_surface* pSurface) {
+ 	*pSurface = NULL;
+ 
+@@ -71,6 +87,19 @@
+ 
+ 	nsvgRasterize(rast, image, 0, 0, scale, (unsigned char*)img, w, h, w*4);
+ 
++	// Fox AIO: the rasterizer always emits RGBA byte order, but the PNG/JPG
++	// decoders swap R/B at load for malibu/laguna -- so swap here too, or SVG
++	// icons disagree with every other pixel. Default path leaves the buffer
++	// untouched (bit-identical to today).
++	if (fox_rb_swap()) {
++		unsigned char* p = (unsigned char*)img;
++		for (int i = 0; i < w * h; i++, p += 4) {
++			unsigned char t = p[0];
++			p[0] = p[2];
++			p[2] = t;
++		}
++	}
++
+ 	GGLSurface *surface;
+ 	surface = (GGLSurface *)malloc(sizeof(GGLSurface));
+ 	memset(surface, 0, sizeof(GGLSurface));

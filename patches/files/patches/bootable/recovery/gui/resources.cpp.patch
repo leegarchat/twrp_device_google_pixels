@@ -1,0 +1,84 @@
+--- a/bootable/recovery/gui/resources.cpp
++++ b/bootable/recovery/gui/resources.cpp
+@@ -29,6 +29,7 @@
+ #include <iostream>
+ #include <iomanip>
+ #include <fcntl.h>
++#include <cutils/properties.h>
+ #include <ziparchive/zip_archive.h>
+ #include <android-base/unique_fd.h>
+ 
+@@ -47,6 +48,32 @@
+ 
+ #define TMP_RESOURCE_NAME   "/tmp/extract.bin"
+ 
++// Fox AIO runtime R/B-swap selector (same contract as fox_rb_swap() in
++// minuitwrp/graphics.cpp and minuitwrp/resources.cpp:
++// ro.recovery.rb_swap="1" for malibu/laguna, "0" otherwise, absent = no
++// swap). Separate TU, same one-line cache.
++static int g_fox_rb_swap = -1;
++static bool fox_rb_swap(void)
++{
++	if (g_fox_rb_swap < 0) {
++		char v[PROPERTY_VALUE_MAX];
++		g_fox_rb_swap = (property_get("ro.recovery.rb_swap", v, "") > 0 && v[0] == '1') ? 1 : 0;
++		printf("fox_rb_swap(gui): ro.recovery.rb_swap=%s -> %s\n", v[0] ? v : "(absent)",
++			g_fox_rb_swap ? "SWAP" : "no-swap");
++	}
++	return g_fox_rb_swap == 1;
++}
++
++// Pack a COLOR into the native uint32 pixel word. Stock order keeps blue in
++// bits 16-23; swapped families need red there instead (same ternary shape as
++// gr_render_circle in minuitwrp/graphics.cpp). The second arm is today's
++// expression verbatim, so absent/"0" output is bit-identical.
++static uint32_t fox_pack_color_a(COLOR color, unsigned int alpha)
++{
++	return fox_rb_swap() ? (uint32_t)((alpha << 24) | (color.red << 16) | (color.green << 8) | color.blue)
++		: (uint32_t)((alpha << 24) | (color.blue << 16) | (color.green << 8) | color.red);
++}
++
+ Resource::Resource(xml_node<>* node, ZipArchiveHandle pZip __unused)
+ {
+ 	if (node && node->first_attribute("name"))
+@@ -257,7 +284,11 @@
+ 		int size = surface->width * surface->height;
+ 		uint32_t *data = (uint32_t *)surface->data;
+ 
+-		const uint32_t tint_rgb = (color.blue << 16) | (color.green << 8) | color.red;
++		// Fox AIO: packed tint must agree with gr_color's runtime swap --
++		// stock order keeps blue in bits 16-23, swapped families need red
++		// there instead. The second arm is today's expression verbatim.
++		const uint32_t tint_rgb = fox_rb_swap() ? (uint32_t)((color.red << 16) | (color.green << 8) | color.blue)
++			: (uint32_t)((color.blue << 16) | (color.green << 8) | color.red);
+ 
+ 		for (int i = 0; i < size; i++) {
+ 			uint8_t alpha = (*(data + i) >> 24) & 0xFF;
+@@ -281,7 +312,8 @@
+     if (!data) return nullptr; // Handle allocation failure
+     memset(data, 0, malloc_size);
+ 
+-    const uint32_t px = (color.alpha << 24) | (color.blue << 16) | (color.green << 8) | color.red;
++    // Fox AIO: packed pixel must agree with gr_color's runtime swap.
++    const uint32_t px = fox_pack_color_a(color, color.alpha);
+ 
+     // --- Simplification for non-rounded, filled rectangle ---
+     if (radius == 0 && stroke == 0 && corners_to_round == RoundedCornerFlags::NONE) {
+@@ -312,7 +344,7 @@
+                 }
+             }
+         } else { // Stroked rectangle
+-             const uint32_t px_aa = ((color.alpha / 2) << 24) | (color.blue << 16) | (color.green << 8) | color.red; // Simple AA for stroke
++             const uint32_t px_aa = fox_pack_color_a(color, color.alpha / 2); // Simple AA for stroke
+              // Top & Bottom lines
+             for (int x = 0; x < w; ++x) {
+                 for(int s=0; s<stroke; ++s){
+@@ -355,7 +387,7 @@
+     const float radius_check = radius_sq_outer + radius2 * 0.6f;
+     const float radius_check_aa = radius_sq_outer + radius2 * 1.4f;
+ 
+-    const uint32_t px_aa = ((color.alpha / 2) << 24) | (color.blue << 16) | (color.green << 8) | color.red;
++    const uint32_t px_aa = fox_pack_color_a(color, color.alpha / 2);
+ 
+     // Calculate inner radius checks only if stroking
+     float radius_check_hollow = 0;
