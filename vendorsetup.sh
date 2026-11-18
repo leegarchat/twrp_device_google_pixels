@@ -215,7 +215,34 @@ export OF_DONT_KEEP_LOG_HISTORY=0
 export FOX_INSTALLER_DISABLE_AUTOREBOOT=0
 # Upstream renamed this to OF_* (make var + -D define); the FOX_ name is
 # dead on both layers (orangefox.mk + orangefox_defaults.go).
+# Stays OFF on purpose: =1 would force *both* settings and misc into
+# /data/recovery (and forbids custom roots below). We want the alioth
+# split instead — settings unencrypted, misc untouched on sdcard —
+# so the roots are set directly.
 export OF_USE_DATA_RECOVERY_FOR_SETTINGS=0
+
+# --- OrangeFox settings storage: unencrypted /data/recovery (alioth-style split) ---
+# Stock behavior (settings under /sdcard/Fox) needs decrypt before first
+# read: a Skip-decrypt boot loads GUI defaults over the persist copy, and
+# the next save poisons BOTH .foxs files with defaults (settings "don't
+# survive reboot"). /data/recovery is readable/writable without FBE keys,
+# so every boot heals from a fresh file and saves stay valid — encrypted
+# and DFE setups alike. Misc/home intentionally stays on sdcard (matches
+# alioth: settings here, misc on /sdcard over there).
+export OF_SETTINGS_ROOT_DIRECTORY=/data/recovery
+export OF_MISCELLANEOUS_ROOT_DIRECTORY=/sdcard
+
+# --- FALLBACK (peridot-style): everything settings-related on /persist ---
+# If /data/recovery misbehaves on some unit, comment the two lines above
+# and uncomment the two below, then rebuild. Same structural guarantee
+# (always readable pre-decrypt, no decrypt needed), different mount.
+# No other changes needed.
+# (Peridot additionally uses FOX_ALLOW_EARLY_SETTINGS_LOAD=1 +
+# FOX_RESET_SETTINGS=disabled; not copied — our post-decrypt-page
+# ReadSettingsFile already heals every boot, and early-load changes
+# the theme-reload path in twrp.cpp.)
+# export OF_SETTINGS_ROOT_DIRECTORY=/persist
+# export OF_MISCELLANEOUS_ROOT_DIRECTORY=/persist
 
 
 # --- KernelSU ---
