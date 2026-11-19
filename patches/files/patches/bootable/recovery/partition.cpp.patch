@@ -29,7 +29,22 @@
  #include "variables.h"
  #include "twcommon.h"
  #include "partitions.hpp"
-@@ -989,12 +999,14 @@
+@@ -871,7 +881,13 @@
+ 	LOGERR("FBE found but FBE support not present!\n");
+ #endif
+ 	}
+-	DataManager::SetValue(TW_IS_FBE, 0);
++	// Fox (pixels): do NOT clear TW_IS_FBE when this partition declares FBE
++	// (Key_Directory set). A failed DE init must not demote the device to the
++	// legacy FDE path: the PIN entry would then run the dead FDE branch and
++	// print a fake "Data successfully decrypted" off a stale property instead
++	// of attempting the FBE user unlock. Clear only when FBE was never there.
++	if (Key_Directory.empty())
++		DataManager::SetValue(TW_IS_FBE, 0);
+ 	return false;
+ }
+ 
+@@ -989,12 +1005,14 @@
  			Crypto_Key_Location = str;
  			break;
  		case TWFLAG_FILEENCRYPTION:
@@ -46,7 +61,7 @@
  					property_set("fbe.contents", FBE.c_str());
  					property_set("fbe.filenames", "");
  					LOGINFO("FBE contents '%s', filenames ''\n", FBE.c_str());
-@@ -1003,18 +1015,30 @@
+@@ -1003,18 +1021,30 @@
  				std::string FBE_contents, FBE_filenames;
  				FBE_contents = FBE.substr(0, colon_loc);
  				FBE_filenames = FBE.substr(colon_loc + 1);
@@ -79,7 +94,7 @@
  					property_set("metadata.contents", META.c_str());
  					property_set("metadata.filenames", "");
  					LOGINFO("Metadata contents '%s', filenames ''\n", META.c_str());
-@@ -1023,6 +1047,7 @@
+@@ -1023,6 +1053,7 @@
  				std::string META_contents, META_filenames;
  				META_contents = META.substr(0, colon_loc);
  				META_filenames = META.substr(colon_loc + 1);
@@ -87,7 +102,7 @@
  				property_set("metadata.contents", META_contents.c_str());
  				property_set("metadata.filenames", META_filenames.c_str());
  				LOGINFO("Metadata contents '%s', filenames '%s'\n", META_contents.c_str(), META_filenames.c_str());
-@@ -1377,9 +1402,9 @@
+@@ -1377,9 +1408,9 @@
  		}
  	}
  	ExcludeAll(Mount_Point + "/media");
@@ -99,7 +114,7 @@
  	}
  #endif
  }
-@@ -1611,6 +1636,15 @@
+@@ -1611,6 +1642,15 @@
  	test_path = Mount_Point + "/../.";
  	if (stat(test_path.c_str(), &st2) != 0)  return false;
  
@@ -115,7 +130,7 @@
  	// Compare the device IDs -- if they match then we're (probably) using tmpfs instead of an actual device
  	int ret = (st1.st_dev != st2.st_dev) ? true : false;
  
-@@ -1636,6 +1670,7 @@
+@@ -1636,6 +1676,7 @@
  		return false;
  	}
  
@@ -123,7 +138,7 @@
  	Find_Actual_Block_Device();
  
  	// Check the current file system before mounting
-@@ -1774,6 +1809,33 @@
+@@ -1774,6 +1815,33 @@
  	}
  
  exit:
@@ -157,7 +172,7 @@
  	if (Removable)
  		Update_Size(Display_Error);
  
-@@ -1781,11 +1843,51 @@
+@@ -1781,11 +1849,51 @@
  		if (!Bind_Mount(false))
  			return false;
  	}
@@ -209,7 +224,7 @@
  		if (mount(Symlink_Path.c_str(), Symlink_Mount_Point.c_str(), "", MS_BIND, NULL) < 0) {
  			return false;
  		}
-@@ -1804,17 +1906,28 @@
+@@ -1804,9 +1912,20 @@
  		if (Is_Storage && MTP_Storage_ID > 0)
  			PartitionManager.Remove_MTP_Storage(MTP_Storage_ID);
  
@@ -220,19 +235,19 @@
 +			// multiple times: from Mount and from Post_Decrypt)
 +			while (umount2(Symlink_Mount_Point.c_str(), flags) == 0);
 +		}
-+
+ 
 +		// Unmount sub-mounts under /data that block clean unmount
 +		// (e.g. /data/user/0 bind mount from fscrypt_init_user0)
 +		if (Mount_Point == "/data") {
 +			umount2("/data/user/0", flags);
 +			umount2("/data/media/0", flags);
 +		}
- 
- 		umount2(Mount_Point.c_str(), flags);
++
 +		umount2(Mount_Point.c_str(), flags);
+ 		umount2(Mount_Point.c_str(), flags);
  		if (Is_Mounted()) {
  			if (Mount_Point == "/data" || Mount_Point == "/sdcard" || Mount_Point == "/data/media/0") {
- 				LOGINFO("DEBUG: attempting again to unmount '%s'\n", Mount_Point.c_str());
+@@ -1814,7 +1933,7 @@
  				TWFunc::Exec_Cmd("umount -l " + Mount_Point);
  				sleep(1);
  				if (!Is_Mounted())
@@ -241,7 +256,7 @@
  			}
  			if (Display_Error)
  				gui_msg(Msg(msg::kError, "fail_unmount=Failed to unmount '{1}' ({2})")(Mount_Point)(strerror(errno)));
-@@ -1822,6 +1935,19 @@
+@@ -1822,6 +1941,19 @@
  				LOGINFO("Unable to unmount '%s'\n", Mount_Point.c_str());
  			return false;
  		} else {
@@ -261,7 +276,7 @@
  			return true;
  		}
  	} else {
-@@ -1875,7 +2001,15 @@
+@@ -1875,7 +2007,15 @@
  		}
  	}
  
@@ -278,7 +293,7 @@
  		wiped = Wipe_Data_Without_Wiping_Media();
  
  		if (Mount_Point == "/data" && TWFunc::get_log_dir() == DATA_LOGS_DIR) {
-@@ -1885,8 +2019,6 @@
+@@ -1885,8 +2025,6 @@
  		}
  		recreate_media = false;
  	} else {
@@ -287,7 +302,7 @@
  		if (Mount_Point == "/storage")
  		  {
  	   	    LOGINFO("DEBUG - OrangeFox: wiping /storage with \"rm -rf\" ... \n");
-@@ -2234,14 +2366,48 @@
+@@ -2234,14 +2372,48 @@
  	return 1;
  }
  
@@ -336,7 +351,7 @@
  #if defined(OF_FORCE_DATA_FORMAT_F2FS)
  	the_wipe_fs = "f2fs";
  #elif defined(OF_FORCE_DATA_FORMAT_EXT4)
-@@ -2261,19 +2427,30 @@
+@@ -2261,19 +2433,30 @@
  		return false;
  	}
  
@@ -378,7 +393,7 @@
  
  #ifdef OF_DISPLAY_FORMAT_FILESYSTEMS_DEBUG_INFO
  	gui_print("DEBUG: Fstab_File_System=%s\n", Fstab_File_System.c_str());
-@@ -2471,6 +2648,13 @@
+@@ -2471,6 +2654,13 @@
  	if (!UnMount(true))
  		return false;
  
@@ -392,7 +407,7 @@
  	Find_Actual_Block_Device();
  	if (!Is_Present) {
  		LOGINFO("Block device not present, cannot wipe %s.\n", Display_Name.c_str());
-@@ -2624,6 +2808,13 @@
+@@ -2624,6 +2814,13 @@
  	if (!UnMount(true))
  		return false;
  
@@ -406,7 +421,7 @@
  	/*
  	* This function now supports casefolding and project id quota.
  	* Your device tree should include this:
-@@ -2677,9 +2868,30 @@
+@@ -2677,9 +2874,30 @@
  	if (Needs_Fs_Compress)
  		f2fs_command += " -O compression,extra_attr";
  
@@ -439,7 +454,7 @@
  		f2fs_command += " && sload_f2fs -t /data " + Actual_Block_Device;
  	}
  
-@@ -2704,7 +2916,7 @@
+@@ -2704,7 +2922,7 @@
  		}
  	#endif
  
@@ -448,7 +463,7 @@
  	if (TWFunc::Path_Exists("/dev/block/mapper/userdata")) {
  		LOGINFO("OrangeFox: running dmctl before formatting...\n");
  		TWFunc::Exec_Cmd("dmctl delete userdata", false);
-@@ -2919,7 +3131,17 @@
+@@ -2919,7 +3137,17 @@
  		}
  	}
  	tar.part_settings = part_settings;
@@ -467,7 +482,7 @@
  	tar.setdir(Backup_Path);
  	tar.setfn(Full_FileName);
  	tar.setsize(Backup_Size);
-@@ -3022,8 +3244,10 @@
+@@ -3022,8 +3250,10 @@
  		goto exit;
  	}
  
@@ -479,7 +494,7 @@
  
  	while (Remain > 0) {
  		if (Remain < RW_Block_Size)
-@@ -3071,8 +3295,10 @@
+@@ -3071,8 +3301,10 @@
  	   gui_msg(Msg("backing_up=Backing up {1}...")(Backup_Display_Name));
  	}
  
@@ -491,7 +506,7 @@
  
  	Backup_FileName = Backup_Name + "." + Current_File_System + ".win";
  	Full_FileName = part_settings->Backup_Folder + "/" + Backup_FileName;
-@@ -3178,7 +3404,10 @@
+@@ -3178,7 +3410,10 @@
  	if (!Password.empty())
  		tar.setpassword(Password);
  #endif
@@ -503,7 +518,7 @@
  	if (tar.extractTarFork() != 0)
  		ret = false;
  	else
-@@ -3242,6 +3471,7 @@
+@@ -3242,6 +3477,7 @@
  
  bool TWPartition::Update_Size(bool Display_Error) {
  	bool ret = false, Was_Already_Mounted = false, ro = false;
@@ -511,7 +526,7 @@
  
  	Find_Actual_Block_Device();
  
-@@ -3573,6 +3803,7 @@
+@@ -3573,6 +3809,7 @@
  	gui_msg(Msg("flashing=Flashing {1}...")(Display_Name));
  	if (progress) {
  		file_size = (unsigned long long)(TWFunc::Get_File_Size(Filename));

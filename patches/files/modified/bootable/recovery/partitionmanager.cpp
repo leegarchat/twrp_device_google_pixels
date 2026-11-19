@@ -2770,7 +2770,29 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
 				user_need_decrypt = true;
 			}
 		}
+		if (!user_need_decrypt && Users_List.empty()) {
+			// Fox (pixels): an empty Users_List on an FBE device means the
+			// boot-time DE init never completed (twrp.user.N.decrypt props are
+			// set by load_all_de_keys, which never ran) - not that there is
+			// nothing to decrypt. Retry DE once: a transient boot failure can
+			// still heal here (Decrypt_FBE_DE re-parses users itself). If it
+			// still fails, report failure instead of the old fake success.
+			LOGINFO("User list empty, retrying FBE DE init before user decrypt\n");
+			TWPartition* dat = Find_Partition_By_Path("/data");
+			if (dat != NULL && dat->Decrypt_FBE_DE()) {
+				for (iter = Users_List.begin(); iter != Users_List.end(); iter++) {
+					if (atoi((*iter).userId.c_str()) == user_id && !(*iter).isDecrypted) {
+						user_need_decrypt = true;
+						break;
+					}
+				}
+			}
+		}
 		if (!user_need_decrypt) {
+			if (Users_List.empty()) {
+				gui_msg(Msg(msg::kError, "decrypt_fbe_no_de=Cannot decrypt: device keys are unavailable (FBE init failed)."));
+				return -1;
+			}
 			LOGINFO("User %d does not require decryption\n", user_id);
 			return 0;
 		}
@@ -2836,11 +2858,13 @@ int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
 		LOGERR("fork failed\n");
 		return -1;
 	} else if (pid == 0) {
-		// Child process
-		char cPassword[255];
-		strcpy(cPassword, Password.c_str());
-		//int ret = cryptfs_check_passwd(cPassword);
-		//exit(ret);
+		// Child process. Fox (pixels): the legacy cryptfs password check is
+		// compiled out, so this branch can never genuinely succeed. Exit
+		// immediately with failure: falling through would run the parent tail
+		// in the child (double logging) and hand the child's action return
+		// code to the parent as the decrypt result, faking a later "Data
+		// successfully decrypted" off a stale ro.crypto.fs_crypto_blkdev.
+		_exit(1);
 	} else {
 		// Parent
 		int status;

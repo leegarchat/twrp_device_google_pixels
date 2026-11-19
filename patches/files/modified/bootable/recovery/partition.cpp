@@ -881,7 +881,13 @@ if (TWFunc::Path_Exists("/data/unencrypted/key/version")) {
 	LOGERR("FBE found but FBE support not present!\n");
 #endif
 	}
-	DataManager::SetValue(TW_IS_FBE, 0);
+	// Fox (pixels): do NOT clear TW_IS_FBE when this partition declares FBE
+	// (Key_Directory set). A failed DE init must not demote the device to the
+	// legacy FDE path: the PIN entry would then run the dead FDE branch and
+	// print a fake "Data successfully decrypted" off a stale property instead
+	// of attempting the FBE user unlock. Clear only when FBE was never there.
+	if (Key_Directory.empty())
+		DataManager::SetValue(TW_IS_FBE, 0);
 	return false;
 }
 
