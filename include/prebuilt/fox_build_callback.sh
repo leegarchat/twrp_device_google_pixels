@@ -1144,6 +1144,18 @@ case "$CALL_TYPE" in
         build_device_touch_cpios "$TARGET_DIR"
         echo ""
 
+        # --- flog shorthand: bare `flog` -> flog.sh (relative link; same
+        # dir is on the recovery shell PATH). Created BEFORE the LGZ pack
+        # + manifest/file-list generation below so the link is listed and
+        # snapshotted like any other ramdisk entry (packer only ingests
+        # regular files, so the link itself stays open).
+        if [ -f "$TARGET_DIR/system/bin/flog.sh" ]; then
+            ln -sf "flog.sh" "$TARGET_DIR/system/bin/flog"
+            echo "    [FLOG]   + system/bin/flog -> flog.sh"
+        else
+            echo "    [FLOG] WARNING: system/bin/flog.sh missing, shorthand skipped"
+        fi
+
         # --- LGZ: Compress ramdisk binaries for space savings ---
         echo ""
         echo "    === LGZ Ramdisk Compression ==="
