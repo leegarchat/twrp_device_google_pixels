@@ -486,15 +486,12 @@ fn port_is_sink() -> bool {
     port_is_sink_str(&read_trim("/sys/class/typec/port0/port_type"))
 }
 
-/// One-shot per boot: on stock sink ports, ask the drp shim (via
-/// /proc, command "2") to release + re-attach the TCPC behind port0.
-/// The re-probe re-runs with the fwcap hook armed, promoting the port
-/// to DRP — then the normal power_role leg proceeds. Patched kernels
-/// read dual: no-op (hook condition never matches). Only with host
-/// intent and nothing mounted — tearing down the live charger TCPC
-/// under a mounted drive would kill the transfer. The sysfs
-/// unbind/bind path is deliberately NOT used: the driver core rejects
-/// the unbind with ENODEV on this stack.
+/// One-shot / on-demand live DRP promotion: on stock sink ports, ask
+/// `tcpm_drp_shim` (via `/proc/tcpm_drp_shim`, command `"2"`) to promote
+/// `/sys/class/typec/port0` in place (`cap->type = DRP`, `port->port_type = DRP`,
+/// `ops->port_type_set(DRP)` + `ops->try_role(SOURCE)`). Instantaneous and
+/// requires no TCPC driver unbind. Patched kernels already read `[dual]`
+/// and return immediately.
 fn maybe_reprobe_sink_port() {
     if !port_is_sink() {
         return;
@@ -504,25 +501,39 @@ fn maybe_reprobe_sink_port() {
         return;
     }
     if super::usb_storage_mounted() {
-        info("drp re-probe deferred: USB storage mounted");
+        info("drp promote deferred: USB storage mounted");
         return;
     }
-    // "2" = arm + re-probe now (synchronous inside the module: release,
-    // 2s settle, re-attach). Afterwards the port re-registers — dual on
-    // success (hook patched the caps), sink on failure.
     if let Err(e) = std::fs::write(PROC_DRP, b"2\n") {
-        if e.raw_os_error() == Some(libc::EINVAL) {
-            info("drp re-probe: shim rejected the command (stale prebuilt without reprobe cmd?) — rebuild tcpm_drp_shim.ko");
-        }
-        info(&format!("drp re-probe: /proc write FAILED ({e}), aborting"));
+        info(&format!("drp promote: /proc write FAILED ({e})"));
         return;
     }
-    sleep(Duration::from_secs(5));
+    sleep(Duration::from_millis(200));
     info(&format!(
-        "drp re-probe done: port_type=[{}] ({})",
+        "drp promote done: port_type=[{}] ({})",
         read_trim("/sys/class/typec/port0/port_type"),
         read_trim(PROC_DRP)
     ));
+}
+
+/// Unlatch max77779 charger on cold unplugged boots: when booting without a
+/// PC cable, the charger starts in CHGIN_SUSP (`chgin_off=1`), and a direct
+/// `Standby(0)->OTG(9)` transition fails to power the BYP/VBUS switch
+/// (`max77779_chgr_irq INT : 40 00` instead of `d0 08`). A brief pulse through
+/// `USB_CHG(201) -> Standby(0)` via `CHARGER_MODE` clears the latch (identical
+/// to the PC-unplug edge in the working boot 155324) and leaves the election
+/// unforced so TCPCI's natural OTG vote (49) takes over on drive attach.
+fn unlatch_charger_for_host() {
+    super::ensure_debugfs();
+    if !Path::new(CHARGER_VALUE).exists() || !Path::new(CHARGER_ACTIVE).exists() {
+        return;
+    }
+    info("host: pulsing CHARGER_MODE (2 -> release) to clear cold-boot CHGIN_SUSP latch");
+    let _ = std::fs::write(CHARGER_VALUE, b"2\n");
+    let _ = std::fs::write(CHARGER_ACTIVE, b"1\n");
+    sleep(Duration::from_millis(150));
+    let _ = std::fs::write(CHARGER_ACTIVE, b"0\n");
+    sleep(Duration::from_millis(100));
 }
 
 /// Manual host path (malibu field-proven on grizzly 2026-11-14, Anvil
@@ -533,7 +544,15 @@ fn switch_to_host(current: &mut String) {
     if current.as_str() == "host" {
         return;
     }
+    let cold_boot = current.is_empty();
     info(">>> SWITCHING TO HOST MODE <<<");
+    // Promote stock sink port to DRP in place before touching typec roles.
+    maybe_reprobe_sink_port();
+    // On cold unplugged boot, clear the charger CHGIN_SUSP latch first so
+    // the subsequent OTG(9) transition powers VBUS (INT : d0 08).
+    if cold_boot {
+        unlatch_charger_for_host();
+    }
     // The gadget holds the controller in every failed boot (UDC stays
     // bound, xhci never enumerates): detach first, then switch.
     match std::fs::write(UDC_FILE, b"\n") {
@@ -549,32 +568,24 @@ fn switch_to_host(current: &mut String) {
         }
         None => info("host: no usb_role switch found"),
     }
-    // VBUS leg 0 (proven commit on Anvil DRP): typec preferred_role.
-    // The accepted preferred_role=source write is what commits the
-    // TCPC to source VBUS; power_role alone EIOs unattached.
-    // Transition-rare path: always loud.
+    // VBUS leg 0: typec preferred_role=source (sets try_role=SOURCE).
     {
         let note = try_pref_source(false);
         if !note.is_empty() {
             info(&format!("host: {note}"));
         }
     }
-    // VBUS leg 1: typec power_role. Transition-rare path: always loud.
+    // VBUS leg 1: typec power_role=source (best-effort).
     {
         let note = try_power_source(false);
         if !note.is_empty() {
             info(&format!("host: {note}"));
         }
     }
-    // VBUS leg 2 (best-effort fallback, STOCK SINK PORTS ONLY):
-    // CHARGER_MODE 49-force. On DRP-patched kernels the TCPC sources
-    // VBUS itself and the usecase follows the attach naturally — voting
-    // a sticky force there would only pin the machine early and skip
-    // the attach-time transition, so stay out of its way.
-    // Debugfs first — the election only exists under /sys/kernel/debug.
+    // VBUS leg 2 (fallback if port is still sink and cannot vote TCPCI=49):
     super::ensure_debugfs();
     if !port_is_sink() {
-        info("host: DRP port, skipping CHARGER force (TCPC sources VBUS)");
+        info("host: DRP port, leaving CHARGER_MODE unforced (TCPCI votes 49 on attach)");
     } else if Path::new(CHARGER_VALUE).exists() {
         ensure_charger_force();
     } else {
@@ -791,16 +802,11 @@ pub fn run_otg_auto() -> ! {
     // Boot-time preferred role (usually `[sink]`): host mode holds it
     // at `source`, the device switch hands it back.
     let preferred_boot = read_trim(TYPEC_PREFERRED_ROLE);
-    // DRP re-probe (stock sink ports): one attempt per boot, only with
-    // host intent (initial decision + cable-out edges below).
-    let mut drp_attempted = false;
     if initial == "1" {
         info("PC detected at boot (VBUS=1), starting in DEVICE mode");
         switch_to_device(&mut current, &preferred_boot);
     } else {
         info("no PC at boot (VBUS=0), starting in HOST mode");
-        drp_attempted = true;
-        maybe_reprobe_sink_port();
         switch_to_host(&mut current);
     }
     let mut prev = initial;
@@ -851,10 +857,6 @@ pub fn run_otg_auto() -> ! {
                     }
                 } else {
                     defer_logged = false;
-                    if !drp_attempted {
-                        drp_attempted = true;
-                        maybe_reprobe_sink_port();
-                    }
                     switch_to_host(&mut current);
                     prev = stable;
                 }
@@ -862,26 +864,22 @@ pub fn run_otg_auto() -> ! {
         }
         // Re-assert host while unplugged: a renegotiating TCPC can park
         // the role back to device behind our backs — or reject the
-        // first power_role write (EIO) while accepting the retry.
+        // first power_role write (EIO) while accepting the retry once
+        // readback still shows sink. Never spam writes once readback
+        // already reports [source] (unconditional writes trigger PD
+        // PR_Swap and disrupt non-PD flash drives).
         if current == "host" {
             let role_now = read_data_role();
             if !role_now.is_empty() && role_now != "host" {
                 info("daemon: role drifted from host, re-asserting");
                 switch_to_host(&mut String::from("device"));
             } else {
-                // Role stuck: keep kicking VBUS legs until a disk shows
-                // up. Readbacks can claim `source` while the rail never
-                // committed (enum followed only accepted writes), so the
-                // gated checks are not enough here; once enumerated, fall
-                // back to quiet readback-gated top-ups (nothing to glitch
-                // mid-session). Log only on change.
-                let kicking = pick_otg_disk().is_none();
-                let note = try_pref_source(kicking);
+                let note = try_pref_source(false);
                 if !note.is_empty() && note != pref_note {
                     pref_note = note.clone();
                     info(&format!("host: {note}"));
                 }
-                let note = try_power_source(kicking);
+                let note = try_power_source(false);
                 if !note.is_empty() && note != power_note {
                     power_note = note.clone();
                     info(&format!("host: {note}"));
