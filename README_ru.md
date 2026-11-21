@@ -31,14 +31,15 @@
 <details>
 <summary>📱 Устройства (25) - один zip на всех</summary>
 
-| Семейство | SoC | Устройства |
-|---|---|---|
-| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
-| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
-| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
-| `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
-| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
-| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
+
+| Семейство | SoC       | Устройства                                                                        |
+| ------------------ | --------- | ------------------------------------------------------------------------------------------- |
+| `gs101`            | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a)                                                     |
+| `gs201`            | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet)                   |
+| `zuma`             | Tensor G3 | shiba (8), husky (8 Pro), akita (8a)                                                        |
+| `zumapro`          | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
+| `laguna`           | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold)                     |
+| `malibu`           | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold)                         |
 
 Вендор-специфика каждого устройства (модули тача, пути UFS/USB, пропсы, тип KeyMint) живёт в JSON (`families/*/family.json`, `devices/*/pixel.json`) и подхватывается при загрузке - ничего не запечено под модель.
 
@@ -93,31 +94,32 @@
 
 > 🟢 работает (подтверждено) · 🔴 сломано · 🟡 не проверялось · 🔵 должно работать, детально не проверялось · 🟠 перебои
 
-| Функция | G1 | G2 | G3 | G4 | G5 | G6 |
-|---|---|---|---|---|---|---|
-| Загрузка рекавери | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Расшифровка data | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Прошивка ROM | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| ADB sideload | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Бэкап / восстановление | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Форматирование data | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| OTG | 🟢 | 🔵 | 🟢 | 🟢 | 🟢 | 🟡 |
-| Фонарик | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 |
-| Вибрация | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Тачскрин | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Тач (битый super) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Вибрация (битый super) | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
-| Яркость экрана | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Перезагрузка в Android | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Меню перезагрузки | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| PIN-разблокировка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Слоты A/B | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Fastbootd | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Файлы + терминал | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| OTA | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Зарядка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Самоперепрошивка | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+
+| Функция                            | G1 | G2 | G3 | G4 | G5 | G6 |
+| ----------------------------------------- | -- | -- | -- | -- | -- | -- |
+| Загрузка рекавери         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Расшифровка data               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| MTP + ADB                                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Прошивка ROM                      | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ADB sideload                              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Бэкап / восстановление | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Форматирование data         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTG                                       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Фонарик                            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Вибрация                          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Тачскрин                          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Тач (битый super)                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Вибрация (битый super)       | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
+| Яркость экрана               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Перезагрузка в Android       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Меню перезагрузки         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| PIN-разблокировка            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Слоты A/B                            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Fastbootd                                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Файлы + терминал             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTA                                       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Зарядка                            | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Самоперепрошивка          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 
 <details>
 <summary>🔍 Сноски - битый super, USB-защита, тестеры</summary>
@@ -218,21 +220,22 @@
 
 > Корень - для быстрого старта (выше). Глубина - в `docs/`, каждый файл отвечает на один вопрос «как это работает и от чего зависит»:
 
-| Документ | Вопрос |
-|---|---|
-| [`docs/tree-guide_ru.md`](docs/tree-guide_ru.md) | Что за файл, зачем нужен, кто его читает |
-| [`docs/build-system_ru.md`](docs/build-system_ru.md) | Как собирается пейлоад: `build.sh`, cpio + installer zip, флаги |
-| [`docs/boot-chain_ru.md`](docs/boot-chain_ru.md) | Цепочка загрузки и init-стаб |
-| [`docs/recovery-engine_ru.md`](docs/recovery-engine_ru.md) | Rust-движок `recovery-pixel-boot`: init, модули, OTG, фонарик |
-| [`docs/decrypt_ru.md`](docs/decrypt_ru.md) | Расшифровка data: keymint, weaver, vold, multi-device |
-| [`docs/device-config_ru.md`](docs/device-config_ru.md) | `pixel.json`: тач, пути, пропсы, фолды и letterbox |
-| [`docs/ramdisk_ru.md`](docs/ramdisk_ru.md) | Содержимое рамдиска: rc-файлы, скрипты, reflash |
-| [`docs/diagnostics_ru.md`](docs/diagnostics_ru.md) | Диагностика на девайсе: что смотреть, если не грузится |
-| [`docs/kernel-profiles_ru.md`](docs/kernel-profiles_ru.md) | Почему kernel-профилей нет: стоковое ядро сохраняется |
-| [`docs/families-devices_ru.md`](docs/families-devices_ru.md) | Как добавить девайс или новый SoC |
-| [`docs/patches_ru.md`](docs/patches_ru.md) | Патч-система: original / modified / .patch |
-| [`docs/FOX_FLAGS_ru.md`](docs/FOX_FLAGS_ru.md) | Все 70+ флагов сборки OFox |
-| [`docs/credits_ru.md`](docs/credits_ru.md) | Что заимствовано и откуда |
+
+| Документ                                             | Вопрос                                                                                        |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| [`docs/tree-guide_ru.md`](docs/tree-guide_ru.md)             | Что за файл, зачем нужен, кто его читает                             |
+| [`docs/build-system_ru.md`](docs/build-system_ru.md)         | Как собирается пейлоад:`build.sh`, cpio + installer zip, флаги             |
+| [`docs/boot-chain_ru.md`](docs/boot-chain_ru.md)             | Цепочка загрузки и init-стаб                                                    |
+| [`docs/recovery-engine_ru.md`](docs/recovery-engine_ru.md)   | Rust-движок`recovery-pixel-boot`: init, модули, OTG, фонарик                     |
+| [`docs/decrypt_ru.md`](docs/decrypt_ru.md)                   | Расшифровка data: keymint, weaver, vold, multi-device                                    |
+| [`docs/device-config_ru.md`](docs/device-config_ru.md)       | `pixel.json`: тач, пути, пропсы, фолды и letterbox                               |
+| [`docs/ramdisk_ru.md`](docs/ramdisk_ru.md)                   | Содержимое рамдиска: rc-файлы, скрипты, reflash                       |
+| [`docs/diagnostics_ru.md`](docs/diagnostics_ru.md)           | Диагностика на девайсе: что смотреть, если не грузится |
+| [`docs/kernel-profiles_ru.md`](docs/kernel-profiles_ru.md)   | Почему kernel-профилей нет: стоковое ядро сохраняется       |
+| [`docs/families-devices_ru.md`](docs/families-devices_ru.md) | Как добавить девайс или новый SoC                                          |
+| [`docs/patches_ru.md`](docs/patches_ru.md)                   | Патч-система: original / modified / .patch                                               |
+| [`docs/FOX_FLAGS_ru.md`](docs/FOX_FLAGS_ru.md)               | Все 70+ флагов сборки OFox                                                           |
+| [`docs/credits_ru.md`](docs/credits_ru.md)                   | Что заимствовано и откуда                                                     |
 
 **Три принципа, на которых всё держится:**
 

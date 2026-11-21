@@ -31,14 +31,15 @@ One installer zip for **all Tensor Pixels** - Pixel 6 → 11, folds, tablet (25 
 <details>
 <summary>📱 Devices (25) - one zip for all</summary>
 
-| Family | SoC | Devices |
-|---|---|---|
-| `gs101` | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a) |
-| `gs201` | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet) |
-| `zuma` | Tensor G3 | shiba (8), husky (8 Pro), akita (8a) |
+
+| Family    | SoC       | Devices                                                                                     |
+| --------- | --------- | ------------------------------------------------------------------------------------------- |
+| `gs101`   | Tensor G1 | oriole (6), raven (6 Pro), bluejay (6a)                                                     |
+| `gs201`   | Tensor G2 | cheetah (7 Pro), panther (7), lynx (7a), felix (Fold), tangorpro (Tablet)                   |
+| `zuma`    | Tensor G3 | shiba (8), husky (8 Pro), akita (8a)                                                        |
 | `zumapro` | Tensor G4 | tokay (9), caiman (9 Pro), komodo (9 Pro XL), tegu (9a), stallion (10a), comet (9 Pro Fold) |
-| `laguna` | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold) |
-| `malibu` | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold) |
+| `laguna`  | Tensor G5 | frankel (10), blazer (10 Pro), mustang (10 Pro XL), rango (10 Pro Fold)                     |
+| `malibu`  | Tensor G6 | cubs (11), grizzly (11 Pro), kodiak (11 Pro XL), yogi (11 Pro Fold)                         |
 
 Each device's vendor specifics (touch modules, UFS/USB paths, props, KeyMint type) live in JSON (`families/*/family.json`, `devices/*/pixel.json`), resolved at boot - nothing is baked per model.
 
@@ -93,31 +94,32 @@ How the installer picks files: your codename is auto-detected (`ro.product.devic
 
 > 🟢 works (confirmed) · 🔴 broken · 🟡 not tested · 🔵 should work, not verified · 🟠 flaky
 
-| Feature | G1 | G2 | G3 | G4 | G5 | G6 |
-|---|---|---|---|---|---|---|
-| Recovery boots | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Data decryption | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| MTP + ADB | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| ROM flashing | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| ADB sideload | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Backup / restore | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Format data | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 | 🟢 |
-| OTG | 🟢 | 🔵 | 🟢 | 🟢 | 🟢 | 🟡 |
-| Flashlight | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🔵 |
-| Vibration | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Touchscreen | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Touch (broken super) | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+
+| Feature                  | G1 | G2 | G3 | G4 | G5 | G6 |
+| ------------------------ | -- | -- | -- | -- | -- | -- |
+| Recovery boots           | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Data decryption          | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| MTP + ADB                | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ROM flashing             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| ADB sideload             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Backup / restore         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Format data              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTG                      | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Flashlight               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Vibration                | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Touchscreen              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Touch (broken super)     | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 | Vibration (broken super) | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
-| Brightness control | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Reboot to Android | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Reboot menu | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| PIN unlock | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Slot switch | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Fastbootd | 🟢 | 🔵 | 🟢 | 🟢 | 🔵 | 🟢 |
-| Files + terminal | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| OTA survival | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Charging | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| Self-reflash | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Brightness control       | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Reboot to Android        | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Reboot menu              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| PIN unlock               | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Slot switch              | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Fastbootd                | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Files + terminal         | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| OTA survival             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Charging                 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
+| Self-reflash             | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
 
 <details>
 <summary>🔍 Footnotes - broken super, USB guard, testers</summary>
@@ -218,21 +220,22 @@ How the installer picks files: your codename is auto-detected (`ro.product.devic
 
 > Root = quick start (above). Depth lives in `docs/` - each file answers one "how it works" question:
 
-| Document | Question |
-|---|---|
-| [`docs/tree-guide.md`](docs/tree-guide.md) | Which file is for what, who reads it |
-| [`docs/build-system.md`](docs/build-system.md) | How the payload builds: `build.sh`, cpio + installer zip, flags |
-| [`docs/boot-chain.md`](docs/boot-chain.md) | Boot chain and the init stub |
-| [`docs/recovery-engine.md`](docs/recovery-engine.md) | Rust engine `recovery-pixel-boot`: init, modules, OTG, torch |
-| [`docs/decrypt.md`](docs/decrypt.md) | Data decryption: KeyMint, weaver, vold, multi-device |
-| [`docs/device-config.md`](docs/device-config.md) | `pixel.json`: touch, paths, props, folds and letterbox |
-| [`docs/ramdisk.md`](docs/ramdisk.md) | Ramdisk contents: rc files, scripts, reflash |
-| [`docs/diagnostics.md`](docs/diagnostics.md) | On-device diagnostics: what to check when it won't boot |
-| [`docs/kernel-profiles.md`](docs/kernel-profiles.md) | Why there are no kernel profiles: stock kernel is kept |
-| [`docs/families-devices.md`](docs/families-devices.md) | How to add a device or a new SoC |
-| [`docs/patches.md`](docs/patches.md) | Patch system: original / modified / .patch |
-| [`docs/FOX_FLAGS.md`](docs/FOX_FLAGS.md) | All build flags |
-| [`docs/credits.md`](docs/credits.md) | What was borrowed and from where |
+
+| Document                                               | Question                                                       |
+| ------------------------------------------------------ | -------------------------------------------------------------- |
+| [`docs/tree-guide.md`](docs/tree-guide.md)             | Which file is for what, who reads it                           |
+| [`docs/build-system.md`](docs/build-system.md)         | How the payload builds:`build.sh`, cpio + installer zip, flags |
+| [`docs/boot-chain.md`](docs/boot-chain.md)             | Boot chain and the init stub                                   |
+| [`docs/recovery-engine.md`](docs/recovery-engine.md)   | Rust engine`recovery-pixel-boot`: init, modules, OTG, torch    |
+| [`docs/decrypt.md`](docs/decrypt.md)                   | Data decryption: KeyMint, weaver, vold, multi-device           |
+| [`docs/device-config.md`](docs/device-config.md)       | `pixel.json`: touch, paths, props, folds and letterbox         |
+| [`docs/ramdisk.md`](docs/ramdisk.md)                   | Ramdisk contents: rc files, scripts, reflash                   |
+| [`docs/diagnostics.md`](docs/diagnostics.md)           | On-device diagnostics: what to check when it won't boot        |
+| [`docs/kernel-profiles.md`](docs/kernel-profiles.md)   | Why there are no kernel profiles: stock kernel is kept         |
+| [`docs/families-devices.md`](docs/families-devices.md) | How to add a device or a new SoC                               |
+| [`docs/patches.md`](docs/patches.md)                   | Patch system: original / modified / .patch                     |
+| [`docs/FOX_FLAGS.md`](docs/FOX_FLAGS.md)               | All build flags                                                |
+| [`docs/credits.md`](docs/credits.md)                   | What was borrowed and from where                               |
 
 **Three principles:**
 
