@@ -174,7 +174,7 @@ How the installer picks files: your codename is auto-detected (`ro.product.devic
 - [Pixel 10a](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-10a.4806923/)
 - [Pixel 10 Pro Fold](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-10-pro-fold.4806926/)
 - [Pixel 11](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-11.4806931/)
-- [Pixel 11 Pro / Pro XL](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-11-pro-pro-xl.4806932/)
+- [Pixel 11 Pro / Pro XL / Pro Fold](https://xdaforums.com/t/recovery-unofficial-r12-0-orangefox-recovery-project-google-pixel-11-pro-pro-xl.4806932/)
 
 </details>
 
