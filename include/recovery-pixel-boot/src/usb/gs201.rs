@@ -368,57 +368,11 @@ fn resolve_udc() -> String {
     sysfs.into_iter().next().unwrap_or_else(|| "11210000.dwc3".to_string())
 }
 
-/// First removable USB disk (sdX1 preferred, else whole disk).
-fn pick_otg_disk() -> Option<String> {
-    let mut names: Vec<String> = std::fs::read_dir("/sys/block")
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|n| {
-                    n.len() == 3
-                        && n.starts_with("sd")
-                        && n.as_bytes().get(2).copied().map(|c| c.is_ascii_lowercase()).unwrap_or(false)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    for n in &names {
-        let dir = Path::new("/sys/block").join(n);
-        if read_trim(&dir.join("removable").to_string_lossy()) != "1" {
-            continue;
-        }
-        // read_link returns the raw (usually relative:
-        // ../../../1-1:1.0/...) target, which never names the USB ancestors
-        // — canonicalize first so the "usb" check sees the real
-        // /sys/devices/... path (field-proven: the raw link matched
-        // nothing, otg-usb was never created, OTG dedup never engaged).
-        let dev = dir
-            .join("device")
-            .canonicalize()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| {
-                std::fs::read_link(dir.join("device"))
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            });
-        if !dev.contains("usb") {
-            continue;
-        }
-        let p1 = format!("/dev/block/{n}1");
-        return Some(if Path::new(&p1).exists() {
-            p1
-        } else {
-            format!("/dev/block/{n}")
-        });
-    }
-    None
-}
 
 /// Keep /dev/block/otg-usb (/usb_otg) on the current OTG disk; relink
 /// only on change. Best-effort: no disk attached = nothing to do.
 fn ensure_otg_symlink() {
-    let target = match pick_otg_disk() {
+    let target = match super::pick_otg_disk() {
         Some(t) => t,
         None => return,
     };

@@ -645,78 +645,15 @@ fn switch_to_device(current: &mut String, preferred_boot: &str) {
 /// kernels — field-proven 2026-11-14): a present OTG disk counts as
 /// sourced VBUS too.
 fn host_active() -> bool {
-    read_data_role() == "host" && (read_source_online() == "1" || pick_otg_disk().is_some())
+    read_data_role() == "host" && (read_source_online() == "1" || super::otg_disk_present())
 }
 
-/// First removable USB disk (`sdX1` preferred, else whole disk).
-/// Pure core over candidates (testable); live sysfs walk in [`pick_otg_disk`].
-fn choose_otg_disk(cands: &[(&str, bool, bool, bool)]) -> Option<String> {
-    let mut names: Vec<&str> = cands
-        .iter()
-        .filter(|(_, removable, has_usb, _)| *removable && *has_usb)
-        .map(|(n, _, _, _)| *n)
-        .collect();
-    names.sort();
-    names.first().map(|n| {
-        let has_part = cands
-            .iter()
-            .find(|(m, _, _, _)| m == n)
-            .map(|(_, _, _, p)| *p)
-            .unwrap_or(false);
-        if has_part {
-            format!("/dev/block/{n}1")
-        } else {
-            format!("/dev/block/{n}")
-        }
-    })
-}
 
-/// Live removable-USB-disk pick.
-fn pick_otg_disk() -> Option<String> {
-    let mut names: Vec<String> = std::fs::read_dir("/sys/block")
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .filter(|n| {
-                    n.len() == 3
-                        && n.starts_with("sd")
-                        && n.as_bytes().get(2).copied().map(|c| c.is_ascii_lowercase()).unwrap_or(false)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    let mut cands: Vec<(String, bool, bool, bool)> = Vec::new();
-    for n in &names {
-        let dir = Path::new("/sys/block").join(n);
-        let removable = read_trim(&dir.join("removable").to_string_lossy()) == "1";
-        // Canonicalize first so the "usb" check sees the real
-        // /sys/devices/... path (field-proven: the raw link matched
-        // nothing, otg-usb was never created).
-        let dev = dir
-            .join("device")
-            .canonicalize()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| {
-                std::fs::read_link(dir.join("device"))
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            });
-        let has_usb = dev.contains("usb");
-        let has_part = Path::new(&format!("/dev/block/{n}1")).exists();
-        cands.push((n.clone(), removable, has_usb, has_part));
-    }
-    let refs: Vec<(&str, bool, bool, bool)> = cands
-        .iter()
-        .map(|(n, r, u, p)| (n.as_str(), *r, *u, *p))
-        .collect();
-    choose_otg_disk(&refs)
-}
 
 /// Keep `/dev/block/otg-usb` (`/usb_otg`) on the current OTG disk; relink
 /// only on change. Best-effort: no disk attached = nothing to do.
 fn ensure_otg_symlink() {
-    let target = match pick_otg_disk() {
+    let target = match super::pick_otg_disk() {
         Some(t) => t,
         None => return,
     };
@@ -889,7 +826,7 @@ pub fn run_otg_auto() -> ! {
                 }
             }
         }
-        if pick_otg_disk().is_some() {
+        if super::otg_disk_present() {
             info(&format!(
                 "disk present: data_role={:?} source_online={:?} host_active={}",
                 read_data_role(),
@@ -997,31 +934,6 @@ mod tests {
         assert_eq!(pick_source_psy(&none), None);
     }
 
-    #[test]
-    fn disk_pick_prefers_first_partition() {
-        // (name, removable, device-link-via-usb, has-partition).
-        let cands = [
-            ("sdb", true, true, false),
-            ("sda", true, true, true),
-            ("sdc", false, true, true),
-            ("sdd", true, false, true),
-        ];
-        // sda wins (removable + usb); partition preferred.
-        assert_eq!(
-            choose_otg_disk(&cands),
-            Some("/dev/block/sda1".to_string())
-        );
-        // Whole disk when no partition node exists yet.
-        assert_eq!(
-            choose_otg_disk(&[("sdb", true, true, false)]),
-            Some("/dev/block/sdb".to_string())
-        );
-        // Non-removable / non-USB devices never match.
-        assert_eq!(choose_otg_disk(&[("sdc", false, true, true)]), None);
-        assert_eq!(choose_otg_disk(&[("sdd", true, false, true)]), None);
-        let empty: [(&str, bool, bool, bool); 0] = [];
-        assert_eq!(choose_otg_disk(&empty), None);
-    }
 
     #[test]
     fn stock_chain_has_no_aoc_modules() {
