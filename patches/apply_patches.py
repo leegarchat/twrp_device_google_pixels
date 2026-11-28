@@ -169,6 +169,15 @@ def parse_args() -> argparse.Namespace:
         help="Apply patches even when their config mode is bypass.",
     )
     parser.add_argument(
+        "--allow-recover",
+        action="store_true",
+        help="Permit the legacy auto-recover (restore stale original/ over "
+        "a drifted tree file, backing it up as .foxbak). OFF by default: "
+        "on a fresh upstream sync it silently discards upstream code. Use "
+        "only when knowingly switching a tree between branches holding "
+        "different snapshots.",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="List known patches and effective modes.",
@@ -227,6 +236,7 @@ def main() -> int:
         apply=args.apply,
         apply_bypassed=args.apply_bypassed,
         verbose=args.verbose,
+        allow_recover=args.allow_recover,
     )
 
     results = [patch.run(context) for patch in patches]
@@ -234,12 +244,25 @@ def main() -> int:
         print(result.format())
 
     failed = [result for result in results if result.status == "failed"]
+    drifted = [result for result in results if result.status == "drift"]
+    if drifted:
+        print("\nUpstream drift detected — triplets are stale, NOT applied:", file=sys.stderr)
+        for result in drifted:
+            print(f"- {result.id}: {result.target}", file=sys.stderr)
+        print(
+            "Refresh instead of --allow-recover on a fresh sync: copy the tree "
+            "file over patches/files/original/<path>, 3-way-merge "
+            "patches/files/modified/<path>, regenerate "
+            "patches/files/patches/<path>.patch, rerun.",
+            file=sys.stderr,
+        )
     if failed:
         print("\nManual action required:", file=sys.stderr)
         for result in failed:
             print(f"- {result.id}: {result.manual_hint}", file=sys.stderr)
             if args.verbose and result.details:
                 print(result.details, file=sys.stderr)
+    if failed or drifted:
         return 1
 
     return 0

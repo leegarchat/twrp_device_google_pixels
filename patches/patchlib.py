@@ -16,6 +16,13 @@ STATUS_PREFIX = {
     "created": "CREATED",
     "bypassed": "BYPASS",
     "failed": "ERROR",
+    # Drift: target matches neither original/ nor modified/ in a hunk
+    # region. The tree moved under us (upstream sync) or carries foreign
+    # edits. Restoring stale original/ here would silently discard that
+    # content while reporting success, so drift ALWAYS fails loudly.
+    # Refresh the triplets (original/ <- tree, 3-way-merge modified/,
+    # regen .patch) instead. See _try_recover_and_apply.
+    "drift": "DRIFT",
 }
 
 
@@ -42,6 +49,11 @@ class PatchContext:
     apply: bool
     apply_bypassed: bool
     verbose: bool = False
+    # Opt-in to the legacy auto-recover (restore stale original/ + apply).
+    # OFF by default: on a drifted tree that path silently discards upstream
+    # code while reporting success. Enable only when you knowingly switch a
+    # tree between branches holding different snapshots and accept the loss.
+    allow_recover: bool = False
 
     def resolve(self, relative_path: str | Path) -> Path:
         return self.root / Path(relative_path)
@@ -181,12 +193,43 @@ class SnapshotPatch(BasePatch):
             return self.result("bypassed", "patch is configured for bypass", self.target)
 
         if conflicts and target_lines != original_lines:
-            # Auto-recover: the tree holds another branch's applied snapshot
-            # (or hand edits) — the classic cross-branch drift. Back up the
-            # dirty content, restore the original snapshot, and retry the
-            # hunks once. Only then, if it still fails, report an error.
-            # Genuine upstream drift (target already pristine) skips this:
-            # old_blocks derived from original always match pristine trees.
+            # Upstream drift (or foreign hand edits): the tree moved under
+            # our stale original/ snapshot. Auto-restoring original/ here
+            # would silently discard the tree's newer content while
+            # reporting success ("recovered ... and applied N hunks") —
+            # that is how Nov-11 upstream code was once shipped reverted
+            # with a green --check. Fail loudly instead; refresh the
+            # triplets (original/ <- tree, 3-way-merge modified/ against
+            # the .foxbak backup, regen .patch) and rerun.
+            # The legacy auto-recover stays available behind the explicit
+            # opt-in --allow-recover for branch-switch workflows where the
+            # loss is knowingly accepted.
+            if not context.allow_recover:
+                details = "\n".join(conflicts)
+                details += (
+                    "\nTree differs from BOTH original/ and modified/ snapshots "
+                    "in the hunk region(s) above: upstream moved (or the tree "
+                    "has foreign edits) and original/ is stale. "
+                    "Do NOT --allow-recover blindly on a fresh sync — that "
+                    "restores the stale snapshot and drops upstream code. "
+                    "Refresh instead: copy the tree file over "
+                    "patches/files/original/<path>, 3-way-merge "
+                    "patches/files/modified/<path> (base=old original, "
+                    "theirs=tree file), regenerate "
+                    "patches/files/patches/<path>.patch via "
+                    "`diff -u --label a/<path> --label b/<path>`, rerun."
+                )
+                if self.patch_file is not None and self.patch_file.exists():
+                    details += f"\nManual patch available: {self.patch_file}"
+                return self.result(
+                    "drift",
+                    "upstream drift; triplets stale, manual re-merge required",
+                    self.target,
+                    details=details,
+                    manual_hint=self.manual_hint,
+                )
+            # --allow-recover: legacy behavior. Backs the dirty tree file
+            # up to .foxbak, restores the original snapshot, retries once.
             recovered = self._try_recover_and_apply(
                 context, target_path, original_lines, hunks
             )
@@ -283,7 +326,13 @@ class SnapshotPatch(BasePatch):
     ) -> PatchResult | None:
         """Back up the dirty tree file, restore the original snapshot, and
         retry the hunks once. Returns a PatchResult on success, None when
-        recovery is impossible (bypassed config) or still conflicts."""
+        recovery is impossible (bypassed config) or still conflicts.
+
+        LEGACY opt-in path (context.allow_recover, --allow-recover): use
+        only when knowingly switching a tree between branches holding
+        different snapshots. On a drifted tree it restores the STALE
+        original and drops upstream code while reporting success — never
+        the default."""
         if context.should_bypass(self):
             return self.result("bypassed", "patch is configured for bypass", self.target)
         # Dry-run first, from memory: no disk writes in check mode.
