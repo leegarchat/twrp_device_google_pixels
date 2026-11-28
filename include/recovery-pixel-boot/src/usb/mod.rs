@@ -344,6 +344,43 @@ pub fn otg_disk_present() -> bool {
     scan_otg_disks().iter().any(OtgDisk::is_usb_disk)
 }
 
+/// Bind the configfs gadget to the UDC for device mode (adb/MTP).
+///
+/// Unbind-first + one retry: a competitor (MTP restart, stale bind) may
+/// hold the UDC, and a bare bind then fails EBUSY forever — adb never
+/// returns until reboot (field: shiba + Ugreen dongle VBUS flap storm:
+/// MTP rebound the UDC between our unbind and bind, every later
+/// switch_to_device failed with "Device or resource busy"). No behavior
+/// change when the first bind succeeds.
+pub fn bind_udc_for_device(udc_file: &str, controller: &str) {
+    use std::path::Path;
+    let bind = || std::fs::write(Path::new(udc_file), format!("{controller}\n").as_bytes());
+    match bind() {
+        Ok(_) => {
+            let _ = set_prop("sys.usb.controller", controller);
+        }
+        Err(e) => {
+            log_msg(
+                "otg",
+                "INFO",
+                &format!("device mode: UDC bind FAILED ({e}), unbinding and retrying once"),
+            );
+            let _ = std::fs::write(Path::new(udc_file), b"\n");
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            match bind() {
+                Ok(_) => {
+                    let _ = set_prop("sys.usb.controller", controller);
+                }
+                Err(e2) => log_msg(
+                    "otg",
+                    "INFO",
+                    &format!("device mode: UDC bind retry FAILED: {e2}"),
+                ),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

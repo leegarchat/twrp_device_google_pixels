@@ -763,12 +763,7 @@ fn switch_to_device(current: &mut String) {
     // Self-healing bind: init triggers are edge-based; a missed edge leaves
     // UDC unbound forever. Explicit bind + adbd start covers it.
     let controller = resolve_udc();
-    match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
-        Ok(_) => {
-            let _ = set_prop("sys.usb.controller", &controller);
-        }
-        Err(e) => info(&format!("device mode: UDC bind FAILED: {e}")),
-    }
+    super::bind_udc_for_device(UDC_FILE, &controller);
     let _ = set_prop("ctl.start", "adbd");
     *current = "device".into();
 }

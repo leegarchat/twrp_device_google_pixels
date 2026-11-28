@@ -410,11 +410,21 @@ fn switch_to_device(current: &mut String) {
     // Self-healing bind: init triggers are edge-based; a missed edge leaves
     // UDC unbound forever. Explicit bind + adbd start covers it.
     if let Some(controller) = resolve_udc() {
-        match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
-            Ok(()) => {
-                let _ = set_prop("sys.usb.controller", &controller);
+        if std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()).is_err() {
+            // Unbind-first + one retry, same as usb::bind_udc_for_device:
+            // a competitor (MTP restart, stale bind) may hold the UDC and
+            // a bare bind then fails EBUSY forever (adb never returns).
+            info("device mode: UDC bind FAILED, unbinding and retrying once");
+            let _ = std::fs::write(UDC_FILE, b"\n");
+            sleep(Duration::from_millis(300));
+            match std::fs::write(UDC_FILE, format!("{controller}\n").as_bytes()) {
+                Ok(()) => {
+                    let _ = set_prop("sys.usb.controller", &controller);
+                }
+                Err(e2) => info(&format!("device mode: UDC bind retry FAILED: {e2}")),
             }
-            Err(e) => info(&format!("device mode: UDC bind FAILED: {e}")),
+        } else {
+            let _ = set_prop("sys.usb.controller", &controller);
         }
     } else {
         info("device mode: no UDC entry, skip bind");
