@@ -29,7 +29,7 @@
 | `runatboot.sh` | Пустой OFox-хук (дёргает `twrp.cpp`; точка расширения для аддонов) |
 | `reflash_twrp.sh` | Перепрошивка изнутри рекавери (ниже; тул: `/system/bin/bootsmasher-install`, стейджится колбэком сборки из `include/prebuilt/bootsmasher-install-arm64`) |
 | `flog.sh` | Сборщик логов одним заходом: `fox_logs_<device>_<family>_<stamp>.tar.gz` → `/data/media/0/fox_logs/` (или `/tmp`, + подсказка `adb pull`). Пакует recovery/weaver/dmesg/logcat, backlight + снапшот батареи/health, pstore, логи установщика |
-| `otg_test.sh` | Полевой тест OTG T1-T8 (диск, раздел, демон, линк `/dev/block/otg-usb`, match uevent, тома, mount, dedup) → `otg_test_<device>_<family>_<stamp>.tar.gz` рядом с архивами flog. Гонять на девайсе с подключённым диском и отключённым ПК |
+| `otg_test.sh` | Полевой тест OTG T1-T8 (диск с носителем - пустые слоты картридера пропускаются, как в выборе демона, раздел, демон, линк `/dev/block/otg-usb`, match uevent, тома, mount, dedup) → `otg_test_<device>_<family>_<stamp>.tar.gz` рядом с архивами flog. Гонять на девайсе с подключённым диском и отключённым ПК |
 | `siw`, `iw` | Чтение разделов без монтирования + DM-мэппинг, LP-утилиты |
 | `lptools_new` | DM-мэппинг через системный fs_mgr стек (`--map`/`--unmap`), стейджинг-фолбэк |
 | `fox-hsinstall` | Движок скоростной установки ROM (статический Rust-пребилд) |

@@ -241,9 +241,160 @@ impl VbusDebounce {
     }
 }
 
+/// One `/sys/block/sdX` node considered for `/dev/block/otg-usb`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtgDisk {
+    /// Kernel name (`sde`).
+    pub name: String,
+    /// `/sys/block/sdX/removable == 1`.
+    pub removable: bool,
+    /// Canonical `/sys/block/sdX/device` path runs through a USB host.
+    pub usb: bool,
+    /// `/sys/block/sdX/size` in 512-byte sectors; `0` = no medium.
+    pub sectors: u64,
+    /// `/dev/block/sdX1` exists.
+    pub has_part: bool,
+}
+
+impl OtgDisk {
+    /// Removable disk behind a USB host — a medium may still be absent.
+    pub fn is_usb_disk(&self) -> bool {
+        self.removable && self.usb
+    }
+}
+
+/// Pure OTG pick: first USB disk (by name) that HAS a medium, `sdX1`
+/// preferred, else the whole disk (superfloppy).
+///
+/// Multi-slot card readers expose one LUN per slot (`sde` = SD, `sdf` =
+/// microSD, ...): every LUN is removable + USB, but empty slots report
+/// `size == 0`. Picking the first LUN blindly pointed `/usb_otg` at an
+/// empty slot and the mount failed while the card sat on the next LUN
+/// (field report: Pixel 10a, `sde` empty, card on `sdf1`).
+pub fn choose_otg_disk(cands: &[OtgDisk]) -> Option<String> {
+    let mut usable: Vec<&OtgDisk> = cands
+        .iter()
+        .filter(|d| d.is_usb_disk() && d.sectors > 0)
+        .collect();
+    usable.sort_by(|a, b| a.name.cmp(&b.name));
+    usable.first().map(|d| {
+        if d.has_part {
+            format!("/dev/block/{}1", d.name)
+        } else {
+            format!("/dev/block/{}", d.name)
+        }
+    })
+}
+
+/// `sd` + one lowercase letter (`sda`..`sdz`), the only names walked.
+fn is_sd_disk_name(n: &str) -> bool {
+    n.len() == 3
+        && n.starts_with("sd")
+        && n.as_bytes().get(2).copied().map(|c| c.is_ascii_lowercase()).unwrap_or(false)
+}
+
+/// Live `/sys/block` walk feeding [`choose_otg_disk`].
+pub fn scan_otg_disks() -> Vec<OtgDisk> {
+    use std::path::Path;
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default().trim().to_string();
+    let mut names: Vec<String> = std::fs::read_dir("/sys/block")
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| is_sd_disk_name(n))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+        .into_iter()
+        .map(|n| {
+            let dir = Path::new("/sys/block").join(&n);
+            // Canonicalize first: the raw sysfs link is relative
+            // (../../../1-1:1.0/...) and never names the USB ancestors
+            // (field-proven: otg-usb was never created on the raw link).
+            let dev = dir
+                .join("device")
+                .canonicalize()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| {
+                    std::fs::read_link(dir.join("device"))
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                });
+            OtgDisk {
+                removable: read(&dir.join("removable")) == "1",
+                usb: dev.contains("usb"),
+                sectors: read(&dir.join("size")).parse().unwrap_or(0),
+                has_part: Path::new(&format!("/dev/block/{n}1")).exists(),
+                name: n,
+            }
+        })
+        .collect()
+}
+
+/// Current `/dev/block/otg-usb` target: first USB disk with a medium.
+pub fn pick_otg_disk() -> Option<String> {
+    choose_otg_disk(&scan_otg_disks())
+}
+
+/// A USB disk is enumerated (medium or not): proof the port sources
+/// VBUS in host mode, even for a card reader with every slot empty.
+pub fn otg_disk_present() -> bool {
+    scan_otg_disks().iter().any(OtgDisk::is_usb_disk)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn disk(name: &str, removable: bool, usb: bool, sectors: u64, has_part: bool) -> OtgDisk {
+        OtgDisk { name: name.to_string(), removable, usb, sectors, has_part }
+    }
+
+    #[test]
+    fn otg_pick_prefers_first_partition() {
+        let cands = [
+            disk("sdb", true, true, 64, false),
+            disk("sda", true, true, 64, true),
+            disk("sdc", false, true, 64, true),
+            disk("sdd", true, false, 64, true),
+        ];
+        assert_eq!(choose_otg_disk(&cands), Some("/dev/block/sda1".to_string()));
+        // Superfloppy: whole disk when no partition node exists.
+        assert_eq!(
+            choose_otg_disk(&[disk("sdb", true, true, 64, false)]),
+            Some("/dev/block/sdb".to_string())
+        );
+        // Non-removable / non-USB devices never match.
+        assert_eq!(choose_otg_disk(&[disk("sdc", false, true, 64, true)]), None);
+        assert_eq!(choose_otg_disk(&[disk("sdd", true, false, 64, true)]), None);
+        assert_eq!(choose_otg_disk(&[]), None);
+    }
+
+    #[test]
+    fn otg_pick_skips_empty_card_reader_slots() {
+        // Field case (Pixel 10a): sda..sdd = UFS LUNs, sde = empty SD
+        // slot, sdf = microSD slot with the card.
+        let cands = [
+            disk("sda", false, false, 1 << 20, true),
+            disk("sde", true, true, 0, false),
+            disk("sdf", true, true, 124_735_488, true),
+        ];
+        assert_eq!(choose_otg_disk(&cands), Some("/dev/block/sdf1".to_string()));
+        // Every slot empty: nothing to link, but the reader is present.
+        let empty = [disk("sde", true, true, 0, false), disk("sdf", true, true, 0, false)];
+        assert_eq!(choose_otg_disk(&empty), None);
+        assert!(empty.iter().any(OtgDisk::is_usb_disk));
+    }
+
+    #[test]
+    fn sd_disk_names_only() {
+        assert!(is_sd_disk_name("sde"));
+        assert!(!is_sd_disk_name("sde1"));
+        assert!(!is_sd_disk_name("sdaa"));
+        assert!(!is_sd_disk_name("loop0"));
+    }
 
     #[test]
     fn debounce_needs_three_stable_ticks() {

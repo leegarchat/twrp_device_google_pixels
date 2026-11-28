@@ -29,7 +29,7 @@ Overlays of **every device + every family** go into the one universal cpio (`TAR
 | `runatboot.sh` | Empty OFox hook (called by `twrp.cpp`; extension point for addons) |
 | `reflash_twrp.sh` | Reflash from inside recovery (below; tool: `/system/bin/bootsmasher-install`, staged by the build callback from `include/prebuilt/bootsmasher-install-arm64`) |
 | `flog.sh` | One-shot log collector: `fox_logs_<device>_<family>_<stamp>.tar.gz` → `/data/media/0/fox_logs/` (or `/tmp`, + `adb pull` hint). Packs recovery/weaver/dmesg/logcat, backlight + battery/health snapshot, pstore, installer logs |
-| `otg_test.sh` | OTG field test T1-T8 (disk, part, daemon, `/dev/block/otg-usb` link, uevent match, volumes, mount, dedup) → `otg_test_<device>_<family>_<stamp>.tar.gz` next to the flog archives. Run on-device with the drive attached and the PC unplugged |
+| `otg_test.sh` | OTG field test T1-T8 (disk with a medium - empty card-reader slots skipped like in the daemon pick, part, daemon, `/dev/block/otg-usb` link, uevent match, volumes, mount, dedup) → `otg_test_<device>_<family>_<stamp>.tar.gz` next to the flog archives. Run on-device with the drive attached and the PC unplugged |
 | `siw`, `iw` | Partition reads without mounting + DM mapping, LP utilities |
 | `lptools_new` | DM mapping via the system fs_mgr stack (`--map`/`--unmap`), staging fallback |
 | `fox-hsinstall` | High-speed ROM install engine (static Rust prebuilt) |

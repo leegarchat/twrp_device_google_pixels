@@ -16,8 +16,9 @@
 # (0 = drive fully works as USB-Storage).
 #
 # What PASS means per check:
-#   T1 DISK   kernel enumerated a removable USB disk (sdX, canonical
-#             /sys device path contains "usb")
+#   T1 DISK   kernel enumerated a removable USB disk with a medium (sdX,
+#             size > 0, canonical /sys device path contains "usb"; empty
+#             card-reader slots are skipped like in the daemon pick)
 #   T2 PART   first partition node /dev/block/sdX1 exists (superfloppy
 #             whole-disk sdX without partitions also passes)
 #   T3 DAEMON otg-auto service is running (it owns host mode + symlink)
@@ -69,6 +70,9 @@ while [ "$elapsed" -lt "$WAIT" ]; do
     for _d in /sys/block/sd?; do
         [ -d "$_d" ] || continue
         [ "$(cat "$_d/removable" 2>/dev/null)" = "1" ] || continue
+        # empty card-reader slot = size 0: same rule as the daemon pick
+        _sz="$(cat "$_d/size" 2>/dev/null)"
+        [ -n "$_sz" ] && [ "$_sz" != "0" ] || continue
         _link="$(readlink -f "$_d/device" 2>/dev/null)"
         [ -n "$_link" ] || _link="$(readlink "$_d/device" 2>/dev/null)"
         case "$_link" in
@@ -90,7 +94,7 @@ if [ -n "$DISK" ]; then
     _size="$(cat "/sys/block/$DISK/size" 2>/dev/null)"
     chk_pass 1 "DISK" "($DISK ${_model:-?} ${_size:-?} sectors)"
 else
-    chk_fail 1 "DISK" "(no removable USB sd disk in /sys/block)"
+    chk_fail 1 "DISK" "(no removable USB sd disk with a medium in /sys/block)"
 fi
 
 # --- T2: partition node probed ---
