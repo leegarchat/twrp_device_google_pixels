@@ -24,15 +24,16 @@
  #include <sys/socket.h>
  #include <sys/stat.h>
  #include <sys/types.h>
-@@ -62,6 +68,7 @@
+@@ -61,6 +67,8 @@
+ #include <libgsi/libgsi.h>
  #include <liblp/builder.h>
  #include <libsnapshot/snapshot.h>
- #include <private/android_filesystem_config.h> /* for AID_SYSTEM */
++#include <private/android_filesystem_config.h> /* for AID_SYSTEM */
 +#include "bootloader_message/include/bootloader_message/bootloader_message.h"
  #include "variables.h"
  #include "twcommon.h"
  #include "partitions.hpp"
-@@ -137,6 +144,87 @@
+@@ -132,6 +140,87 @@
  
  std::string additional_fstab = "/etc/additional.fstab";
  
@@ -120,7 +121,7 @@
  TWPartitionManager::TWPartitionManager(void) {
  	mtp_was_enabled = false;
  	mtp_write_fd = -1;
-@@ -148,6 +236,25 @@
+@@ -143,6 +232,25 @@
  	if (strcmp(slot_suffix, "error") == 0)
  		property_get("ro.boot.slot", slot_suffix, "error");
  	Active_Slot_Display = "";
@@ -146,7 +147,7 @@
  	if (strcmp(slot_suffix, "_a") == 0 || strcmp(slot_suffix, "a") == 0)
  		Set_Active_Slot("A");
  	else
-@@ -243,8 +350,32 @@
+@@ -238,8 +346,32 @@
  	#endif
  	return ver;
  }
@@ -180,10 +181,10 @@
  	// Fetch the Keymaster Service version to be started
  	std::string version;
  #ifndef TW_FORCE_KEYMASTER_VER
-@@ -533,6 +664,10 @@
- 	if (recovery_mode)
- 		Process_Keymaster_Version(ven, false);
- 	if (ven) ven->UnMount(Display_Error);
+@@ -530,6 +662,10 @@
+ 	if (!android::base::GetBoolProperty(TW_MODULES_MOUNTED_PROP, false))
+ 		android::base::SetProperty(TW_MODULES_MOUNTED_PROP, "true");
+ #endif
 +	// Fox: super-first vector order (mount menu + /etc/fstab follow it)
 +	// from the very first parse; the rescan fast-paths (nothing missing)
 +	// and only reorders + rewrites fstab when startup left strays.
@@ -191,7 +192,7 @@
  	return true;
  }
  
-@@ -676,6 +811,58 @@
+@@ -674,6 +810,58 @@
  	return true;
  }
  
@@ -250,7 +251,7 @@
  void TWPartitionManager::Decrypt_Data() {
  	#ifdef TW_INCLUDE_CRYPTO
  	TWPartition* Decrypt_Data = Find_Partition_By_Path("/data");
-@@ -687,9 +874,60 @@
+@@ -685,11 +873,60 @@
  				Mount_By_Path(Decrypt_Data->Key_Directory, false);
  		if (!Decrypt_Data->Key_Directory.empty()) {
  			Set_Crypto_Type("file");
@@ -260,7 +261,9 @@
 +			}
  #ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
  #ifdef USE_FSCRYPT
--			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, "", TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
+-			std::vector<std::string> user_devices;
+-			std::vector<bool> device_aliased;
+-			if (android::vold::fscrypt_mount_metadata_encrypted(Decrypt_Data->Actual_Block_Device, Decrypt_Data->Mount_Point, false, false, Decrypt_Data->Current_File_System, false, user_devices, device_aliased, 0, TWFunc::Path_Exists(additional_fstab) ? additional_fstab : "")) {
 +			std::string keymint_cpp_state = android::base::GetProperty("init.svc.vendor.keymint-trusty", "");
 +			std::string keymint_rust_state = android::base::GetProperty("init.svc.vendor.keymint.rust-trusty", "");
 +			bool keymint_state_known = !keymint_cpp_state.empty() || !keymint_rust_state.empty();
@@ -312,7 +315,7 @@
  				std::string crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
  				Decrypt_Data->Decrypted_Block_Device = crypto_blkdev;
  				LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n", crypto_blkdev.c_str());
-@@ -699,9 +937,45 @@
+@@ -699,9 +936,45 @@
  				while (!Decrypt_Data->Mount(false) && --retry_count)
  					usleep(500);
  				if (Decrypt_Data->Mount(false)) {
@@ -358,15 +361,15 @@
  
  				} else {
  					LOGINFO("Failed to mount data after metadata decrypt\n");
-@@ -709,6 +983,7 @@
+@@ -709,6 +982,7 @@
  			} else {
  				LOGINFO("Unable to decrypt metadata encryption\n");
  			}
 +			} // end KeyMint service gate
  #else
- 			LOGERR("Metadata FBE decrypt support not present in this build\n");
+ 			LOGERR("Metadata FBE decrypt support not present in this TWRP\n");
  #endif
-@@ -931,6 +1206,10 @@
+@@ -930,6 +1204,10 @@
  	if (Local_Path == "/tmp" || Local_Path == "/")
  		return true;
  
@@ -377,7 +380,7 @@
    	#ifdef OF_DEVICE_WITHOUT_PERSIST
    	if (Local_Path == "/persist")
        		return false;
-@@ -939,6 +1218,10 @@
+@@ -938,6 +1216,10 @@
  	// Iterate through all partitions
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  		if ((*iter)->Mount_Point == Local_Path || (!(*iter)->Symlink_Mount_Point.empty() && (*iter)->Symlink_Mount_Point == Local_Path)) {
@@ -388,7 +391,7 @@
  			ret = (*iter)->Mount(Display_Error);
  			found = true;
  		} else if ((*iter)->Is_SubPartition && (*iter)->SubPartition_Of == Local_Path) {
-@@ -1383,18 +1666,19 @@
+@@ -1384,18 +1666,19 @@
  		backup_path = Backup_List.substr(start_pos, end_pos - start_pos);
  		part_settings.Part = Find_Partition_By_Path(backup_path);
  		if (part_settings.Part != NULL) {
@@ -420,7 +423,7 @@
  			if (!Backup_Partition(&part_settings))
  				return false;
  		} else {
-@@ -1955,9 +2239,52 @@
+@@ -1962,9 +2245,52 @@
  	}
  }
  
@@ -473,7 +476,7 @@
  	TWPartition* dat = Find_Partition_By_Path("/data");
  	TWPartition* metadata = Find_Partition_By_Path("/metadata");
  	bool ret = false;
-@@ -1965,6 +2292,37 @@
+@@ -1972,6 +2298,37 @@
  		metadata->UnMount(false);
  
  	if (dat != NULL) {
@@ -511,7 +514,7 @@
  		#ifdef OF_REFRESH_ENCRYPTION_PROPS_BEFORE_FORMAT
  		Update_Encryption_Props_Before_Format(); // call here, because it must run before Unmap_Super_Devices is executed
  		#endif
-@@ -1979,6 +2337,7 @@
+@@ -1986,6 +2343,7 @@
  				return false;
  		}
  		ret = dat->Wipe_Encryption();
@@ -519,7 +522,7 @@
  	} else {
  		gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")("/data"));
  		return false;
-@@ -2075,6 +2434,12 @@
+@@ -2082,6 +2440,12 @@
  	return false;
  }
  
@@ -532,7 +535,7 @@
  void TWPartitionManager::Update_System_Details(void) {
  	std::vector<TWPartition*>::iterator iter;
  	int data_size = 0;
-@@ -2087,6 +2452,29 @@
+@@ -2094,6 +2458,29 @@
    	if (DataManager::GetIntValue(FOX_RUN_SURVIVAL_BACKUP) != 1)
  		gui_msg("update_part_details=Updating partition details...");
  	for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
@@ -562,9 +565,9 @@
  		(*iter)->Update_Size(reporter);
  		if ((*iter)->Can_Be_Mounted) {
  			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
-@@ -2194,7 +2582,10 @@
- 		}
- 		property_set("twrp.decrypt.done", "true");
+@@ -2205,7 +2592,10 @@
+ #endif
+ 
  		dat->Setup_File_System(false);
 -		dat->Current_File_System = dat->Fstab_File_System;  // Needed if we're ignoring blkid because encrypted devices start out as emmc
 +		if (dat->Ignore_Blkid)
@@ -574,7 +577,7 @@
  
  		sleep(1); // Sleep for a bit so that the device will be ready
  
-@@ -2334,6 +2725,20 @@
+@@ -2345,6 +2735,20 @@
  #endif
  }
  
@@ -595,7 +598,7 @@
  int TWPartitionManager::Decrypt_Device(string Password, int user_id) {
  #ifdef TW_INCLUDE_CRYPTO
    char crypto_blkdev[PROPERTY_VALUE_MAX];
-@@ -2365,7 +2770,29 @@
+@@ -2376,7 +2780,29 @@
  				user_need_decrypt = true;
  			}
  		}
@@ -625,7 +628,7 @@
  			LOGINFO("User %d does not require decryption\n", user_id);
  			return 0;
  		}
-@@ -2396,6 +2823,17 @@
+@@ -2407,6 +2833,17 @@
  				}
  				Post_Decrypt("");
  			}
@@ -643,7 +646,7 @@
  
  			return 0;
  		} else {
-@@ -2420,11 +2858,13 @@
+@@ -2431,11 +2868,13 @@
  		LOGERR("fork failed\n");
  		return -1;
  	} else if (pid == 0) {
@@ -662,7 +665,7 @@
  	} else {
  		// Parent
  		int status;
-@@ -2859,17 +3299,102 @@
+@@ -2870,17 +3309,102 @@
    return true;
  }
  
@@ -765,7 +768,7 @@
  	      struct PartitionList part;
  	      part.Display_Name = (*iter)->Display_Name;
  	      part.Mount_Point = (*iter)->Mount_Point;
-@@ -2899,8 +3424,22 @@
+@@ -2910,8 +3434,22 @@
        string Current_Storage = DataManager::GetCurrentStoragePath();
        for (iter = Partitions.begin(); iter != Partitions.end(); iter++)
  	{
@@ -789,7 +792,7 @@
  	      struct PartitionList part;
  	      sprintf(free_space, "%llu", (*iter)->Free / 1024 / 1024);
  	      part.Display_Name = (*iter)->Storage_Name + " (";
-@@ -2990,6 +3529,13 @@
+@@ -3001,6 +3539,13 @@
  		Partition_List->push_back(dalvik);
  		for (iter = Partitions.begin(); iter != Partitions.end(); iter++) {
  			if ((*iter)->Wipe_Available_in_GUI && !(*iter)->Is_SubPartition) {
@@ -803,7 +806,7 @@
  				struct PartitionList part;
  				part.Display_Name = (*iter)->Display_Name;
  				part.Mount_Point = (*iter)->Mount_Point;
-@@ -3730,6 +4276,324 @@
+@@ -3725,6 +4270,324 @@
  		Update_System_Details();
  }
  
@@ -1128,7 +1131,7 @@
  string TWPartitionManager::Get_Internal_Storage_Path() {
     std::string s = getenv("EXTERNAL_STORAGE");
     if (s == "") 
-@@ -4662,7 +5526,12 @@
+@@ -4657,7 +5520,12 @@
      Fstab fstab;
  	std::string bare_partition_name = Get_Bare_Partition_Name(twrpPart->Get_Mount_Point());
  
@@ -1142,7 +1145,7 @@
  	LOGINFO("Trying to prepare %s from super partition\n", bare_partition_name.c_str());
  
  	std::string blk_device_partition;
-@@ -4704,14 +5573,21 @@
+@@ -4699,14 +5567,21 @@
  	bool status = true;
  	std::vector<TWPartition*>::iterator iter;
  
@@ -1166,7 +1169,7 @@
  	}
  	Update_System_Details();
  	return status;
-@@ -4840,6 +5716,912 @@
+@@ -4835,6 +5710,912 @@
  	}
  }
  
@@ -2079,7 +2082,7 @@
  bool TWPartitionManager::Unmap_Super_Devices() {
  	bool destroyed = false;
  #ifndef TW_EXCLUDE_APEX
-@@ -4857,13 +6639,13 @@
+@@ -4852,13 +6633,13 @@
  				blk_device_partition.append(PartitionManager.Get_Active_Slot_Suffix());
  			(*iter)->UnMount(false);
  			LOGINFO("removing dynamic partition: %s\n", blk_device_partition.c_str());
@@ -2095,7 +2098,7 @@
  			}
  			iter = Partitions.erase(iter);
  			delete part;
-@@ -4882,9 +6664,45 @@
+@@ -4877,9 +6658,45 @@
  		while ((de = readdir(d)) != NULL) {
  			if (de->d_type == DT_LNK) {
  				std::string partition = de->d_name;
@@ -2143,7 +2146,7 @@
  					if (!destroyed) {
  						closedir(d);
  						return false;
-@@ -4946,6 +6764,21 @@
+@@ -4941,6 +6758,21 @@
  
  mount:
  	mtp_was_enabled = TWFunc::Toggle_MTP(false);

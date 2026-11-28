@@ -85,6 +85,8 @@
 #include "twrpDigestDriver.hpp"
 #include "twrpRepacker.hpp"
 #include "adbbu/libtwadbbu.hpp"
+#include "kernel_module_loader.hpp"
+
 
 #ifdef TW_LOAD_VENDOR_MODULES
 #include "kernel_module_loader.hpp"
@@ -123,15 +125,9 @@ extern "C" {
 #endif
 
 #ifdef AB_OTA_UPDATER
-	#ifdef OF_USE_AIDL_BOOT_CONTROL
 	#include <BootControlClient.h>
 	using android::hal::BootControlClient;
 	using android::hal::CommandResult;
-	#else
-	#include <android/hardware/boot/1.0/IBootControl.h>
-	using android::hardware::boot::V1_0::CommandResult;
-	using android::hardware::boot::V1_0::IBootControl;
-	#endif
 #endif
 
 using android::fs_mgr::DestroyLogicalPartition;
@@ -427,8 +423,6 @@ bool Do_Disable_AVB2(string File_Name, char Disable_Flags, bool Display_Info) {
 	int _ret;
 	bool ret = false;
 	string dev = "/dev/block/bootdevice/by-name/";
-	if (!TWFunc::Path_Exists(dev))
-		dev = "/dev/block/by-name/";
 
 	FILE *vbmetaFile = fopen((dev + File_Name).c_str(), "rb+");
 	if (vbmetaFile != NULL) {
@@ -469,8 +463,6 @@ bool TWPartitionManager::Disable_AVB2(bool Display_Info) {
 	bool vb = false;
 	bool vb_sys = false;
 	string dev = "/dev/block/bootdevice/by-name/";
-	if (!TWFunc::Path_Exists(dev))
-		dev = "/dev/block/by-name/";
 
 	string part = "vbmeta";
 	if (TWFunc::Path_Exists(dev + part)) {
@@ -664,6 +656,12 @@ clear:
 	if (recovery_mode)
 		Process_Keymaster_Version(ven, false);
 	if (ven) ven->UnMount(Display_Error);
+#ifdef OF_LOAD_ROM_MODULES
+	// Services that start on this property must not see the ROM's /vendor:
+	// they would load its libraries and keep it mounted.
+	if (!android::base::GetBoolProperty(TW_MODULES_MOUNTED_PROP, false))
+		android::base::SetProperty(TW_MODULES_MOUNTED_PROP, "true");
+#endif
 	// Fox: super-first vector order (mount menu + /etc/fstab follow it)
 	// from the very first parse; the rescan fast-paths (nothing missing)
 	// and only reorders + rewrites fstab when startup left strays.
@@ -781,6 +779,7 @@ void TWPartitionManager::Setup_Fstab_Partitions(bool Display_Error) {
 	#endif
 		setup_uevent();
 }
+
 
 int TWPartitionManager::Write_Fstab(void) {
 	FILE *fp;
@@ -985,7 +984,7 @@ void TWPartitionManager::Decrypt_Data() {
 			}
 			} // end KeyMint service gate
 #else
-			LOGERR("Metadata FBE decrypt support not present in this build\n");
+			LOGERR("Metadata FBE decrypt support not present in this TWRP\n");
 #endif
 		}
 		if (Decrypt_Data->Is_FBE) {
@@ -999,23 +998,21 @@ void TWPartitionManager::Decrypt_Data() {
 			}
 		} else {
 			LOGINFO("FBE setup failed. Trying FDE...\n");
-			/*
-			Set_Crypto_State();
-			Set_Crypto_Type("block");
-			int password_type = cryptfs_get_password_type();
-			if (password_type == CRYPT_TYPE_DEFAULT) {
-				LOGINFO("Device is encrypted with the default password, attempting to decrypt.\n");
-				if (Decrypt_Device("default_password") == 0) {
-					gui_msg("decrypt_success=Successfully decrypted with default password.");
-					DataManager::SetValue(TW_IS_ENCRYPTED, 0);
-				} else {
-					gui_err("unable_to_decrypt=Unable to decrypt with default password.");
-				}
-			} else {
-				DataManager::SetValue("TW_CRYPTO_TYPE", password_type);
-				DataManager::SetValue("tw_crypto_pwtype_0", password_type);
-			}
-			*/
+// 			Set_Crypto_State();
+//			Set_Crypto_Type("block");
+//			int password_type = cryptfs_get_password_type();
+//			if (password_type == CRYPT_TYPE_DEFAULT) {
+//				LOGINFO("Device is encrypted with the default password, attempting to decrypt.\n");
+//				if (Decrypt_Device("default_password") == 0) {
+//					gui_msg("decrypt_success=Successfully decrypted with default password.");
+//					DataManager::SetValue(TW_IS_ENCRYPTED, 0);
+//				} else {
+//					gui_err("unable_to_decrypt=Unable to decrypt with default password.");
+//				}
+//			} else {
+//				DataManager::SetValue("TW_CRYPTO_TYPE", password_type);
+//				DataManager::SetValue("tw_crypto_pwtype_0", password_type);
+//			}
 		}
 	}
 	if (Decrypt_Data && (!Decrypt_Data->Is_Encrypted || Decrypt_Data->Is_Decrypted)) {
@@ -1202,6 +1199,7 @@ int TWPartitionManager::Mount_By_Path(string Path, bool Display_Error) {
 	int ret = false;
 	bool found = false;
 	string Local_Path = TWFunc::Get_Root_Path(Path);
+	
 
 	if (Local_Path == "/tmp" || Local_Path == "/")
 		return true;
@@ -1244,6 +1242,7 @@ int TWPartitionManager::UnMount_By_Path(string Path, bool Display_Error, int fla
 	int ret = false;
 	bool found = false;
 	string Local_Path = TWFunc::Get_Root_Path(Path);
+	
 
   	#ifdef OF_DEVICE_WITHOUT_PERSIST
   	if (Local_Path == "/persist")
@@ -1650,11 +1649,12 @@ int TWPartitionManager::Run_Backup(bool adbbackup) {
 	DataManager::GetValue(TW_IS_ENCRYPTED, is_encrypted);
 	if (!adbbackup || (!is_encrypted || (is_encrypted && is_decrypted))) {
 		gui_msg(Msg("backup_folder= * Backup Folder: {1}")(part_settings.Backup_Folder));
-  		if (!TWFunc::Create_Dir_Recursive(part_settings.Backup_Folder, 0777, AID_MEDIA_RW, AID_MEDIA_RW)) {
+		if (!TWFunc::Create_Dir_Recursive(part_settings.Backup_Folder, 0777, AID_MEDIA_RW, AID_MEDIA_RW)) {
 			gui_err("fail_backup_folder=Failed to make backup folder.");
 			return false;
 		}
 	}
+
 
 	DataManager::SetProgress(0.0);
 
@@ -1696,21 +1696,31 @@ int TWPartitionManager::Run_Backup(bool adbbackup) {
 	int img_bps = (int)part_settings.img_bytes / (int)part_settings.img_time;
 	unsigned long long file_bps = part_settings.file_bytes / (int)part_settings.file_time;
 
+	string backup_log = part_settings.Backup_Folder + "/recovery.log";
+	TWFunc::copy_file("/tmp/recovery.log", backup_log, 0644);
+	tw_set_default_metadata(backup_log.c_str());
+
+	uint64_t actual_backup_size_bytes;
+	if (!adbbackup) {
+		TWExclude twe;
+		actual_backup_size_bytes = twe.Get_Folder_Size(part_settings.Backup_Folder);
+	} else
+		actual_backup_size_bytes = part_settings.file_bytes + part_settings.img_bytes;
+
+
+	time(&total_stop);
+	int total_time = (int) difftime(total_stop, total_start);
+	if (total_time < 1)
+		total_time = 1;
+
+	uint64_t actual_backup_size = actual_backup_size_bytes / (1024LLU * 1024LLU);
+	gui_msg(Msg("total_backed_size=[{1} MB TOTAL BACKED UP]")(actual_backup_size));
+
+
 	if (part_settings.file_bytes != 0)
 		gui_msg(Msg("avg_backup_fs=Average backup rate for file systems: {1} MB/sec")(file_bps / (1024 * 1024)));
 	if (part_settings.img_bytes != 0)
 		gui_msg(Msg("avg_backup_img=Average backup rate for imaged drives: {1} MB/sec")(img_bps / (1024 * 1024)));
-
-	time(&total_stop);
-	int total_time = (int) difftime(total_stop, total_start);
-
-	uint64_t actual_backup_size;
-	if (!adbbackup) {
-		TWExclude twe;
-		actual_backup_size = twe.Get_Folder_Size(part_settings.Backup_Folder);
-	} else
-		actual_backup_size = part_settings.file_bytes + part_settings.img_bytes;
-	actual_backup_size /= (1024LLU * 1024LLU);
 
 	int prev_img_bps = 0, use_compression = 0;
 	unsigned long long prev_file_bps = 0;
@@ -1732,13 +1742,9 @@ int TWPartitionManager::Run_Backup(bool adbbackup) {
 	else
 		DataManager::SetValue(TW_BACKUP_AVG_FILE_RATE, file_bps);
 
-	gui_msg(Msg("total_backed_size=[{1} MB TOTAL BACKED UP]")(actual_backup_size));
 	Update_System_Details();
 	UnMount_Main_Partitions();
 	gui_msg(Msg(msg::kHighlight, "backup_completed=[BACKUP COMPLETED IN {1} SECONDS]")(total_time)); // the end
-	string backup_log = part_settings.Backup_Folder + "/recovery.log";
-	TWFunc::copy_file("/tmp/recovery.log", backup_log, 0644);
-	tw_set_default_metadata(backup_log.c_str());
 
 	if (part_settings.adbbackup) {
 		if (twadbbu::Write_ADB_Stream_Trailer() == false) {
@@ -2480,7 +2486,6 @@ void TWPartitionManager::Update_System_Details(void) {
 			if ((*iter)->Mount_Point == Get_Android_Root_Path()) {
 				int backup_display_size = (int)((*iter)->Backup_Size / 1048576LLU);
 				DataManager::SetValue(TW_BACKUP_SYSTEM_SIZE, backup_display_size);
-				//TWFunc::Is_TWRP_App_In_System();
 			} else if ((*iter)->Mount_Point == "/data" || (*iter)->Mount_Point == "/datadata") {
 				data_size += (int)((*iter)->Backup_Size / 1048576LLU);
 			} else if ((*iter)->Mount_Point == "/cache") {
@@ -2581,6 +2586,11 @@ void TWPartitionManager::Post_Decrypt(const string& Block_Device) {
 			gui_msg("decrypt_success_nodev=Data successfully decrypted");
 		}
 		property_set("twrp.decrypt.done", "true");
+
+#ifdef TW_POST_DECRYPT_MODULES
+		KernelModuleLoader::Load_Post_Decrypt_Modules();
+#endif
+
 		dat->Setup_File_System(false);
 		if (dat->Ignore_Blkid)
 			dat->Current_File_System = dat->Fstab_File_System; // Needed on devices where blkid probing is intentionally disabled
@@ -4239,7 +4249,6 @@ void TWPartitionManager::Set_Active_Slot(const string& Slot) {
 	LOGINFO("Setting active slot %s\n", Slot.c_str());
 #ifdef AB_OTA_UPDATER
 	if (!Active_Slot_Display.empty()) {
-	#ifdef OF_USE_AIDL_BOOT_CONTROL
 		const auto module = BootControlClient::WaitForService();
 		if (module == nullptr) {
 			LOGERR("Error getting bootctrl module.\n");
@@ -4251,21 +4260,6 @@ void TWPartitionManager::Set_Active_Slot(const string& Slot) {
 			if (!result.success)
 				gui_msg(Msg(msg::kError, "unable_set_boot_slot=Error changing bootloader boot slot to {1}")(Slot));
 		}
-	#else // OF_USE_AIDL_BOOT_CONTROL
-		android::sp<IBootControl> module = IBootControl::getService();
-		if (module == nullptr) {
-			LOGERR("Error getting bootctrl module.\n");
-		} else {
-			uint32_t slot_number = 0;
-			if (Slot == "B")
-				slot_number = 1;
-			CommandResult result;
-			auto ret = module->setActiveBootSlot(slot_number, [&result]
-					(const CommandResult &cb_result) { result = cb_result; });
-			if (!ret.isOk() || !result.success)
-				gui_msg(Msg(msg::kError, "unable_set_boot_slot=Error changing bootloader boot slot to {1}")(Slot));
-		}
-	#endif // OF_USE_AIDL_BOOT_CONTROL
 		DataManager::SetValue("tw_active_slot", Slot); // Doing this outside of this if block may result in a seg fault because the DataManager may not be ready yet
 	}
 #else

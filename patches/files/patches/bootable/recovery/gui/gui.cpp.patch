@@ -1,14 +1,14 @@
 --- a/bootable/recovery/gui/gui.cpp
 +++ b/bootable/recovery/gui/gui.cpp
-@@ -50,6 +50,7 @@
+@@ -52,6 +52,7 @@
  #include "../variables.h"
  #include "../partitions.hpp"
  #include "../twrp-functions.hpp"
 +#include <android-base/properties.h>
  #include "../openrecoveryscript.hpp"
  #include "../orscmd/orscmd.h"
- #include "blanktimer.hpp"
-@@ -66,6 +67,43 @@
+ #include "../fox_fifo/fox_channel.hpp"
+@@ -72,6 +73,43 @@
  
  using namespace rapidxml;
  
@@ -52,7 +52,7 @@
  // Global values
  static int gGuiInitialized = 0;
  static TWAtomicInt gForceRender;
-@@ -211,10 +249,20 @@
+@@ -289,10 +327,20 @@
  
  	case EV_KEY:
  		if((ev.code == KEY_MENU || ev.code == KEY_HOME || ev.code == KEY_BACK) && DataManager::GetIntValue("tw_enable_keys") != 0) {
@@ -75,7 +75,7 @@
  	                       PageManager::NotifyKey(KEY_BACK, true);
  		         DataManager::Vibrate("tw_button_vibrate");
  		    }else{
-@@ -225,13 +273,13 @@
+@@ -303,13 +351,13 @@
  								PageManager::ChangeOverlay("console");
  		                  break;
  	                  case KEY_HOME:
@@ -91,7 +91,7 @@
  								PageManager::NotifyKey(KEY_BACK, false);
  							else
  								gui_changeOverlay("");
-@@ -444,7 +492,8 @@
+@@ -522,7 +570,8 @@
  				blankTimer.toggleBlank();
  			}
  		} else {
@@ -101,7 +101,7 @@
  				LOGEVENT("POWER Key Released\n");
  				long long now = nowMs();
  				if (now < g_suppress_power_toggle_until_ms) {
-@@ -762,6 +811,24 @@
+@@ -873,6 +922,24 @@
  		}
  
  		blankTimer.checkForTimeout();
@@ -126,7 +126,7 @@
  		if (stop_on_page_done && DataManager::GetIntValue("tw_page_done") != 0)
  		{
  			gui_changePage("main");
-@@ -899,7 +966,7 @@
+@@ -1011,7 +1078,7 @@
  #endif
  
  	// load and show splash screen
@@ -135,7 +135,7 @@
  		LOGERR("Failed to load splash screen XML.\n");
  	}
  	else {
-@@ -934,7 +1001,7 @@
+@@ -1046,7 +1113,7 @@
  
  	if (check)
  	{
@@ -144,7 +144,7 @@
  		{
  			gui_err("base_pkg_err=Failed to load base packages.");
  			goto error;
-@@ -968,7 +1035,7 @@
+@@ -1080,7 +1147,7 @@
  		if (check || PageManager::LoadPackage("OrangeFox", theme_path, "main"))
  		{
  #endif // ifndef TW_OEM_BUILD
@@ -153,7 +153,7 @@
  			{
  				gui_err("base_pkg_err=Failed to load base packages.");
  				goto error;
-@@ -1018,7 +1085,7 @@
+@@ -1130,7 +1197,7 @@
  		if (PageManager::ReloadPackage("OrangeFox", theme_path)) 
  		{
  			// Custom theme failed to load, try to load stock theme

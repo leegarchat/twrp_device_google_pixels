@@ -72,6 +72,4 @@
 +    handle_->read_aiob.fd = handle_->bulk_out.get();
 +    handle_->write_aiob.fd = handle_->bulk_in.get();
      return 0;
--}
-\ No newline at end of file
-+}
+ }

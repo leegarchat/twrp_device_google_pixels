@@ -28,6 +28,7 @@
 #include <cutils/properties.h>
 #include <unistd.h>
 #include <private/android_filesystem_config.h>
+#include <android-base/strings.h>
 #include "variables.h"
 #include "data.hpp"
 #include "partitions.hpp"
@@ -730,6 +731,107 @@ void DataManager::SetBackupFolder()
     }
 }
 
+void DataManager::SetBrightnessDefaults(bool retry_later)
+{
+  // Brightness handling
+  string findbright;
+#ifdef TW_BRIGHTNESS_PATH
+  findbright = EXPAND(TW_BRIGHTNESS_PATH);
+  LOGINFO("TW_BRIGHTNESS_PATH := %s\n", findbright.c_str());
+  if (!TWFunc::Path_Exists(findbright))
+    {
+      LOGINFO("Specified brightness file '%s' not found.\n",
+	      findbright.c_str());
+      findbright = "";
+    }
+#endif
+  if (findbright.empty())
+    {
+      // Attempt to locate the brightness file
+      findbright = Find_File::Find("brightness", "/sys/class/backlight");
+      if (findbright.empty())
+	findbright =
+	  Find_File::Find("brightness", "/sys/class/leds/lcd-backlight");
+    }
+  if (findbright.empty())
+    {
+      LOGINFO("Unable to locate brightness file\n");
+      // Constants cannot change, so leave it unset while a retry can follow
+      if (!retry_later)
+	mConst.SetValue("tw_has_brightnesss_file", "0");
+    }
+  else
+    {
+      LOGINFO("Found brightness file at '%s'\n", findbright.c_str());
+      mConst.SetValue("tw_has_brightnesss_file", "1");
+      mConst.SetValue("tw_brightness_file", findbright);
+      string maxBrightness;
+#ifdef TW_MAX_BRIGHTNESS
+      ostringstream maxVal;
+      maxVal << TW_MAX_BRIGHTNESS;
+      maxBrightness = maxVal.str();
+#else
+      // Attempt to locate the max_brightness file
+      string maxbrightpath =
+	findbright.insert(findbright.rfind('/') + 1, "max_");
+      if (TWFunc::Path_Exists(maxbrightpath))
+	{
+	  ifstream maxVal(maxbrightpath.c_str());
+	  if (maxVal >> maxBrightness)
+	    {
+	      LOGINFO("Got max brightness %s from '%s'\n",
+		      maxBrightness.c_str(), maxbrightpath.c_str());
+	    }
+	  else
+	    {
+	      // Something went wrong, set that to indicate error
+	      maxBrightness = "-1";
+	    }
+	}
+      if (atoi(maxBrightness.c_str()) <= 0)
+	{
+	  // Fallback into default
+	  ostringstream maxVal;
+	  maxVal << 255;
+	  maxBrightness = maxVal.str();
+	}
+#endif
+      mConst.SetValue("tw_brightness_max", maxBrightness);
+      mPersist.SetValue("tw_brightness", maxBrightness);
+      mPersist.SetValue("tw_brightness_pct", "100");
+#ifdef TW_SECONDARY_BRIGHTNESS_PATH
+      string secondfindbright = EXPAND(TW_SECONDARY_BRIGHTNESS_PATH);
+      if (secondfindbright != "" && TWFunc::Path_Exists(secondfindbright))
+	{
+	  LOGINFO("Will use a second brightness file at '%s'\n",
+		  secondfindbright.c_str());
+	  mConst.SetValue("tw_secondary_brightness_file", secondfindbright);
+	}
+      else
+	{
+	  LOGINFO("Specified secondary brightness file '%s' not found.\n",
+		  secondfindbright.c_str());
+	}
+#endif
+#ifdef TW_DEFAULT_BRIGHTNESS
+      int defValInt = TW_DEFAULT_BRIGHTNESS;
+      int maxValInt = atoi(maxBrightness.c_str());
+      // Deliberately int so the % is always a whole number
+      int defPctInt = (((double) defValInt / maxValInt) * 100);
+      ostringstream defPct;
+      defPct << defPctInt;
+      mPersist.SetValue("tw_brightness_pct", defPct.str());
+
+      ostringstream defVal;
+      defVal << TW_DEFAULT_BRIGHTNESS;
+      mPersist.SetValue("tw_brightness", defVal.str());
+      TWFunc::Set_Brightness(defVal.str());
+#else
+      TWFunc::Set_Brightness(maxBrightness);
+#endif
+    }
+}
+
 void DataManager::SetDefaultValues()
 {
   string str, path;
@@ -962,9 +1064,10 @@ void DataManager::SetDefaultValues()
   //[f/d]
  
 #ifndef TW_NO_HAPTICS
-	mPersist.SetValue("tw_button_vibrate", "40");
-	mPersist.SetValue("tw_keyboard_vibrate", "40");
-	mPersist.SetValue("tw_action_vibrate", "160");
+	std::vector <std::string> vibra_defaults = android::base::Split(OF_VIBRATION_DEFAULTS, "[,;]");
+	mPersist.SetValue("tw_button_vibrate", vibra_defaults.at(0));
+	mPersist.SetValue("tw_keyboard_vibrate", vibra_defaults.at(1));
+	mPersist.SetValue("tw_action_vibrate", vibra_defaults.at(2));
 	mConst.SetValue("tw_disable_haptics", "0");
 #else
 	LOGINFO("TW_NO_HAPTICS := true\n");
@@ -1366,101 +1469,12 @@ void DataManager::SetDefaultValues()
   	mConst.SetValue(TW_VIRTUAL_AB_ENABLED, "0");
   }
 
-  // Brightness handling
-  string findbright;
-#ifdef TW_BRIGHTNESS_PATH
-  findbright = EXPAND(TW_BRIGHTNESS_PATH);
-  LOGINFO("TW_BRIGHTNESS_PATH := %s\n", findbright.c_str());
-  if (!TWFunc::Path_Exists(findbright))
-    {
-      LOGINFO("Specified brightness file '%s' not found.\n",
-	      findbright.c_str());
-      findbright = "";
-    }
-#endif
-  if (findbright.empty())
-    {
-      // Attempt to locate the brightness file
-      findbright = Find_File::Find("brightness", "/sys/class/backlight");
-      if (findbright.empty())
-	findbright =
-	  Find_File::Find("brightness", "/sys/class/leds/lcd-backlight");
-    }
-  if (findbright.empty())
-    {
-      LOGINFO("Unable to locate brightness file\n");
-      mConst.SetValue("tw_has_brightnesss_file", "0");
-    }
-  else
-    {
-      LOGINFO("Found brightness file at '%s'\n", findbright.c_str());
-      mConst.SetValue("tw_has_brightnesss_file", "1");
-      mConst.SetValue("tw_brightness_file", findbright);
-      string maxBrightness;
-#ifdef TW_MAX_BRIGHTNESS
-      ostringstream maxVal;
-      maxVal << TW_MAX_BRIGHTNESS;
-      maxBrightness = maxVal.str();
+#ifdef OF_LOAD_ROM_MODULES
+  // The backlight driver can be a module that recovery loads later
+  SetBrightnessDefaults(true);
 #else
-      // Attempt to locate the max_brightness file
-      string maxbrightpath =
-	findbright.insert(findbright.rfind('/') + 1, "max_");
-      if (TWFunc::Path_Exists(maxbrightpath))
-	{
-	  ifstream maxVal(maxbrightpath.c_str());
-	  if (maxVal >> maxBrightness)
-	    {
-	      LOGINFO("Got max brightness %s from '%s'\n",
-		      maxBrightness.c_str(), maxbrightpath.c_str());
-	    }
-	  else
-	    {
-	      // Something went wrong, set that to indicate error
-	      maxBrightness = "-1";
-	    }
-	}
-      if (atoi(maxBrightness.c_str()) <= 0)
-	{
-	  // Fallback into default
-	  ostringstream maxVal;
-	  maxVal << 255;
-	  maxBrightness = maxVal.str();
-	}
+  SetBrightnessDefaults();
 #endif
-      mConst.SetValue("tw_brightness_max", maxBrightness);
-      mPersist.SetValue("tw_brightness", maxBrightness);
-      mPersist.SetValue("tw_brightness_pct", "100");
-#ifdef TW_SECONDARY_BRIGHTNESS_PATH
-      string secondfindbright = EXPAND(TW_SECONDARY_BRIGHTNESS_PATH);
-      if (secondfindbright != "" && TWFunc::Path_Exists(secondfindbright))
-	{
-	  LOGINFO("Will use a second brightness file at '%s'\n",
-		  secondfindbright.c_str());
-	  mConst.SetValue("tw_secondary_brightness_file", secondfindbright);
-	}
-      else
-	{
-	  LOGINFO("Specified secondary brightness file '%s' not found.\n",
-		  secondfindbright.c_str());
-	}
-#endif
-#ifdef TW_DEFAULT_BRIGHTNESS
-      int defValInt = TW_DEFAULT_BRIGHTNESS;
-      int maxValInt = atoi(maxBrightness.c_str());
-      // Deliberately int so the % is always a whole number
-      int defPctInt = (((double) defValInt / maxValInt) * 100);
-      ostringstream defPct;
-      defPct << defPctInt;
-      mPersist.SetValue("tw_brightness_pct", defPct.str());
-
-      ostringstream defVal;
-      defVal << TW_DEFAULT_BRIGHTNESS;
-      mPersist.SetValue("tw_brightness", defVal.str());
-      TWFunc::Set_Brightness(defVal.str());
-#else
-      TWFunc::Set_Brightness(maxBrightness);
-#endif
-    }
 
 #ifndef TW_EXCLUDE_ENCRYPTED_BACKUPS
   mConst.SetValue("tw_include_encrypted_backup", "1");

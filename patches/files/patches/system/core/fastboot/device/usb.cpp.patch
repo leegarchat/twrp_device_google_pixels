@@ -37,7 +37,7 @@
              return -1;
          }
          if (num_bufs == 1 && aiob->events[0].res == -EINTR) {
-@@ -209,6 +226,37 @@
+@@ -209,6 +226,38 @@
      }
  }
  
@@ -72,6 +72,7 @@
 +    aio_block_init(&h->read_aiob, h->read_aiob.iocbs.size());
 +    aio_block_init(&h->write_aiob, h->write_aiob.iocbs.size());
 +}
- 
++
  bool DoesKernelSupportIouring() {
      struct utsname uts {};
+     unsigned int major = 0, minor = 0;

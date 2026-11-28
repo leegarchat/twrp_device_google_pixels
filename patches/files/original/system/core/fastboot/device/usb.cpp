@@ -209,7 +209,6 @@ static void usb_ffs_close(usb_handle* h) {
     }
 }
 
-
 bool DoesKernelSupportIouring() {
     struct utsname uts {};
     unsigned int major = 0, minor = 0;

@@ -1012,15 +1012,13 @@ int ev_get(struct input_event *ev, int timeout_ms)
     if(curr.tv_sec - lastInputStat.tv_sec >= 2)
     {
         struct stat st;
-        stat("/dev/input", &st);
-        if (st.st_mtim.tv_sec > lastInputMTime.tv_sec ||
-            (st.st_mtim.tv_sec == lastInputMTime.tv_sec &&
-             st.st_mtim.tv_nsec > lastInputMTime.tv_nsec))
+        if (stat("/dev/input", &st) == 0 &&
+            (st.st_mtim.tv_sec != lastInputMTime.tv_sec ||
+             st.st_mtim.tv_nsec != lastInputMTime.tv_nsec))
         {
             LOGI("Reloading input devices\n");
             ev_exit();
             ev_init();
-            lastInputMTime = st.st_mtim;
         }
         lastInputStat = curr;
     }

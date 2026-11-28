@@ -245,6 +245,13 @@ export OF_MISCELLANEOUS_ROOT_DIRECTORY=/sdcard
 # export OF_MISCELLANEOUS_ROOT_DIRECTORY=/persist
 
 
+# --- Haptics: keep maintainer-tuned durations via upstream macro ---
+# Upstream Nov-11 reads these from OF_VIBRATION_DEFAULTS (Split on [,;],
+# default "40,40,160" in orangefox.mk). Our tree historically hardcoded
+# 3/9/20 in data.cpp; preserve that tuning declaratively instead.
+export OF_VIBRATION_DEFAULTS="3,9,20"
+
+
 # --- KernelSU ---
 export FOX_ENABLE_KERNELSU_SUPPORT=1
 export FOX_ENABLE_KERNELSU_NEXT_SUPPORT=1

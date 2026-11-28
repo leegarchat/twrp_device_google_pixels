@@ -1,7 +1,7 @@
 --- a/bootable/recovery/orangefox_defaults.go
 +++ b/bootable/recovery/orangefox_defaults.go
-@@ -59,6 +59,14 @@
- 		foxflags = append(foxflags, "-DFOX_USE_MEIZU_TOUCH_MAPPING=1")
+@@ -68,6 +68,14 @@
+ 		foxflags = append(foxflags, "-DFOX_NO_BLANK_DT2W="+"\""+ctx.AConfig().Getenv("FOX_NO_BLANK_DT2W")+"\"")
  	}
  
 +	// Fox pixels: reworked (wide-variant) theme, test-gated. build.sh

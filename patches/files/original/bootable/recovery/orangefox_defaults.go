@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2021-2025 OrangeFox Recovery Project
+	Copyright (C) 2021-2026 OrangeFox Recovery Project
 	This file is part of the OrangeFox Recovery Project.
 	
 	OrangeFox is free software: you can redistribute it and/or modify
@@ -25,38 +25,47 @@ import (
 func fox_globalFlags(ctx android.BaseContext) []string {
 	var foxflags []string
 
-	if ctx.AConfig().Getenv("FOX_USE_NANO_EDITOR") == "1" {
-		foxflags = append(foxflags, "-DFOX_USE_NANO_EDITOR=1")
+	if getMakeVars(ctx, "OF_USE_NANO_EDITOR") == "1" {
+		foxflags = append(foxflags, "-DOF_USE_NANO_EDITOR=1")
 	}
 
-	if ctx.AConfig().Getenv("OF_ENABLE_LAB") == "1" {
+	if getMakeVars(ctx, "OF_ENABLE_LAB") == "1" {
 		foxflags = append(foxflags, "-DOF_ENABLE_LAB=1")
 	}
 
-	if ctx.AConfig().Getenv("OF_SUPPORT_OZIP_DECRYPTION") == "1" {
+
+	if getMakeVars(ctx, "OF_SUPPORT_OZIP_DECRYPTION") == "1" {
 		foxflags = append(foxflags, "-DOF_SUPPORT_OZIP_DECRYPTION=1")
 	}
 
-	if ctx.AConfig().Getenv("FOX_ALLOW_EARLY_SETTINGS_LOAD") == "1" {
-		foxflags = append(foxflags, "-DFOX_ALLOW_EARLY_SETTINGS_LOAD=1")
+	if getMakeVars(ctx, "OF_ALLOW_EARLY_SETTINGS_LOAD") == "1" {
+		foxflags = append(foxflags, "-DOF_ALLOW_EARLY_SETTINGS_LOAD=1")
 	}
 
-	if ctx.AConfig().Getenv("FOX_SETTINGS_ROOT_DIRECTORY") != "" {
-		foxflags = append(foxflags, "-DFOX_SETTINGS_ROOT_DIRECTORY="+"\""+ctx.AConfig().Getenv("FOX_SETTINGS_ROOT_DIRECTORY")+"\"")
+	if getMakeVars(ctx, "OF_SETTINGS_ROOT_DIRECTORY") != "" {
+		foxflags = append(foxflags, "-DOF_SETTINGS_ROOT_DIRECTORY="+"\""+getMakeVars(ctx, "OF_SETTINGS_ROOT_DIRECTORY")+"\"")
 	}
 
-	if ctx.AConfig().Getenv("FOX_MISCELLANEOUS_ROOT_DIRECTORY") != "" {
-		foxflags = append(foxflags, "-DFOX_MISCELLANEOUS_ROOT_DIRECTORY="+"\""+ctx.AConfig().Getenv("FOX_MISCELLANEOUS_ROOT_DIRECTORY")+"\"")
+	if getMakeVars(ctx, "OF_MISCELLANEOUS_ROOT_DIRECTORY") != "" {
+		foxflags = append(foxflags, "-DOF_MISCELLANEOUS_ROOT_DIRECTORY="+"\""+getMakeVars(ctx, "OF_MISCELLANEOUS_ROOT_DIRECTORY")+"\"")
 	}
 
-	if ctx.AConfig().Getenv("FOX_USE_DATA_RECOVERY_FOR_SETTINGS") == "1" {
-		foxflags = append(foxflags, "-DFOX_USE_DATA_RECOVERY_FOR_SETTINGS=1")
-		foxflags = append(foxflags, "-DFOX_SETTINGS_ROOT_DIRECTORY=\"/data/recovery\"")
-		foxflags = append(foxflags, "-DFOX_MISCELLANEOUS_ROOT_DIRECTORY=\"/data/recovery\"")
+	if getMakeVars(ctx, "OF_USE_DATA_RECOVERY_FOR_SETTINGS") == "1" {
+		foxflags = append(foxflags, "-DOF_USE_DATA_RECOVERY_FOR_SETTINGS=1")
+		foxflags = append(foxflags, "-DOF_SETTINGS_ROOT_DIRECTORY=\"/data/recovery\"")
+		foxflags = append(foxflags, "-DOF_MISCELLANEOUS_ROOT_DIRECTORY=\"/data/recovery\"")
 	}
 
-	if ctx.AConfig().Getenv("FOX_USE_MEIZU_TOUCH_MAPPING") == "1" {
-		foxflags = append(foxflags, "-DFOX_USE_MEIZU_TOUCH_MAPPING=1")
+	if getMakeVars(ctx, "OF_USE_MEIZU_TOUCH_MAPPING") == "1" {
+		foxflags = append(foxflags, "-DOF_USE_MEIZU_TOUCH_MAPPING=1")
+	}
+
+	if ctx.AConfig().Getenv("FOX_NO_BLANK_DT2W") != "" {
+		foxflags = append(foxflags, "-DFOX_NO_BLANK_DT2W="+"\""+ctx.AConfig().Getenv("FOX_NO_BLANK_DT2W")+"\"")
+	}
+
+	if ctx.AConfig().Getenv("FOX_NO_BLANK_DT2W") != "" {
+		foxflags = append(foxflags, "-DFOX_NO_BLANK_DT2W="+"\""+ctx.AConfig().Getenv("FOX_NO_BLANK_DT2W")+"\"")
 	}
 
 	return foxflags
