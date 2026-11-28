@@ -310,7 +310,16 @@ if [ "$OFOX_VARIANT" = full_compressed ]; then
 else
     # Raw layouts: no lgz bits allowed, raw bin/ required instead.
     echo "$NAMES" | grep -q "^bin\.lgz" && { echo "BAD: bin.lgz leaked into raw variant $OFOX_VARIANT" >&2; exit 1; } || true
-    echo "$NAMES" | grep -q "^unpack_bin/" && { echo "BAD: unpack_bin/ leaked into raw variant $OFOX_VARIANT" >&2; exit 1; } || true
+    # unpack_bin/ decoders (lgz-lean-*) must not leak into raw variants;
+    # the two busybox files are the documented exception: need_file()
+    # above requires them and the zip lines below ship them raw on
+    # purpose (needed before unpack). Fail only on anything else.
+    _leaked="$(echo "$NAMES" | grep "^unpack_bin/" | grep -vx -e 'unpack_bin/busybox-arm64' -e 'unpack_bin/busybox-x86_64' || true)"
+    if [ -n "$_leaked" ]; then
+        echo "BAD: unpack_bin/ leaked into raw variant $OFOX_VARIANT:" >&2
+        echo "$_leaked" >&2
+        exit 1
+    fi || true
     echo "$NAMES" | grep -q "^bin/" || { echo "BAD: raw bin/ missing from variant $OFOX_VARIANT" >&2; exit 1; }
     for f in module.prop customize.sh export.txt install-recovery.sh \
         install-desktop.sh install-macos.command install-desktop.bat install-desktop.exe install-desktop.AppImage \
