@@ -354,9 +354,22 @@ pub fn otg_disk_present() -> bool {
 /// change when the first bind succeeds.
 pub fn bind_udc_for_device(udc_file: &str, controller: &str) {
     use std::path::Path;
+    let read_bound = || std::fs::read_to_string(Path::new(udc_file)).unwrap_or_default();
     let bind = || std::fs::write(Path::new(udc_file), format!("{controller}\n").as_bytes());
+    // Already bound to our controller (e.g. init or MTP beat us to it):
+    // configfs answers EBUSY on a redundant bind, but adb is fine.
+    // Verify state instead of failing.
+    let bound_is_ours = || read_bound().trim() == controller;
     match bind() {
         Ok(_) => {
+            let _ = set_prop("sys.usb.controller", controller);
+        }
+        Err(e) if bound_is_ours() => {
+            log_msg(
+                "otg",
+                "INFO",
+                &format!("device mode: UDC bind said {e}, but already bound to {controller}; treating as bound"),
+            );
             let _ = set_prop("sys.usb.controller", controller);
         }
         Err(e) => {
@@ -369,6 +382,14 @@ pub fn bind_udc_for_device(udc_file: &str, controller: &str) {
             std::thread::sleep(std::time::Duration::from_millis(300));
             match bind() {
                 Ok(_) => {
+                    let _ = set_prop("sys.usb.controller", controller);
+                }
+                Err(e2) if bound_is_ours() => {
+                    log_msg(
+                        "otg",
+                        "INFO",
+                        &format!("device mode: UDC bind retry said {e2}, but already bound to {controller}; treating as bound"),
+                    );
                     let _ = set_prop("sys.usb.controller", controller);
                 }
                 Err(e2) => log_msg(
